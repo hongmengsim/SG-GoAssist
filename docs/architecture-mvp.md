@@ -1,4 +1,6 @@
-# BusPass Assistance MVP Architecture
+# SG GoAssist MVP Architecture
+
+SG GoAssist helps less-abled passengers travel with confidence by making bus journeys easier, safer, and more independent.
 
 ## Backend Stack Choice
 
@@ -59,6 +61,7 @@ Vehicle status is a separate model:
 
 - `WHEELCHAIR_RAMP`: passenger requests ramp assistance. The app does not control or validate ramp deployment.
 - `BUS_AUDIO_IDENTIFICATION`: passenger requests bus identification assistance. When the simulated bus approaches and has an acknowledged matching request, the simulator records an external announcement event.
+- `EXTENDED_DWELL_TIME`: passenger requests additional boarding time. The app does not decide door timing or vehicle movement safety.
 
 ## App Accessibility Preferences
 
@@ -73,6 +76,12 @@ Examples:
 - `repeatAudio`
 
 For hearing-impaired passenger support, any spoken update should also be displayed visually and, when enabled, paired with haptic feedback.
+
+For visually impaired passenger support, the app announces selected buses, repeats journey guidance on demand, and uses a distinct repeated haptic cue when the selected bus is approaching. `BUS_AUDIO_IDENTIFICATION` remains bus-facing assistance: it can ask the autonomous bus to announce its service number externally, while screen-reader guidance and repeat announcements stay on the phone.
+
+Passenger profiles store curated assistance defaults for each individual. Bus-facing defaults become request types such as `WHEELCHAIR_RAMP`, `BUS_AUDIO_IDENTIFICATION`, and `EXTENDED_DWELL_TIME`; phone-only defaults such as haptics, high contrast, large text, and repeat announcements stay in the app profile and are not sent to the bus.
+
+Accessibility verification is separate from assistance preferences. A profile can be `UNVERIFIED`, `PENDING`, or `VERIFIED` through a method such as a demo credential, PWD concession card, or senior concession card. Verification means eligibility/trust, not a diagnosis; the passenger still chooses functional needs. The prototype mocks verification and stores only status, method, and an optional credential suffix. A production version would require an authorised verification provider rather than direct card reading.
 
 ## Input Adapter Boundary
 

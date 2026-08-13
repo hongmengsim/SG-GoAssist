@@ -1,1 +1,3 @@
-# SG-GoAssist
+# SG GoAssist
+
+Accessible journeys. Guided with care.

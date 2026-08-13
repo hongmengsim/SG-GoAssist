@@ -9,7 +9,7 @@ const rl = readline.createInterface({
 });
 
 function showHelp() {
-  console.log("SIMULATED AV - BUSPASS");
+  console.log("SIMULATED AV - SG GoAssist");
   console.log("Commands:");
   console.log("  list");
   console.log("  ack <requestId>");

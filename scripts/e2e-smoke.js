@@ -189,7 +189,7 @@ async function main() {
     throw new Error(`Expected no announcement after cancellation, got ${cancelledAnnouncements.count}`);
   }
 
-  console.log("BUSPASS E2E smoke test passed.");
+  console.log("SG GoAssist E2E smoke test passed.");
 }
 
 main().catch((error) => {

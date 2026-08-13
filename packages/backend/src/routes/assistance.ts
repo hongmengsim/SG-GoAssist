@@ -106,6 +106,8 @@ router.post("/request", (req: Request, res: Response) => {
         destination: payload.destination,
         assistanceType,
         source: payload.source ?? "MOBILE_APP",
+        accessibilityVerificationStatus: payload.accessibilityVerificationStatus,
+        verificationMethod: payload.verificationMethod,
       })
     );
 

@@ -36,14 +36,16 @@ function baseRequest(
   };
 }
 
-test("WHEELCHAIR_RAMP and BUS_AUDIO_IDENTIFICATION requests can be created and acknowledged", () => {
+test("all bus-facing assistance requests can be created and acknowledged", () => {
   clearAllRequests();
 
   const wheelchair = createRequest(baseRequest("REQ-WHEEL", "SBS-191-001", ["WHEELCHAIR_RAMP"]));
   const audio = createRequest(baseRequest("REQ-AUDIO", "SBS-191-002", ["BUS_AUDIO_IDENTIFICATION"]));
+  const dwell = createRequest(baseRequest("REQ-DWELL", "SBS-191-003", ["EXTENDED_DWELL_TIME"]));
 
   assert.deepEqual(wheelchair.assistanceTypes, ["WHEELCHAIR_RAMP"]);
   assert.deepEqual(audio.assistanceTypes, ["BUS_AUDIO_IDENTIFICATION"]);
+  assert.deepEqual(dwell.assistanceTypes, ["EXTENDED_DWELL_TIME"]);
 
   const result = processSimulatorCommand({ requestId: audio.requestId, command: "ACKNOWLEDGE" });
   assert.equal(result.request?.status, AssistanceRequestStatus.ACKNOWLEDGED);

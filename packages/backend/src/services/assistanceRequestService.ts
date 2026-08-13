@@ -15,6 +15,7 @@ const defaultDestination = "Kent Ridge Terminal";
 export const supportedAssistanceTypes: AssistanceType[] = [
   "WHEELCHAIR_RAMP",
   "BUS_AUDIO_IDENTIFICATION",
+  "EXTENDED_DWELL_TIME",
 ];
 
 export function isAssistanceType(value: string): value is AssistanceType {
@@ -58,6 +59,8 @@ export function createStandardizedAssistanceRequest(
     assistanceTypes: [input.assistanceType],
     source: input.source,
     boardingOrAlighting: "BOARDING",
+    accessibilityVerificationStatus: input.accessibilityVerificationStatus,
+    verificationMethod: input.verificationMethod,
     status: AssistanceRequestStatus.SENDING,
     createdAt: new Date().toISOString(),
   };

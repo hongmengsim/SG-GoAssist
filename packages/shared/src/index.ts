@@ -6,13 +6,23 @@
  * safety, external announcements, and physical actuation.
  */
 
-export type AssistanceType = "WHEELCHAIR_RAMP" | "BUS_AUDIO_IDENTIFICATION";
+export type AssistanceType =
+  | "WHEELCHAIR_RAMP"
+  | "BUS_AUDIO_IDENTIFICATION"
+  | "EXTENDED_DWELL_TIME";
 
 export type AssistanceSource =
   | "MOBILE_APP"
   | "PHYSICAL_BUTTON"
   | "RFID"
   | "AUTOMATIC_DETECTION";
+
+export type AccessibilityVerificationStatus = "UNVERIFIED" | "PENDING" | "VERIFIED";
+
+export type VerificationMethod =
+  | "PWD_CONCESSION_CARD"
+  | "SENIOR_CONCESSION_CARD"
+  | "DEMO_CREDENTIAL";
 
 export enum AssistanceRequestStatus {
   SENDING = "SENDING",
@@ -34,6 +44,7 @@ export enum VehicleStatus {
 export interface AccessibilityRequirements {
   wheelchairRamp: boolean;
   busAudioIdentification: boolean;
+  extendedDwellTime: boolean;
 }
 
 export interface AppAccessibilityPreferences {
@@ -42,6 +53,20 @@ export interface AppAccessibilityPreferences {
   largeText: boolean;
   highContrast: boolean;
   repeatAudio: boolean;
+}
+
+export interface PassengerProfile {
+  profileId: string;
+  displayName: string;
+  email: string;
+  verificationStatus: AccessibilityVerificationStatus;
+  verificationMethod?: VerificationMethod;
+  verifiedCredentialLast4?: string;
+  verifiedAt?: string;
+  assistanceDefaults: AccessibilityRequirements;
+  appPreferences: AppAccessibilityPreferences;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface PassengerAssistanceRequest {
@@ -54,6 +79,8 @@ export interface PassengerAssistanceRequest {
   assistanceTypes: AssistanceType[];
   source: AssistanceSource;
   boardingOrAlighting: "BOARDING" | "ALIGHTING";
+  accessibilityVerificationStatus?: AccessibilityVerificationStatus;
+  verificationMethod?: VerificationMethod;
   status: AssistanceRequestStatus;
   createdAt: string;
   acknowledgedAt?: string;
@@ -70,6 +97,8 @@ export interface CreateAssistanceRequestPayload {
   assistanceTypes: AssistanceType[];
   source?: AssistanceSource;
   boardingOrAlighting: "BOARDING" | "ALIGHTING";
+  accessibilityVerificationStatus?: AccessibilityVerificationStatus;
+  verificationMethod?: VerificationMethod;
 }
 
 export interface AssistanceRequestInput {
@@ -80,6 +109,8 @@ export interface AssistanceRequestInput {
   destination?: string;
   assistanceType: AssistanceType;
   source: AssistanceSource;
+  accessibilityVerificationStatus?: AccessibilityVerificationStatus;
+  verificationMethod?: VerificationMethod;
 }
 
 export interface AssistanceRequestResponse {
