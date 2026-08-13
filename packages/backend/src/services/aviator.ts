@@ -23,6 +23,36 @@ export function onAssistanceEvent(callback: EventListener) {
   return () => listeners.delete(callback);
 }
 
+export function waitForRequestStatus(
+  requestId: string,
+  status: AssistanceRequestStatus,
+  timeoutMs: number
+): Promise<PassengerAssistanceRequest | undefined> {
+  const existing = getRequest(requestId);
+  if (existing?.status === status) {
+    return Promise.resolve(existing);
+  }
+
+  return new Promise((resolve) => {
+    const timeout = setTimeout(() => {
+      unsubscribe();
+      resolve(getRequest(requestId));
+    }, timeoutMs);
+
+    const unsubscribe = onAssistanceEvent((message) => {
+      if (
+        message.type === "REQUEST_STATUS" &&
+        message.requestId === requestId &&
+        message.status === status
+      ) {
+        clearTimeout(timeout);
+        unsubscribe();
+        resolve(getRequest(requestId));
+      }
+    });
+  });
+}
+
 function emit(message: StatusUpdateMessage) {
   listeners.forEach((callback) => {
     try {

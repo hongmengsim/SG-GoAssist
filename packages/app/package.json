@@ -2,7 +2,7 @@
   "name": "@buspass/app",
   "version": "0.1.0",
   "private": true,
-  "main": "expo/AppEntry.js",
+  "main": "index.js",
   "scripts": {
     "start": "expo start",
     "android": "expo start --android",
@@ -12,10 +12,14 @@
   },
   "dependencies": {
     "@buspass/shared": "0.1.0",
+    "@expo/metro-runtime": "~3.2.3",
     "expo": "~51.0.0",
     "expo-haptics": "~13.0.1",
+    "expo-location": "~17.0.1",
     "react": "18.2.0",
-    "react-native": "0.74.5"
+    "react-dom": "18.2.0",
+    "react-native": "0.74.5",
+    "react-native-web": "~0.19.10"
   },
   "devDependencies": {
     "@types/react": "~18.2.79",

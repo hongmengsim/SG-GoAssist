@@ -73,6 +73,26 @@ function subscribe(requestId, expectedMessages) {
 async function main() {
   await request("/admin/reset", { method: "POST" });
 
+  const nearbyStops = await request("/api/location/nearby-bus-stops", {
+    method: "POST",
+    body: JSON.stringify({
+      latitude: 1.2942,
+      longitude: 103.7711,
+      accuracyMeters: 12,
+    }),
+  });
+  if (!nearbyStops.stops.length || nearbyStops.stops[0].busStopCode !== "19011") {
+    throw new Error("Expected nearest mocked bus stop 19011");
+  }
+
+  const arrivals = await request("/api/location/bus-stops/19011/arrivals");
+  const next191 = arrivals.services
+    .find((service) => service.serviceNo === "191")
+    ?.buses.find((bus) => bus.arrivalSlot === "NEXT_BUS");
+  if (!next191 || next191.busId !== "AV-191-03") {
+    throw new Error("Expected mocked AV fleet mapping for next Service 191");
+  }
+
   const wheelchair = await request("/api/assistance/request", {
     method: "POST",
     body: JSON.stringify(wheelchairPayload),
@@ -97,11 +117,12 @@ async function main() {
       boardingStop: "Changi Airport Terminal 1",
     }),
   });
-  const buttonSubscription = subscribe(button.requestId, ["REQUEST_STATUS:ACKNOWLEDGED"]);
-  await buttonSubscription.done;
-  buttonSubscription.socket.close();
 
-  if (button.source !== "PHYSICAL_BUTTON" || button.feedback.led !== "CONFIRMATION_ON") {
+  if (
+    button.source !== "PHYSICAL_BUTTON" ||
+    button.status !== "ACKNOWLEDGED" ||
+    button.feedback.led !== "CONFIRMATION_ON"
+  ) {
     throw new Error("Expected physical button confirmation feedback");
   }
 

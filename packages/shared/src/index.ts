@@ -36,6 +36,14 @@ export interface AccessibilityRequirements {
   busAudioIdentification: boolean;
 }
 
+export interface AppAccessibilityPreferences {
+  screenReaderOptimised: boolean;
+  hapticAlerts: boolean;
+  largeText: boolean;
+  highContrast: boolean;
+  repeatAudio: boolean;
+}
+
 export interface PassengerAssistanceRequest {
   requestId: string;
   sessionId: string;
@@ -128,6 +136,54 @@ export interface Bus {
   latitude: number;
   longitude: number;
   estimatedArrivalSeconds: number;
+}
+
+export interface BusStop {
+  busStopCode: string;
+  roadName: string;
+  description: string;
+  latitude: number;
+  longitude: number;
+}
+
+export interface NearbyBusStop extends BusStop {
+  distanceMeters: number;
+}
+
+export interface NearbyBusStopsRequest {
+  latitude: number;
+  longitude: number;
+  accuracyMeters?: number;
+}
+
+export interface NearbyBusStopsResponse {
+  stops: NearbyBusStop[];
+  debug: {
+    latitude: number;
+    longitude: number;
+    accuracyMeters?: number;
+    maxDistanceMeters: number;
+  };
+}
+
+export interface ArrivalBus {
+  busId: string;
+  serviceNo: string;
+  arrivalSlot: "NEXT_BUS" | "NEXT_BUS_2" | "NEXT_BUS_3";
+  etaSeconds: number;
+  wheelchairAccessible: boolean;
+  vehicleType: "SD" | "DD" | "BD";
+  destination: string;
+}
+
+export interface BusArrivalService {
+  serviceNo: string;
+  buses: ArrivalBus[];
+}
+
+export interface BusStopArrivalsResponse {
+  busStop: BusStop;
+  services: BusArrivalService[];
 }
 
 export interface RequestLog {

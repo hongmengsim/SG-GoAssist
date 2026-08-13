@@ -13,6 +13,7 @@ import http from "http";
 import cors from "cors";
 import dotenv from "dotenv";
 import { router as assistanceRouter } from "./routes/assistance";
+import { router as locationRouter } from "./routes/location";
 import {
   initializeWebSocketServer,
   setupStateChangeListener,
@@ -42,6 +43,7 @@ app.use(
 
 // Routes
 app.use("/api/assistance", assistanceRouter);
+app.use("/api/location", locationRouter);
 
 /**
  * Health Check Endpoint

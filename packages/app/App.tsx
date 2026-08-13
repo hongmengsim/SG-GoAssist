@@ -10,41 +10,93 @@ import {
   View,
 } from "react-native";
 import * as Haptics from "expo-haptics";
-import {
+import type {
   AccessibilityRequirements,
+  AppAccessibilityPreferences,
   AssistanceRequestStatus,
   AssistanceType,
   Bus,
+  ArrivalBus,
+  NearbyBusStop,
   StatusUpdateMessage,
   VehicleStatus,
 } from "@buspass/shared";
 import {
   cancelAssistanceRequest,
   createAssistanceRequest,
-  fetchMockBuses,
+  fetchBusStopArrivals,
+  findNearbyBusStops,
 } from "./src/api/assistanceApi";
 import { subscribeToRequestStatus } from "./src/api/statusSocket";
 
-type Screen = "ACCESSIBILITY" | "BUS" | "CONFIRM" | "STATUS";
+type Screen = "LOCATION" | "STOP" | "BUS" | "ACCESSIBILITY" | "CONFIRM" | "STATUS";
 
 const defaultRequirements: AccessibilityRequirements = {
   wheelchairRamp: true,
   busAudioIdentification: false,
 };
 
+const defaultAppPreferences: AppAccessibilityPreferences = {
+  screenReaderOptimised: true,
+  hapticAlerts: true,
+  largeText: false,
+  highContrast: false,
+  repeatAudio: true,
+};
+
 const destination = "Kent Ridge Terminal";
 const boardingStop = "Changi Airport Terminal 1";
 const sessionId = "demo-passenger-session";
 
+class AppErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { error: Error | null }
+> {
+  state: { error: Error | null } = { error: null };
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <SafeAreaView style={styles.safeArea}>
+          <View style={styles.container}>
+            <Text style={styles.appTitle}>BusPass Assistance</Text>
+            <Text style={styles.errorText}>The app could not start.</Text>
+            <Text style={styles.bodyText}>{this.state.error.message}</Text>
+          </View>
+        </SafeAreaView>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+
 export default function App() {
-  const [screen, setScreen] = useState<Screen>("ACCESSIBILITY");
+  return (
+    <AppErrorBoundary>
+      <BusPassApp />
+    </AppErrorBoundary>
+  );
+}
+
+function BusPassApp() {
+  const [screen, setScreen] = useState<Screen>("LOCATION");
   const [requirements, setRequirements] = useState(defaultRequirements);
-  const [buses, setBuses] = useState<Bus[]>([]);
+  const [appPreferences, setAppPreferences] = useState(defaultAppPreferences);
+  const [nearbyStops, setNearbyStops] = useState<NearbyBusStop[]>([]);
+  const [selectedStop, setSelectedStop] = useState<NearbyBusStop | null>(null);
+  const [arrivingBuses, setArrivingBuses] = useState<ArrivalBus[]>([]);
   const [selectedBus, setSelectedBus] = useState<Bus | null>(null);
+  const [selectedArrival, setSelectedArrival] = useState<ArrivalBus | null>(null);
   const [requestId, setRequestId] = useState<string | null>(null);
   const [requestStatus, setRequestStatus] = useState<AssistanceRequestStatus | null>(null);
   const [vehicleStatus, setVehicleStatus] = useState<VehicleStatus | null>(null);
   const [events, setEvents] = useState<StatusUpdateMessage[]>([]);
+  const [visualAlert, setVisualAlert] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -67,9 +119,9 @@ export default function App() {
         if (message.type === "REQUEST_STATUS") {
           setRequestStatus(message.status);
           if (message.status === "ACKNOWLEDGED") {
-            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-            AccessibilityInfo.announceForAccessibility(
-              `Bus ${message.busService} has received your assistance request.`
+            notifyPassenger(
+              `Bus ${message.busService} has received your assistance request.`,
+              Haptics.NotificationFeedbackType.Success
             );
           }
         }
@@ -77,36 +129,141 @@ export default function App() {
         if (message.type === "VEHICLE_STATUS") {
           setVehicleStatus(message.status);
           if (message.status === "APPROACHING") {
-            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-            AccessibilityInfo.announceForAccessibility(`Bus ${message.busService} is approaching.`);
+            notifyPassenger(
+              `Bus ${message.busService} is approaching.`,
+              Haptics.NotificationFeedbackType.Warning
+            );
           }
           if (message.status === "ARRIVED") {
-            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-            AccessibilityInfo.announceForAccessibility(`Bus ${message.busService} has arrived.`);
+            notifyPassenger(
+              `Bus ${message.busService} has arrived. Your selected bus is at the stop.`,
+              Haptics.NotificationFeedbackType.Success
+            );
           }
         }
       },
       () => setError("Live status connection was interrupted.")
     );
-  }, [requestId]);
+  }, [appPreferences.hapticAlerts, requestId]);
 
-  async function loadBuses() {
+  function notifyPassenger(message: string, feedbackType: Haptics.NotificationFeedbackType) {
+    setVisualAlert(message);
+    AccessibilityInfo.announceForAccessibility(message);
+    if (appPreferences.hapticAlerts) {
+      Haptics.notificationAsync(feedbackType);
+    }
+  }
+
+  async function findMyBusStop() {
     setIsLoading(true);
     setError(null);
     try {
-      const nearbyBuses = await fetchMockBuses("191");
-      setBuses(nearbyBuses);
-      setSelectedBus(nearbyBuses[0] ?? null);
-      setScreen("BUS");
+      const Location = await import("expo-location");
+      const permission = await Location.requestForegroundPermissionsAsync();
+      if (permission.status !== "granted") {
+        setError("Location access is unavailable.");
+        await loadManualStops();
+        return;
+      }
+
+      const position = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced,
+      });
+      const result = await findNearbyBusStops({
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+        accuracyMeters: position.coords.accuracy ?? undefined,
+      });
+
+      if (result.stops.length === 0) {
+        setError("We couldn't confidently identify a nearby bus stop.");
+        setNearbyStops([]);
+        setScreen("STOP");
+        return;
+      }
+
+      setNearbyStops(result.stops);
+      setSelectedStop(result.stops[0]);
+      setScreen("STOP");
+      AccessibilityInfo.announceForAccessibility(
+        `Nearest bus stop: ${result.stops[0].description}, ${result.stops[0].roadName}, bus stop ${result.stops[0].busStopCode}, approximately ${result.stops[0].distanceMeters} metres away.`
+      );
     } catch (apiError) {
-      setError(apiError instanceof Error ? apiError.message : "Unable to load buses.");
+      setError(apiError instanceof Error ? apiError.message : "Unable to find nearby bus stops.");
     } finally {
       setIsLoading(false);
     }
   }
 
+  async function loadManualStops() {
+    const result = await findNearbyBusStops({
+      latitude: 1.2942,
+      longitude: 103.7711,
+      accuracyMeters: 0,
+    });
+    setNearbyStops(result.stops);
+    setSelectedStop(result.stops[0] ?? null);
+    setScreen("STOP");
+  }
+
+  async function confirmBusStop(stop = selectedStop) {
+    if (!stop) {
+      return;
+    }
+
+    setIsLoading(true);
+    setError(null);
+    try {
+      const arrivals = await fetchBusStopArrivals(stop.busStopCode);
+      const flattened = arrivals.services.flatMap((service) => service.buses);
+      setArrivingBuses(flattened);
+      setSelectedArrival(flattened[0] ?? null);
+      setSelectedBus(
+        flattened[0]
+          ? {
+              busId: flattened[0].busId,
+              busService: flattened[0].serviceNo,
+              routeNumber: flattened[0].serviceNo,
+              currentStop: stop.description,
+              nextStop: flattened[0].destination,
+              isAccessible: flattened[0].wheelchairAccessible,
+              wheelchairSpaces: flattened[0].wheelchairAccessible ? 1 : 0,
+              latitude: stop.latitude,
+              longitude: stop.longitude,
+              estimatedArrivalSeconds: flattened[0].etaSeconds,
+            }
+          : null
+      );
+      setScreen("BUS");
+    } catch (apiError) {
+      setError(apiError instanceof Error ? apiError.message : "Unable to load buses for this stop.");
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  function selectArrival(arrival: ArrivalBus) {
+    if (!selectedStop) {
+      return;
+    }
+
+    setSelectedArrival(arrival);
+    setSelectedBus({
+      busId: arrival.busId,
+      busService: arrival.serviceNo,
+      routeNumber: arrival.serviceNo,
+      currentStop: selectedStop.description,
+      nextStop: arrival.destination,
+      isAccessible: arrival.wheelchairAccessible,
+      wheelchairSpaces: arrival.wheelchairAccessible ? 1 : 0,
+      latitude: selectedStop.latitude,
+      longitude: selectedStop.longitude,
+      estimatedArrivalSeconds: arrival.etaSeconds,
+    });
+  }
+
   async function submitRequest() {
-    if (!selectedBus || assistanceTypes.length === 0 || isLoading) {
+    if (!selectedBus || !selectedStop || assistanceTypes.length === 0 || isLoading) {
       return;
     }
 
@@ -117,8 +274,8 @@ export default function App() {
         sessionId,
         busService: selectedBus.busService,
         busId: selectedBus.busId,
-        boardingStop,
-        destination,
+        boardingStop: selectedStop.busStopCode,
+        destination: selectedArrival?.destination ?? destination,
         assistanceTypes,
         source: "MOBILE_APP",
         boardingOrAlighting: "BOARDING",
@@ -166,10 +323,86 @@ export default function App() {
   }
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <SafeAreaView style={[styles.safeArea, appPreferences.highContrast && styles.highContrastSafeArea]}>
       <ScrollView contentContainerStyle={styles.container}>
-        <Text style={styles.appTitle}>BusPass Assistance</Text>
-        <Text style={styles.subtitle}>Request assistance from Service 191</Text>
+        <Text style={[styles.appTitle, appPreferences.highContrast && styles.highContrastText]}>
+          BusPass Assistance
+        </Text>
+        <Text style={[styles.subtitle, appPreferences.highContrast && styles.highContrastMutedText]}>
+          Request assistance from Service 191
+        </Text>
+
+        {visualAlert && (
+          <View
+            style={[styles.visualAlert, appPreferences.highContrast && styles.highContrastAlert]}
+            accessible
+            accessibilityRole="alert"
+            accessibilityLabel={visualAlert}
+          >
+            <Text style={[styles.visualAlertTitle, appPreferences.highContrast && styles.highContrastText]}>
+              {visualAlert.toUpperCase()}
+            </Text>
+            <Text style={[styles.bodyText, appPreferences.highContrast && styles.highContrastMutedText]}>
+              {appPreferences.hapticAlerts ? "Haptic alert sent." : "Haptic alerts are off."}
+            </Text>
+          </View>
+        )}
+
+        {screen === "LOCATION" && (
+          <View style={styles.section}>
+            <Text style={[styles.heading, appPreferences.highContrast && styles.highContrastText]}>
+              Find your bus
+            </Text>
+            <Text style={[styles.bodyText, appPreferences.largeText && styles.largeBody]}>
+              We use your location once to identify nearby bus stops. You will still choose the bus stop and bus yourself.
+            </Text>
+            <PrimaryButton label="Use my location" onPress={findMyBusStop} disabled={isLoading} />
+            <SecondaryButton label="Select bus stop manually" onPress={loadManualStops} disabled={isLoading} />
+          </View>
+        )}
+
+        {screen === "STOP" && (
+          <View style={styles.section}>
+            <Text style={[styles.heading, appPreferences.highContrast && styles.highContrastText]}>
+              Confirm Bus Stop
+            </Text>
+            {selectedStop ? (
+              <View style={styles.statusPanel} accessible accessibilityLabel={stopAccessibilityLabel(selectedStop)}>
+                <Text style={styles.statusLabel}>Nearest bus stop</Text>
+                <Text style={styles.statusValue}>{selectedStop.description}</Text>
+                <Text style={styles.bodyText}>{selectedStop.roadName}</Text>
+                <Text style={styles.bodyText}>Bus Stop {selectedStop.busStopCode}</Text>
+                <Text style={styles.bodyText}>About {selectedStop.distanceMeters} m away</Text>
+              </View>
+            ) : (
+              <Text style={styles.bodyText}>No nearby bus stop selected.</Text>
+            )}
+            <PrimaryButton label="Yes, this stop" onPress={() => confirmBusStop()} disabled={!selectedStop || isLoading} />
+            <SecondaryButton
+              label="Repeat my bus stop"
+              onPress={() => selectedStop && AccessibilityInfo.announceForAccessibility(stopAccessibilityLabel(selectedStop))}
+              disabled={!selectedStop}
+            />
+            <Text style={[styles.heading, appPreferences.highContrast && styles.highContrastText]}>
+              Other nearby stops
+            </Text>
+            {nearbyStops.map((stop) => (
+              <Pressable
+                key={stop.busStopCode}
+                accessibilityRole="button"
+                accessibilityLabel={`${stop.description}, ${stop.roadName}, bus stop ${stop.busStopCode}, approximately ${stop.distanceMeters} metres away. Select bus stop.`}
+                onPress={() => setSelectedStop(stop)}
+                style={[styles.busCard, selectedStop?.busStopCode === stop.busStopCode && styles.selectedCard]}
+              >
+                <Text style={styles.busTitle}>{stop.description}</Text>
+                <Text style={styles.bodyText}>{stop.roadName}</Text>
+                <Text style={styles.bodyText}>Bus Stop {stop.busStopCode}</Text>
+                <Text style={styles.bodyText}>{stop.distanceMeters} m away</Text>
+              </Pressable>
+            ))}
+            <SecondaryButton label="Refresh location" onPress={findMyBusStop} disabled={isLoading} />
+          </View>
+        )}
 
         {screen === "ACCESSIBILITY" && (
           <View style={styles.section}>
@@ -178,6 +411,8 @@ export default function App() {
               label="Mobility Assistance"
               description="Request wheelchair ramp"
               enabled={requirements.wheelchairRamp}
+              highContrast={appPreferences.highContrast}
+              largeText={appPreferences.largeText}
               onPress={() =>
                 setRequirements((current) => ({
                   ...current,
@@ -189,6 +424,8 @@ export default function App() {
               label="Bus Identification Assistance"
               description="Receive assistance identifying the correct approaching bus"
               enabled={requirements.busAudioIdentification}
+              highContrast={appPreferences.highContrast}
+              largeText={appPreferences.largeText}
               onPress={() =>
                 setRequirements((current) => ({
                   ...current,
@@ -196,35 +433,97 @@ export default function App() {
                 }))
               }
             />
+            <Text style={[styles.heading, appPreferences.highContrast && styles.highContrastText]}>
+              Phone Accessibility
+            </Text>
+            <ToggleRow
+              label="Screen-reader optimised"
+              description="Use longer labels and spoken announcements"
+              enabled={appPreferences.screenReaderOptimised}
+              highContrast={appPreferences.highContrast}
+              largeText={appPreferences.largeText}
+              onPress={() =>
+                setAppPreferences((current) => ({
+                  ...current,
+                  screenReaderOptimised: !current.screenReaderOptimised,
+                }))
+              }
+            />
+            <ToggleRow
+              label="Haptic alerts"
+              description="Vibrate for acknowledgement, approach, and arrival"
+              enabled={appPreferences.hapticAlerts}
+              highContrast={appPreferences.highContrast}
+              largeText={appPreferences.largeText}
+              onPress={() =>
+                setAppPreferences((current) => ({
+                  ...current,
+                  hapticAlerts: !current.hapticAlerts,
+                }))
+              }
+            />
+            <ToggleRow
+              label="Large text"
+              description="Increase important text size on this phone"
+              enabled={appPreferences.largeText}
+              highContrast={appPreferences.highContrast}
+              largeText={appPreferences.largeText}
+              onPress={() =>
+                setAppPreferences((current) => ({
+                  ...current,
+                  largeText: !current.largeText,
+                }))
+              }
+            />
+            <ToggleRow
+              label="High contrast"
+              description="Use stronger contrast for visual alerts and controls"
+              enabled={appPreferences.highContrast}
+              highContrast={appPreferences.highContrast}
+              largeText={appPreferences.largeText}
+              onPress={() =>
+                setAppPreferences((current) => ({
+                  ...current,
+                  highContrast: !current.highContrast,
+                }))
+              }
+            />
             <PrimaryButton
-              label="Continue to nearby buses"
-              onPress={loadBuses}
-              disabled={assistanceTypes.length === 0}
+              label="Review assistance request"
+              onPress={() => setScreen("CONFIRM")}
+              disabled={assistanceTypes.length === 0 || !selectedBus}
             />
           </View>
         )}
 
         {screen === "BUS" && (
           <View style={styles.section}>
-            <Text style={styles.heading}>Bus Selection</Text>
-            {buses.map((bus) => (
+            <Text style={styles.heading}>Which bus are you taking?</Text>
+            {selectedStop && (
+              <Text style={styles.bodyText}>
+                Bus Stop {selectedStop.busStopCode} · {selectedStop.description}
+              </Text>
+            )}
+            {arrivingBuses.map((bus) => (
               <Pressable
-                key={bus.busId}
+                key={`${bus.busId}-${bus.arrivalSlot}`}
                 accessibilityRole="button"
-                accessibilityLabel={`Bus ${bus.busService}, destination ${destination}, arriving in ${Math.ceil(
-                  bus.estimatedArrivalSeconds / 60
-                )} minutes. Double tap to select.`}
-                onPress={() => setSelectedBus(bus)}
-                style={[styles.busCard, selectedBus?.busId === bus.busId && styles.selectedCard]}
+                accessibilityLabel={`Bus ${bus.serviceNo}, towards ${bus.destination}, arriving in approximately ${Math.ceil(
+                  bus.etaSeconds / 60
+                )} minutes, ${bus.wheelchairAccessible ? "wheelchair accessible" : "accessibility not indicated"}. Select bus.`}
+                onPress={() => selectArrival(bus)}
+                style={[styles.busCard, selectedArrival?.busId === bus.busId && styles.selectedCard]}
               >
-                <Text style={styles.busTitle}>Bus {bus.busService}</Text>
-                <Text style={styles.bodyText}>Vehicle: {bus.busId}</Text>
-                <Text style={styles.bodyText}>Destination: {destination}</Text>
-                <Text style={styles.bodyText}>Arrives in {Math.ceil(bus.estimatedArrivalSeconds / 60)} min</Text>
-                <Text style={styles.bodyText}>Wheelchair spaces: {bus.wheelchairSpaces}</Text>
+                <Text style={styles.busTitle}>Bus {bus.serviceNo}</Text>
+                <Text style={styles.bodyText}>Towards: {bus.destination}</Text>
+                <Text style={styles.bodyText}>Arrives in {Math.ceil(bus.etaSeconds / 60)} min</Text>
+                <Text style={styles.bodyText}>Mapped AV: {bus.busId}</Text>
+                <Text style={styles.bodyText}>
+                  {bus.wheelchairAccessible ? "Wheelchair accessible" : "Accessibility not indicated"}
+                </Text>
               </Pressable>
             ))}
-            <PrimaryButton label="Review assistance request" onPress={() => setScreen("CONFIRM")} />
+            <PrimaryButton label="Choose assistance" onPress={() => setScreen("ACCESSIBILITY")} disabled={!selectedArrival} />
           </View>
         )}
 
@@ -232,8 +531,15 @@ export default function App() {
           <View style={styles.section}>
             <Text style={styles.heading}>Confirm Assistance</Text>
             <SummaryRow label="Bus" value={`${selectedBus.busService} (${selectedBus.busId})`} />
-            <SummaryRow label="Boarding stop" value={boardingStop} />
-            <SummaryRow label="Destination" value={destination} />
+            <SummaryRow
+              label="Boarding stop"
+              value={
+                selectedStop
+                  ? `${selectedStop.busStopCode} · ${selectedStop.description}, ${selectedStop.roadName}`
+                  : boardingStop
+              }
+            />
+            <SummaryRow label="Destination" value={selectedArrival?.destination ?? destination} />
             <SummaryRow label="Assistance" value={selectedNeeds} />
             <PrimaryButton label="Send assistance request" onPress={submitRequest} disabled={isLoading} />
           </View>
@@ -255,6 +561,10 @@ export default function App() {
               {requestStatus === "ACKNOWLEDGED" && (
                 <Text style={styles.confirmationText}>Bus {selectedBus.busService} has received your request.</Text>
               )}
+              <Text style={styles.bodyText}>Every spoken update is also displayed on this screen.</Text>
+              <Text style={styles.bodyText}>
+                {appPreferences.hapticAlerts ? "Haptic alerts are enabled." : "Haptic alerts are off."}
+              </Text>
               <Text style={styles.statusLabel}>Vehicle</Text>
               <Text style={styles.statusValue}>{vehicleStatus ?? "WAITING"}</Text>
               <Text style={styles.bodyText}>Request ID: {requestId}</Text>
@@ -288,11 +598,15 @@ function ToggleRow({
   label,
   description,
   enabled,
+  highContrast = false,
+  largeText = false,
   onPress,
 }: {
   label: string;
   description: string;
   enabled: boolean;
+  highContrast?: boolean;
+  largeText?: boolean;
   onPress: () => void;
 }) {
   return (
@@ -301,12 +615,16 @@ function ToggleRow({
       accessibilityState={{ checked: enabled }}
       accessibilityLabel={`${label}. ${description}. ${enabled ? "Selected" : "Not selected"}.`}
       onPress={onPress}
-      style={styles.toggleRow}
+      style={[styles.toggleRow, highContrast && styles.highContrastControl]}
     >
-      <Text style={styles.toggleMark}>{enabled ? "[x]" : "[ ]"}</Text>
+      <Text style={[styles.toggleMark, highContrast && styles.highContrastText]}>{enabled ? "[x]" : "[ ]"}</Text>
       <View style={styles.toggleTextGroup}>
-        <Text style={styles.toggleText}>{label}</Text>
-        <Text style={styles.bodyText}>{description}</Text>
+        <Text style={[styles.toggleText, largeText && styles.largeBody, highContrast && styles.highContrastText]}>
+          {label}
+        </Text>
+        <Text style={[styles.bodyText, largeText && styles.largeBody, highContrast && styles.highContrastMutedText]}>
+          {description}
+        </Text>
       </View>
     </Pressable>
   );
@@ -406,10 +724,17 @@ function readableSource(source: string) {
   return labels[source] ?? source;
 }
 
+function stopAccessibilityLabel(stop: NearbyBusStop) {
+  return `You appear to be at bus stop ${stop.busStopCode}, ${stop.description}, ${stop.roadName}, approximately ${stop.distanceMeters} metres away.`;
+}
+
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
     backgroundColor: "#f8faf7",
+  },
+  highContrastSafeArea: {
+    backgroundColor: "#000000",
   },
   container: {
     padding: 20,
@@ -573,5 +898,37 @@ const styles = StyleSheet.create({
     color: "#9f1239",
     fontSize: 18,
     fontWeight: "700",
+  },
+  visualAlert: {
+    backgroundColor: "#fff7ed",
+    borderColor: "#9a3412",
+    borderRadius: 8,
+    borderWidth: 3,
+    gap: 6,
+    padding: 16,
+  },
+  visualAlertTitle: {
+    color: "#10231b",
+    fontSize: 22,
+    fontWeight: "900",
+    lineHeight: 30,
+  },
+  highContrastAlert: {
+    backgroundColor: "#000000",
+    borderColor: "#ffffff",
+  },
+  highContrastControl: {
+    backgroundColor: "#000000",
+    borderColor: "#ffffff",
+  },
+  highContrastText: {
+    color: "#ffffff",
+  },
+  highContrastMutedText: {
+    color: "#f3f4f6",
+  },
+  largeBody: {
+    fontSize: 21,
+    lineHeight: 29,
   },
 });

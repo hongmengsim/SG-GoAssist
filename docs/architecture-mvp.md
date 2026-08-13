@@ -27,6 +27,22 @@ This stack is intentionally small: Express handles request creation through REST
 
 Future RFID, physical button, camera/LiDAR, and sensor inputs should map their signal into `CreateAssistanceRequestPayload`, then submit it to the same Passenger Assistance Engine. They should not create a parallel request shape.
 
+## Location-Aware Bus Selection
+
+The app requests foreground location only when the passenger chooses `Use my location`. It sends one latitude/longitude reading to the backend:
+
+`POST /api/location/nearby-bus-stops`
+
+The backend returns up to three nearby mocked bus stops ranked by distance. The passenger must confirm the stop before buses are shown. The app does not automatically assume the closest stop is correct.
+
+After confirmation, the app requests mocked arrivals:
+
+`GET /api/location/bus-stops/:busStopCode/arrivals`
+
+The arrival response includes a prototype AV fleet mapping, for example public-facing `Service 191 / NEXT_BUS` mapped to `AV-191-03`. This simulates the future layer that will connect public arrival data to actual autonomous bus IDs. Real LTA DataMall API keys remain backend-only and are not used in this offline prototype.
+
+No continuous background GPS is used in this slice.
+
 ## Assistance Request State Machine
 
 `SENDING -> ACKNOWLEDGED -> CANCELLED`
@@ -44,6 +60,20 @@ Vehicle status is a separate model:
 - `WHEELCHAIR_RAMP`: passenger requests ramp assistance. The app does not control or validate ramp deployment.
 - `BUS_AUDIO_IDENTIFICATION`: passenger requests bus identification assistance. When the simulated bus approaches and has an acknowledged matching request, the simulator records an external announcement event.
 
+## App Accessibility Preferences
+
+Phone-only accessibility preferences are separate from bus-facing `AssistanceType` values. They are not sent to the autonomous bus.
+
+Examples:
+
+- `screenReaderOptimised`
+- `hapticAlerts`
+- `largeText`
+- `highContrast`
+- `repeatAudio`
+
+For hearing-impaired passenger support, any spoken update should also be displayed visually and, when enabled, paired with haptic feedback.
+
 ## Input Adapter Boundary
 
 All input sources should submit an `AssistanceRequestInput` into the backend assistance request service:
@@ -58,6 +88,14 @@ For Vertical Slice 3, both the app and the development physical-button endpoint 
 Development physical button endpoint:
 
 `POST /api/assistance/hardware/physical-button/wheelchair-ramp`
+
+The ESP32 prototype in `hardware/esp32-physical-button` calls this endpoint when its physical button is pressed. The backend waits briefly for the simulated bus acknowledgement before returning confirmation feedback instructions for LED/buzzer output.
+
+Current duplicate consolidation is prototype request de-duplication, not passenger counting:
+
+`same bus + same assistance type = one active bus action`
+
+Later versions should distinguish one passenger pressing twice from two separate wheelchair users requesting the same bus. The bus may still only need one ramp deployment, but the system should eventually preserve both passenger intents.
 
 ## Minimum Dependencies
 

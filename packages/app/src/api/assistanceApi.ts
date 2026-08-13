@@ -1,7 +1,9 @@
-import {
+import type {
   AssistanceRequestResponse,
   Bus,
+  BusStopArrivalsResponse,
   CreateAssistanceRequestPayload,
+  NearbyBusStopsResponse,
 } from "@buspass/shared";
 import { API_BASE_URL } from "../config";
 
@@ -41,4 +43,36 @@ export async function cancelAssistanceRequest(requestId: string): Promise<void> 
   if (!response.ok) {
     throw new Error("Unable to cancel assistance request.");
   }
+}
+
+export async function findNearbyBusStops(payload: {
+  latitude: number;
+  longitude: number;
+  accuracyMeters?: number;
+}): Promise<NearbyBusStopsResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/location/nearby-bus-stops`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    throw new Error("Unable to find nearby bus stops.");
+  }
+
+  return (await response.json()) as NearbyBusStopsResponse;
+}
+
+export async function fetchBusStopArrivals(
+  busStopCode: string
+): Promise<BusStopArrivalsResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/location/bus-stops/${busStopCode}/arrivals`);
+
+  if (!response.ok) {
+    throw new Error("Unable to load buses for this stop.");
+  }
+
+  return (await response.json()) as BusStopArrivalsResponse;
 }

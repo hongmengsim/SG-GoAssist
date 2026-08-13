@@ -1,4 +1,4 @@
-import { StatusUpdateMessage } from "@buspass/shared";
+import type { StatusUpdateMessage } from "@buspass/shared";
 import { WS_BASE_URL } from "../config";
 
 export function subscribeToRequestStatus(

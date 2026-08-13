@@ -1,6 +1,7 @@
 import { Router, Request, Response } from "express";
 import {
   AssistanceRequestResponse,
+  AssistanceRequestStatus,
   CreateAssistanceRequestPayload,
   PhysicalButtonRequestPayload,
   PhysicalButtonRequestResponse,
@@ -13,6 +14,7 @@ import {
   getRequest,
   processSimulatorCommand,
   processVehicleCommand,
+  waitForRequestStatus,
 } from "../services/aviator";
 import {
   createStandardizedAssistanceRequest,
@@ -137,7 +139,7 @@ router.post("/request", (req: Request, res: Response) => {
   }
 });
 
-router.post("/hardware/physical-button/wheelchair-ramp", (req: Request, res: Response) => {
+router.post("/hardware/physical-button/wheelchair-ramp", async (req: Request, res: Response) => {
   try {
     const payload: PhysicalButtonRequestPayload = req.body;
 
@@ -161,15 +163,25 @@ router.post("/hardware/physical-button/wheelchair-ramp", (req: Request, res: Res
       source: "PHYSICAL_BUTTON",
     });
 
+    const acknowledgedRequest = await waitForRequestStatus(
+      request.requestId,
+      AssistanceRequestStatus.ACKNOWLEDGED,
+      2000
+    );
+    const status = acknowledgedRequest?.status ?? request.status;
+
     const response: PhysicalButtonRequestResponse = {
       requestId: request.requestId,
-      status: request.status,
+      status,
       source: "PHYSICAL_BUTTON",
       duplicateOfRequestId,
       feedback: {
-        led: "CONFIRMATION_ON",
-        buzzer: "SHORT_CONFIRMATION",
-        message: `Bus ${request.busService} received wheelchair ramp request.`,
+        led: status === "ACKNOWLEDGED" ? "CONFIRMATION_ON" : "ERROR_BLINK",
+        buzzer: status === "ACKNOWLEDGED" ? "SHORT_CONFIRMATION" : undefined,
+        message:
+          status === "ACKNOWLEDGED"
+            ? `Bus ${request.busService} acknowledged wheelchair ramp request.`
+            : `Bus ${request.busService} request sent, acknowledgement pending.`,
       },
     };
 

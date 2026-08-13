@@ -5,7 +5,7 @@
  * Provides type-safe methods for creating requests and checking status.
  */
 
-import {
+import type {
   CreateAssistanceRequestPayload,
   AssistanceRequestResponse,
   PassengerAssistanceRequest,
