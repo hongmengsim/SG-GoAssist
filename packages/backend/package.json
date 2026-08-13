@@ -1,0 +1,32 @@
+{
+  "name": "@buspass/backend",
+  "version": "0.1.0",
+  "description": "Backend for BusTech Passenger Assistance System",
+  "main": "dist/server.js",
+  "scripts": {
+    "dev": "ts-node-dev --respawn src/server.ts",
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "simulator": "ts-node src/cli/simulator.ts",
+    "test": "npm run build && node --test dist/tests/*.test.js",
+    "lint": "eslint src/**/*.ts",
+    "format": "prettier --write src/**/*.ts"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.18.2",
+    "ws": "^8.14.2",
+    "dotenv": "^16.3.1"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.20",
+    "@types/node": "^20.8.0",
+    "@types/ws": "^8.5.10",
+    "typescript": "^5.2.0",
+    "ts-node-dev": "^2.0.0",
+    "ts-node": "^10.9.1",
+    "eslint": "^8.50.0",
+    "prettier": "^3.0.0"
+  }
+}

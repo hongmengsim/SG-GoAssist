@@ -1,0 +1,24 @@
+{
+  "name": "@buspass/app",
+  "version": "0.1.0",
+  "private": true,
+  "main": "expo/AppEntry.js",
+  "scripts": {
+    "start": "expo start",
+    "android": "expo start --android",
+    "ios": "expo start --ios",
+    "web": "expo start --web",
+    "build": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@buspass/shared": "0.1.0",
+    "expo": "~51.0.0",
+    "expo-haptics": "~13.0.1",
+    "react": "18.2.0",
+    "react-native": "0.74.5"
+  },
+  "devDependencies": {
+    "@types/react": "~18.2.79",
+    "typescript": "^5.2.0"
+  }
+}

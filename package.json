@@ -1,0 +1,26 @@
+{
+  "name": "bustech-passenger-assistance",
+  "version": "0.1.0",
+  "description": "MVP autonomous passenger assistance system for Singapore BusTech Grand Challenge 2026",
+  "private": true,
+  "workspaces": [
+    "packages/shared",
+    "packages/backend",
+    "packages/app"
+  ],
+  "scripts": {
+    "dev:backend": "cd packages/backend && npm run dev",
+    "dev:app": "cd packages/app && npm start",
+    "simulator": "cd packages/backend && npm run simulator",
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm test --workspaces --if-present",
+    "smoke:e2e": "node scripts/e2e-smoke.js",
+    "install-all": "pnpm install",
+    "lint": "pnpm -r run lint",
+    "format": "pnpm -r run format"
+  },
+  "devDependencies": {
+    "eslint": "^8.50.0",
+    "prettier": "^3.0.0"
+  }
+}
