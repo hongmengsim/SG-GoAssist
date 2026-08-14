@@ -11,6 +11,7 @@ interface WebSocketClient {
 }
 
 const clients: Set<WebSocketClient> = new Set();
+let stateChangeListenerReady = false;
 
 export function initializeWebSocketServer(httpServer: http.Server, port: number) {
   const wss = new WebSocket.Server({ server: httpServer });
@@ -36,6 +37,22 @@ export function initializeWebSocketServer(httpServer: http.Server, port: number)
               busId: client.busId,
             })
           );
+
+          if (request) {
+            ws.send(
+              JSON.stringify({
+                type: "REQUEST_STATUS",
+                requestId: request.requestId,
+                status: request.status,
+                timestamp: new Date().toISOString(),
+                assistanceTypes: request.assistanceTypes,
+                source: request.source,
+                busId: request.busId,
+                busService: request.busService,
+                message: `Current request status: ${request.status}`,
+              })
+            );
+          }
         }
       } catch (error) {
         logger.error("Error processing WebSocket message", undefined, {
@@ -60,6 +77,11 @@ export function initializeWebSocketServer(httpServer: http.Server, port: number)
 }
 
 export function setupStateChangeListener() {
+  if (stateChangeListenerReady) {
+    return;
+  }
+  stateChangeListenerReady = true;
+
   onAssistanceEvent((message) => {
     broadcastStatusUpdate(message);
   });

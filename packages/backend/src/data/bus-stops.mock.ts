@@ -2,18 +2,39 @@ import { ArrivalBus, BusArrivalService, BusStop, NearbyBusStop } from "@buspass/
 
 export const mockBusStops: BusStop[] = [
   {
+    busStopCode: "18301",
+    roadName: "Kent Ridge Cres",
+    description: "Kent Ridge Crescent",
+    latitude: 1.29398,
+    longitude: 103.77104,
+  },
+  {
+    busStopCode: "18309",
+    roadName: "Kent Ridge Cres",
+    description: "Opp Kent Ridge Crescent",
+    latitude: 1.29429,
+    longitude: 103.77125,
+  },
+  {
+    busStopCode: "18311",
+    roadName: "Prince George's Park",
+    description: "Prince George's Park",
+    latitude: 1.29485,
+    longitude: 103.77158,
+  },
+  {
+    busStopCode: "18321",
+    roadName: "Kent Ridge Cres",
+    description: "Opp Heng Mui Keng Terrace",
+    latitude: 1.29295,
+    longitude: 103.77508,
+  },
+  {
     busStopCode: "19011",
     roadName: "Kent Ridge Cres",
     description: "Kent Ridge Terminal",
     latitude: 1.2942,
     longitude: 103.7711,
-  },
-  {
-    busStopCode: "19019",
-    roadName: "Kent Ridge Cres",
-    description: "Opp Kent Ridge Terminal",
-    latitude: 1.29447,
-    longitude: 103.77135,
   },
   {
     busStopCode: "18121",
@@ -32,6 +53,22 @@ export const mockBusStops: BusStop[] = [
 ];
 
 const mockArrivalsByStop: Record<string, BusArrivalService[]> = {
+  "18301": [
+    {
+      serviceNo: "95",
+      buses: [arrival("AV-095-01", "95", "NEXT_BUS", 120, true, "Kent Ridge Terminal")],
+    },
+    {
+      serviceNo: "151",
+      buses: [arrival("AV-151-01", "151", "NEXT_BUS", 300, true, "Hougang Central")],
+    },
+  ],
+  "18309": [
+    {
+      serviceNo: "95",
+      buses: [arrival("AV-095-02", "95", "NEXT_BUS", 240, true, "Buona Vista")],
+    },
+  ],
   "19011": [
     {
       serviceNo: "191",

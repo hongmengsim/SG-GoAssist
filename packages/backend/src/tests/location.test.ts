@@ -10,10 +10,10 @@ import { getBusById } from "../data/buses.mock";
 test("nearby bus stop lookup ranks stops by distance and respects the search radius", () => {
   const stops = findNearestBusStops(1.2942, 103.7711, 3, 150);
 
-  assert.equal(stops.length, 2);
+  assert.equal(stops.length, 3);
   assert.equal(stops[0].busStopCode, "19011");
   assert.equal(stops[0].distanceMeters, 0);
-  assert.equal(stops[1].busStopCode, "19019");
+  assert.equal(stops[1].busStopCode, "18309");
   assert.ok(stops[1].distanceMeters > stops[0].distanceMeters);
 });
 
@@ -35,5 +35,18 @@ test("arrival buses map to backend-known autonomous vehicle records", () => {
     assert.ok(bus, `Missing backend bus mapping for ${arrival.busId}`);
     assert.equal(bus.busService, arrival.serviceNo);
     assert.equal(bus.isAccessible, arrival.wheelchairAccessible);
+  }
+});
+
+test("kent ridge crescent stop returns mocked approaching buses for passenger selection", () => {
+  const services = getArrivalsForStop("18301");
+  const arrivals = services.flatMap((service) => service.buses);
+
+  assert.equal(getBusStopByCode("18301")?.description, "Kent Ridge Crescent");
+  assert.ok(arrivals.some((arrival) => arrival.serviceNo === "95"));
+  assert.ok(arrivals.some((arrival) => arrival.serviceNo === "151"));
+
+  for (const arrival of arrivals) {
+    assert.ok(getBusById(arrival.busId), `Missing backend bus mapping for ${arrival.busId}`);
   }
 });

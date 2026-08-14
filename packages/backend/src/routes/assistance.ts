@@ -2,6 +2,7 @@ import { Router, Request, Response } from "express";
 import {
   AssistanceRequestResponse,
   AssistanceRequestStatus,
+  AssistancePhase,
   CreateAssistanceRequestPayload,
   PhysicalButtonRequestPayload,
   PhysicalButtonRequestResponse,
@@ -97,6 +98,15 @@ router.post("/request", (req: Request, res: Response) => {
       });
     }
 
+    const validPhases: AssistancePhase[] = ["BOARDING", "ALIGHTING"];
+    if (!validPhases.includes(payload.boardingOrAlighting)) {
+      return res.status(400).json({
+        error: "Unsupported assistance phase",
+        invalidPhase: payload.boardingOrAlighting,
+        supportedAssistancePhases: validPhases,
+      });
+    }
+
     const created = payload.assistanceTypes.map((assistanceType) =>
       createStandardizedAssistanceRequest({
         sessionId: payload.sessionId ?? "demo-session",
@@ -104,7 +114,9 @@ router.post("/request", (req: Request, res: Response) => {
         busId: payload.busId,
         boardingStop: payload.boardingStop,
         destination: payload.destination,
+        stopCode: payload.stopCode,
         assistanceType,
+        boardingOrAlighting: payload.boardingOrAlighting,
         source: payload.source ?? "MOBILE_APP",
         accessibilityVerificationStatus: payload.accessibilityVerificationStatus,
         verificationMethod: payload.verificationMethod,

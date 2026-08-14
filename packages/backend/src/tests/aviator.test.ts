@@ -185,3 +185,18 @@ test("failed request can be retried after failure", () => {
   assert.equal(failed.status, AssistanceRequestStatus.FAILED);
   assert.equal(retry.requestId, "REQ-FAIL-2");
 });
+
+test("boarding and alighting requests are not collapsed as duplicates", () => {
+  clearAllRequests();
+
+  const boarding = createRequest(baseRequest("REQ-BOARDING", "SBS-191-001", ["WHEELCHAIR_RAMP"]));
+  const alighting = createRequest({
+    ...baseRequest("REQ-ALIGHTING", "SBS-191-001", ["WHEELCHAIR_RAMP"]),
+    boardingOrAlighting: "ALIGHTING",
+    stopCode: "19011",
+  });
+
+  assert.equal(boarding.requestId, "REQ-BOARDING");
+  assert.equal(alighting.requestId, "REQ-ALIGHTING");
+  assert.equal(alighting.boardingOrAlighting, "ALIGHTING");
+});

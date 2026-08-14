@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { AssistanceRequestStatus } from "@buspass/shared";
+import { AssistanceRequestStatus, assistanceTypesForPhase } from "@buspass/shared";
 import { clearAllRequests, processSimulatorCommand } from "../services/aviator";
 import {
   createStandardizedAssistanceRequest,
@@ -126,4 +126,44 @@ test("verification status is stored separately from selected assistance needs", 
   assert.deepEqual(result.request.assistanceTypes, ["BUS_AUDIO_IDENTIFICATION"]);
   assert.equal(result.request.accessibilityVerificationStatus, "VERIFIED");
   assert.equal(result.request.verificationMethod, "DEMO_CREDENTIAL");
+});
+
+test("assistance preferences map differently for boarding and alighting", () => {
+  const preferences = {
+    wheelchairRamp: true,
+    busAudioIdentification: true,
+    extendedDwellTime: true,
+  };
+
+  assert.deepEqual(assistanceTypesForPhase(preferences, "BOARDING"), [
+    "WHEELCHAIR_RAMP",
+    "BUS_AUDIO_IDENTIFICATION",
+    "EXTENDED_DWELL_TIME",
+  ]);
+  assert.deepEqual(assistanceTypesForPhase(preferences, "ALIGHTING"), [
+    "WHEELCHAIR_RAMP",
+    "EXTENDED_DWELL_TIME",
+  ]);
+});
+
+test("standardized alighting requests preserve phase and stop code", () => {
+  clearAllRequests();
+
+  const result = createStandardizedAssistanceRequest(
+    {
+      sessionId: "alighting",
+      busId: "AV-095-01",
+      busService: "95",
+      boardingStop: "18301",
+      destination: "Kent Ridge Terminal",
+      stopCode: "19011",
+      assistanceType: "WHEELCHAIR_RAMP",
+      boardingOrAlighting: "ALIGHTING",
+      source: "MOBILE_APP",
+    },
+    { autoAcknowledge: false }
+  );
+
+  assert.equal(result.request.boardingOrAlighting, "ALIGHTING");
+  assert.equal(result.request.stopCode, "19011");
 });

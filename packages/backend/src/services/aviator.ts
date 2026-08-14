@@ -80,7 +80,11 @@ function requestStatusMessage(request: PassengerAssistanceRequest): StatusUpdate
 }
 
 export function createRequest(request: PassengerAssistanceRequest): PassengerAssistanceRequest {
-  const duplicate = findDuplicateActiveRequest(request.busId, request.assistanceTypes);
+  const duplicate = findDuplicateActiveRequest(
+    request.busId,
+    request.assistanceTypes,
+    request.boardingOrAlighting
+  );
 
   if (duplicate) {
     logger.warn("Duplicate active assistance request prevented", duplicate.requestId, {
@@ -108,11 +112,13 @@ export function createRequest(request: PassengerAssistanceRequest): PassengerAss
 
 export function findDuplicateActiveRequest(
   busId: string,
-  assistanceTypes: AssistanceType[]
+  assistanceTypes: AssistanceType[],
+  phase?: PassengerAssistanceRequest["boardingOrAlighting"]
 ): PassengerAssistanceRequest | undefined {
   return Array.from(activeRequests.values()).find(
     (request) =>
       request.busId === busId &&
+      (!phase || request.boardingOrAlighting === phase) &&
       request.status !== AssistanceRequestStatus.CANCELLED &&
       request.status !== AssistanceRequestStatus.FAILED &&
       request.assistanceTypes.some((type) => assistanceTypes.includes(type))

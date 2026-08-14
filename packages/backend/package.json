@@ -8,7 +8,10 @@
     "build": "npm run build --workspace @buspass/shared && tsc",
     "start": "node dist/server.js",
     "simulator": "ts-node src/cli/simulator.ts",
-    "test": "npm run build && node --test dist/tests/*.test.js",
+    "test": "npm run build && node --test dist/tests/*.test.js dist/tests/*.integration.test.js",
+    "test:unit": "npm run build && node --test dist/tests/assistanceRequestService.test.js dist/tests/aviator.test.js dist/tests/journey.test.js dist/tests/location.test.js",
+    "test:integration": "npm run build && node --test dist/tests/*.integration.test.js",
+    "test:coverage": "npm run build && node --test --experimental-test-coverage --test-coverage-include=\"dist/**/*.js\" --test-coverage-exclude=\"dist/tests/**\" --test-coverage-exclude=\"dist/server.js\" --test-coverage-exclude=\"dist/cli/**\" dist/tests/*.test.js dist/tests/*.integration.test.js",
     "lint": "eslint src/**/*.ts",
     "format": "prettier --write src/**/*.ts"
   },

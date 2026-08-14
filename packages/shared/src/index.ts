@@ -37,11 +37,26 @@ export enum VehicleStatus {
   DEPARTED = "DEPARTED",
 }
 
+export type JourneyPhase =
+  | "DISCOVERY"
+  | "WAITING_FOR_BUS"
+  | "ONBOARD"
+  | "ALIGHTING"
+  | "COMPLETED";
+
+export type AssistancePhase = "BOARDING" | "ALIGHTING";
+
 /**
  * Existing screen model retained for a small app migration.
  * New integrations should use assistanceTypes as the canonical request field.
  */
 export interface AccessibilityRequirements {
+  wheelchairRamp: boolean;
+  busAudioIdentification: boolean;
+  extendedDwellTime: boolean;
+}
+
+export interface AssistancePreferences {
   wheelchairRamp: boolean;
   busAudioIdentification: boolean;
   extendedDwellTime: boolean;
@@ -76,9 +91,10 @@ export interface PassengerAssistanceRequest {
   busId: string;
   boardingStop: string;
   destination: string;
+  stopCode?: string;
   assistanceTypes: AssistanceType[];
   source: AssistanceSource;
-  boardingOrAlighting: "BOARDING" | "ALIGHTING";
+  boardingOrAlighting: AssistancePhase;
   accessibilityVerificationStatus?: AccessibilityVerificationStatus;
   verificationMethod?: VerificationMethod;
   status: AssistanceRequestStatus;
@@ -94,9 +110,10 @@ export interface CreateAssistanceRequestPayload {
   busId: string;
   boardingStop: string;
   destination: string;
+  stopCode?: string;
   assistanceTypes: AssistanceType[];
   source?: AssistanceSource;
-  boardingOrAlighting: "BOARDING" | "ALIGHTING";
+  boardingOrAlighting: AssistancePhase;
   accessibilityVerificationStatus?: AccessibilityVerificationStatus;
   verificationMethod?: VerificationMethod;
 }
@@ -107,7 +124,9 @@ export interface AssistanceRequestInput {
   busService: string;
   boardingStop?: string;
   destination?: string;
+  stopCode?: string;
   assistanceType: AssistanceType;
+  boardingOrAlighting?: AssistancePhase;
   source: AssistanceSource;
   accessibilityVerificationStatus?: AccessibilityVerificationStatus;
   verificationMethod?: VerificationMethod;
@@ -215,6 +234,57 @@ export interface BusArrivalService {
 export interface BusStopArrivalsResponse {
   busStop: BusStop;
   services: BusArrivalService[];
+}
+
+export interface RouteStop extends BusStop {
+  sequence: number;
+}
+
+export function remainingRouteStops(routeStops: RouteStop[], currentStopIndex: number): RouteStop[] {
+  return routeStops.filter((stop) => stop.sequence > currentStopIndex);
+}
+
+export function isSelectedStopNext(
+  routeStops: RouteStop[],
+  currentStopIndex: number,
+  selectedStopCode?: string
+): boolean {
+  if (!selectedStopCode) {
+    return false;
+  }
+
+  return routeStops[currentStopIndex + 1]?.busStopCode === selectedStopCode;
+}
+
+export function isSelectedStopReached(
+  routeStops: RouteStop[],
+  currentStopIndex: number,
+  selectedStopCode?: string
+): boolean {
+  if (!selectedStopCode) {
+    return false;
+  }
+
+  return routeStops[currentStopIndex]?.busStopCode === selectedStopCode;
+}
+
+export function assistanceTypesForPhase(
+  preferences: AssistancePreferences,
+  phase: AssistancePhase
+): AssistanceType[] {
+  const types: AssistanceType[] = [];
+
+  if (preferences.wheelchairRamp) {
+    types.push("WHEELCHAIR_RAMP");
+  }
+  if (phase === "BOARDING" && preferences.busAudioIdentification) {
+    types.push("BUS_AUDIO_IDENTIFICATION");
+  }
+  if (preferences.extendedDwellTime) {
+    types.push("EXTENDED_DWELL_TIME");
+  }
+
+  return types;
 }
 
 export interface RequestLog {

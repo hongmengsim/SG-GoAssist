@@ -10,6 +10,10 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
+    "baseUrl": ".",
+    "paths": {
+      "@buspass/shared": ["../shared/dist"]
+    },
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true

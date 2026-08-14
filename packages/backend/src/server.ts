@@ -8,102 +8,22 @@
  * - Health check endpoint
  */
 
-import express from "express";
 import http from "http";
-import cors from "cors";
 import dotenv from "dotenv";
-import { router as assistanceRouter } from "./routes/assistance";
-import { router as locationRouter } from "./routes/location";
 import {
   initializeWebSocketServer,
   setupStateChangeListener,
-  getConnectedClientCount,
 } from "./services/websocket";
 import { logger } from "./services/logger";
-import { getAllRequests, clearAllRequests } from "./services/aviator";
+import { createApp } from "./app";
 
 // Load environment variables
 dotenv.config();
 
 const PORT = process.env.PORT || 3000;
-const NODE_ENV = process.env.NODE_ENV || "development";
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || "http://localhost:8081,http://localhost:3000").split(",");
 
-// Create Express app
-const app = express();
-
-// Middleware
-app.use(express.json());
-app.use(
-  cors({
-    origin: ALLOWED_ORIGINS,
-    credentials: true,
-  })
-);
-
-// Routes
-app.use("/api/assistance", assistanceRouter);
-app.use("/api/location", locationRouter);
-
-/**
- * Health Check Endpoint
- */
-app.get("/health", (req, res) => {
-  res.json({
-    status: "ok",
-    timestamp: new Date().toISOString(),
-    environment: NODE_ENV,
-    connectedWebSocketClients: getConnectedClientCount(),
-    activeRequests: getAllRequests().length,
-  });
-});
-
-/**
- * Admin: Get all logs
- * (In production: Restrict to authorized users only)
- */
-app.get("/admin/logs", (req, res) => {
-  res.json({
-    logs: logger.getLogs(),
-  });
-});
-
-/**
- * Admin: Clear all requests
- * (In production: Restrict to authorized users only)
- */
-app.post("/admin/reset", (req, res) => {
-  clearAllRequests();
-  res.json({
-    message: "All requests cleared",
-  });
-});
-
-/**
- * 404 Handler
- */
-app.use((req, res) => {
-  res.status(404).json({
-    error: "Endpoint not found",
-    path: req.path,
-    method: req.method,
-  });
-});
-
-/**
- * Error Handler
- */
-app.use((error: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
-  logger.error("Unhandled error", undefined, {
-    message: error.message,
-    stack: error.stack,
-  });
-
-  res.status(500).json({
-    error: "Internal server error",
-    message: NODE_ENV === "development" ? error.message : undefined,
-  });
-});
+const app = createApp();
 
 // Create HTTP server (for WebSocket support)
 const httpServer = http.createServer(app);

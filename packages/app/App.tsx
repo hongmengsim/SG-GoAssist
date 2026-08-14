@@ -11,6 +11,7 @@ import {
   Text,
   TextInput,
   View,
+  type ImageSourcePropType,
 } from "react-native";
 import * as Haptics from "expo-haptics";
 import type {
@@ -20,12 +21,15 @@ import type {
   AssistanceType,
   Bus,
   ArrivalBus,
+  JourneyPhase,
   NearbyBusStop,
   PassengerProfile,
+  RouteStop,
   StatusUpdateMessage,
   VerificationMethod,
   VehicleStatus,
 } from "@buspass/shared";
+import { assistanceTypesForPhase } from "@buspass/shared";
 import {
   cancelAssistanceRequest,
   createAssistanceRequest,
@@ -33,8 +37,19 @@ import {
   findNearbyBusStops,
 } from "./src/api/assistanceApi";
 import { subscribeToRequestStatus } from "./src/api/statusSocket";
+import * as Location from "expo-location";
 
 const brandLogo = Platform.OS === "web" ? { uri: "/icon.png" } : require("./assets/icon.png");
+const optionIcons = {
+  wheelchairAssistance: require("./assets/wheelchair-assistance.png"),
+  busIdentification: require("./assets/bus-identification.png"),
+  increasedDuration: require("./assets/increased-duration.png"),
+  screenReader: require("./assets/screen-reader.png"),
+  repeatAnnouncements: require("./assets/repeat_announcements.png"),
+  hapticAlerts: require("./assets/haptic_alerts.png"),
+  largeText: require("./assets/large-text.png"),
+  highContrast: require("./assets/high-contrast.png"),
+};
 type TabIconName = "home" | "bus" | "assist" | "profile";
 
 type Screen =
@@ -45,7 +60,10 @@ type Screen =
   | "BUS"
   | "ACCESSIBILITY"
   | "CONFIRM"
-  | "STATUS";
+  | "STATUS"
+  | "ONBOARD"
+  | "ALIGHTING_STOP"
+  | "COMPLETED";
 
 type AppTab = "HOME" | "JOURNEY" | "ASSISTANCE" | "PROFILE";
 
@@ -63,8 +81,35 @@ const defaultAppPreferences: AppAccessibilityPreferences = {
   repeatAudio: true,
 };
 
+const localPreferencesKey = "sg-goassist.preferences.v1";
 const destination = "Kent Ridge Terminal";
 const boardingStop = "Changi Airport Terminal 1";
+const kentRidgeRouteStops: RouteStop[] = [
+  {
+    sequence: 0,
+    busStopCode: "18301",
+    roadName: "Kent Ridge Cres",
+    description: "Kent Ridge Crescent",
+    latitude: 1.29398,
+    longitude: 103.77104,
+  },
+  {
+    sequence: 1,
+    busStopCode: "18321",
+    roadName: "Kent Ridge Cres",
+    description: "Opp Heng Mui Keng Terrace",
+    latitude: 1.29295,
+    longitude: 103.77508,
+  },
+  {
+    sequence: 2,
+    busStopCode: "19011",
+    roadName: "Kent Ridge Cres",
+    description: "Kent Ridge Terminal",
+    latitude: 1.2942,
+    longitude: 103.7711,
+  },
+];
 const spacing = {
   xs: 4,
   sm: 8,
@@ -76,20 +121,24 @@ const radius = {
   md: 8,
 };
 const colors = {
-  background: "#F7F8F6",
-  surface: "#ffffff",
-  primary: "#1F4D49",
-  primaryDark: "#123936",
-  primarySoft: "#7FA08F",
-  softSage: "#CFE0D6",
-  text: "#2B2F33",
-  muted: "#3f6f68",
-  body: "#2B2F33",
-  border: "#CFE0D6",
-  error: "#9f1239",
-  disabledBackground: "#eef3ef",
-  disabledText: "#2f4f49",
-  focusIndicator: "#0f766e",
+  background: "#000000",
+  surface: "#02090B",
+  lightSurface: "#061D22",
+  primary: "#006E7A",
+  primaryDark: "#001F26",
+  primarySoft: "#00A7B7",
+  highlight: "#00C2D1",
+  success: "#83F4E6",
+  text: "#FFFFFF",
+  muted: "#D6F5F7",
+  metadata: "#A8CED3",
+  body: "#FFFFFF",
+  border: "#2B8793",
+  error: "#FF5A5F",
+  disabledBackground: "#111827",
+  disabledBorder: "#4B7280",
+  disabledText: "#C6D2D6",
+  focusIndicator: "#00E5F0",
 };
 
 const profileTimestamp = new Date().toISOString();
@@ -171,6 +220,10 @@ function SgGoAssistApp() {
   const [arrivingBuses, setArrivingBuses] = useState<ArrivalBus[]>([]);
   const [selectedBus, setSelectedBus] = useState<Bus | null>(null);
   const [selectedArrival, setSelectedArrival] = useState<ArrivalBus | null>(null);
+  const [journeyPhase, setJourneyPhase] = useState<JourneyPhase>("DISCOVERY");
+  const [routeStops, setRouteStops] = useState<RouteStop[]>([]);
+  const [currentStopIndex, setCurrentStopIndex] = useState(0);
+  const [selectedAlightingStop, setSelectedAlightingStop] = useState<RouteStop | null>(null);
   const [requestId, setRequestId] = useState<string | null>(null);
   const [requestStatus, setRequestStatus] = useState<AssistanceRequestStatus | null>(null);
   const [vehicleStatus, setVehicleStatus] = useState<VehicleStatus | null>(null);
@@ -180,13 +233,45 @@ function SgGoAssistApp() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const assistanceTypes = useMemo(() => requirementsToAssistanceTypes(requirements), [requirements]);
+  const assistanceTypes = useMemo(
+    () => assistanceTypesForPhase(requirements, "BOARDING"),
+    [requirements]
+  );
+  const alightingAssistanceTypes = useMemo(
+    () => assistanceTypesForPhase(requirements, "ALIGHTING"),
+    [requirements]
+  );
   const selectedNeeds = useMemo(
     () => assistanceTypes.map(readableAssistanceType).join(", "),
     [assistanceTypes]
   );
+  const currentRouteStop = routeStops[currentStopIndex] ?? null;
+  const nextRouteStop = routeStops[currentStopIndex + 1] ?? null;
+  const selectedStopIsNext =
+    Boolean(selectedAlightingStop && nextRouteStop) &&
+    selectedAlightingStop?.busStopCode === nextRouteStop?.busStopCode;
+  const selectedStopReached =
+    Boolean(selectedAlightingStop && currentRouteStop) &&
+    selectedAlightingStop?.busStopCode === currentRouteStop?.busStopCode;
   const sessionId = activeProfile?.profileId ?? "demo-passenger-session";
   const activeTab = getActiveTab(screen);
+
+  useEffect(() => {
+    const saved = readSavedPreferences();
+    if (!saved) {
+      return;
+    }
+
+    setRequirements(saved.assistanceDefaults);
+    setAppPreferences(saved.appPreferences);
+  }, []);
+
+  useEffect(() => {
+    savePreferencesLocally({
+      assistanceDefaults: requirements,
+      appPreferences,
+    });
+  }, [appPreferences, requirements]);
 
   useEffect(() => {
     if (!requestId) {
@@ -367,11 +452,25 @@ function SgGoAssistApp() {
 
   function openTab(tab: AppTab) {
     if (tab === "HOME") {
+      if (journeyPhase === "ONBOARD" || journeyPhase === "ALIGHTING") {
+        setScreen("ONBOARD");
+        return;
+      }
       setScreen(selectedStop ? (selectedArrival ? "BUS" : "STOP") : "LOCATION");
       return;
     }
     if (tab === "JOURNEY") {
-      setScreen(requestId ? "STATUS" : selectedBus ? "CONFIRM" : "LOCATION");
+      setScreen(
+        journeyPhase === "ONBOARD" || journeyPhase === "ALIGHTING"
+          ? "ONBOARD"
+          : journeyPhase === "COMPLETED"
+            ? "COMPLETED"
+            : requestId
+              ? "STATUS"
+              : selectedBus
+                ? "CONFIRM"
+                : "LOCATION"
+      );
       return;
     }
     if (tab === "ASSISTANCE") {
@@ -387,7 +486,6 @@ function SgGoAssistApp() {
     setLoadingMessage("Finding nearby bus stops...");
     setError(null);
     try {
-      const Location = await import("expo-location");
       const permission = await Location.requestForegroundPermissionsAsync();
       if (permission.status !== "granted") {
         setError("Location access is unavailable.");
@@ -412,13 +510,13 @@ function SgGoAssistApp() {
       }
 
       setNearbyStops(result.stops);
-      setSelectedStop(result.stops[0]);
+      setSelectedStop(null);
       setScreen("STOP");
       AccessibilityInfo.announceForAccessibility(
-        `Nearest bus stop: ${result.stops[0].description}, ${result.stops[0].roadName}, bus stop ${result.stops[0].busStopCode}, approximately ${result.stops[0].distanceMeters} metres away.`
+        `${result.stops.length} nearby bus stops found. Please confirm your bus stop.`
       );
     } catch (apiError) {
-      setError(apiError instanceof Error ? apiError.message : "Unable to find nearby bus stops.");
+        setError("We couldn't determine your location.");
     } finally {
       setIsLoading(false);
       setLoadingMessage(null);
@@ -436,7 +534,7 @@ function SgGoAssistApp() {
         accuracyMeters: 0,
       });
       setNearbyStops(result.stops);
-      setSelectedStop(result.stops[0] ?? null);
+      setSelectedStop(null);
       setScreen("STOP");
     } catch (apiError) {
       setError(apiError instanceof Error ? apiError.message : "Unable to load bus stops.");
@@ -458,24 +556,12 @@ function SgGoAssistApp() {
       const arrivals = await fetchBusStopArrivals(stop.busStopCode);
       const flattened = arrivals.services.flatMap((service) => service.buses);
       setArrivingBuses(flattened);
-      setSelectedArrival(flattened[0] ?? null);
-      setSelectedBus(
-        flattened[0]
-          ? {
-              busId: flattened[0].busId,
-              busService: flattened[0].serviceNo,
-              routeNumber: flattened[0].serviceNo,
-              currentStop: stop.description,
-              nextStop: flattened[0].destination,
-              isAccessible: flattened[0].wheelchairAccessible,
-              wheelchairSpaces: flattened[0].wheelchairAccessible ? 1 : 0,
-              latitude: stop.latitude,
-              longitude: stop.longitude,
-              estimatedArrivalSeconds: flattened[0].etaSeconds,
-            }
-          : null
-      );
+      setSelectedArrival(null);
+      setSelectedBus(null);
       setScreen("BUS");
+      if (flattened.length === 0) {
+        setError("Bus arrival information is temporarily unavailable.");
+      }
     } catch (apiError) {
       setError(apiError instanceof Error ? apiError.message : "Unable to load buses for this stop.");
     } finally {
@@ -502,6 +588,8 @@ function SgGoAssistApp() {
       longitude: selectedStop.longitude,
       estimatedArrivalSeconds: arrival.etaSeconds,
     });
+    setJourneyPhase("DISCOVERY");
+    setScreen("ACCESSIBILITY");
     AccessibilityInfo.announceForAccessibility(
       `Bus ${arrival.serviceNo} selected. Towards ${arrival.destination}. Arriving in approximately ${Math.ceil(
         arrival.etaSeconds / 60
@@ -524,6 +612,7 @@ function SgGoAssistApp() {
         busId: selectedBus.busId,
         boardingStop: selectedStop.busStopCode,
         destination: selectedArrival?.destination ?? destination,
+        stopCode: selectedStop.busStopCode,
         assistanceTypes,
         source: "MOBILE_APP",
         boardingOrAlighting: "BOARDING",
@@ -548,6 +637,7 @@ function SgGoAssistApp() {
             : "Request sent to assistance engine.",
         },
       ]);
+      setJourneyPhase("WAITING_FOR_BUS");
       setScreen("STATUS");
     } catch (apiError) {
       setError(`Unable to send assistance request to Bus ${selectedBus.busService}.`);
@@ -573,6 +663,129 @@ function SgGoAssistApp() {
       setIsLoading(false);
       setLoadingMessage(null);
     }
+  }
+
+  function enterOnboardMode() {
+    if (!selectedBus) {
+      return;
+    }
+
+    const route =
+      selectedBus.busService === "95"
+        ? kentRidgeRouteStops
+        : buildFallbackRouteStops(selectedStop, selectedArrival?.destination ?? destination);
+    setRouteStops(route);
+    setCurrentStopIndex(0);
+    setSelectedAlightingStop(route[route.length - 1] ?? null);
+    setJourneyPhase("ONBOARD");
+    setScreen("ONBOARD");
+    notifyPassenger(
+      `You are onboard Bus ${selectedBus.busService} towards ${selectedArrival?.destination ?? selectedBus.nextStop}.`,
+      Haptics.NotificationFeedbackType.Success
+    );
+  }
+
+  function chooseAlightingStop(stop: RouteStop) {
+    setSelectedAlightingStop(stop);
+    setScreen("ONBOARD");
+    AccessibilityInfo.announceForAccessibility(`${stop.description} selected as your alighting stop.`);
+  }
+
+  function simulateNextStop() {
+    if (currentStopIndex >= routeStops.length - 1) {
+      return;
+    }
+
+    const nextIndex = currentStopIndex + 1;
+    const nextStop = routeStops[nextIndex];
+    setCurrentStopIndex(nextIndex);
+
+    if (selectedAlightingStop?.busStopCode === nextStop.busStopCode) {
+      setJourneyPhase("ALIGHTING");
+      notifyPassenger(
+        `You have arrived at ${nextStop.description}.`,
+        Haptics.NotificationFeedbackType.Success
+      );
+      return;
+    }
+
+    const followingStop = routeStops[nextIndex + 1];
+    if (selectedAlightingStop && followingStop?.busStopCode === selectedAlightingStop.busStopCode) {
+      notifyPassenger(
+        `Your selected stop, ${selectedAlightingStop.description}, is next.`,
+        Haptics.NotificationFeedbackType.Warning
+      );
+    }
+  }
+
+  async function requestDisembarkation() {
+    if (!selectedBus || !selectedAlightingStop || isLoading) {
+      setError("Choose where to get off before requesting disembarkation.");
+      setScreen("ALIGHTING_STOP");
+      return;
+    }
+
+    if (alightingAssistanceTypes.length === 0) {
+      setJourneyPhase("ALIGHTING");
+      setVisualAlert(`Your request to alight at ${selectedAlightingStop.description} is ready.`);
+      AccessibilityInfo.announceForAccessibility(
+        `Request to alight at ${selectedAlightingStop.description} prepared.`
+      );
+      return;
+    }
+
+    setIsLoading(true);
+    setLoadingMessage("Sending alighting assistance request...");
+    setError(null);
+    try {
+      const response = await createAssistanceRequest({
+        sessionId,
+        busService: selectedBus.busService,
+        busId: selectedBus.busId,
+        boardingStop: selectedStop?.busStopCode ?? currentRouteStop?.busStopCode ?? "ONBOARD",
+        destination: selectedAlightingStop.description,
+        stopCode: selectedAlightingStop.busStopCode,
+        assistanceTypes: alightingAssistanceTypes,
+        source: "MOBILE_APP",
+        boardingOrAlighting: "ALIGHTING",
+        accessibilityVerificationStatus: activeProfile?.verificationStatus,
+        verificationMethod: activeProfile?.verificationMethod,
+      });
+
+      setRequestId(response.requestId);
+      setRequestStatus(response.status);
+      setJourneyPhase("ALIGHTING");
+      setEvents((current) => [
+        {
+          type: "REQUEST_STATUS",
+          requestId: response.requestId,
+          status: response.status,
+          timestamp: response.createdAt,
+          assistanceTypes: alightingAssistanceTypes,
+          source: "MOBILE_APP",
+          busId: selectedBus.busId,
+          busService: selectedBus.busService,
+          message: "Alighting assistance request sent.",
+        },
+        ...current,
+      ]);
+      setVisualAlert(
+        `Alighting assistance requested for ${selectedAlightingStop.description}: ${alightingAssistanceTypes
+          .map(readableAssistanceType)
+          .join(", ")}.`
+      );
+    } catch {
+      setError("We couldn't send your alighting assistance request.");
+    } finally {
+      setIsLoading(false);
+      setLoadingMessage(null);
+    }
+  }
+
+  function endJourney() {
+    setJourneyPhase("COMPLETED");
+    setScreen("COMPLETED");
+    AccessibilityInfo.announceForAccessibility("Journey completed.");
   }
 
   return (
@@ -646,7 +859,6 @@ function SgGoAssistApp() {
                 </Text>
               </Pressable>
             ))}
-            <SecondaryButton label="Continue as guest" onPress={() => setScreen("LOCATION")} />
           </View>
         )}
 
@@ -798,22 +1010,27 @@ function SgGoAssistApp() {
           <View style={styles.section}>
             <SectionHeader
               eyebrow="Journey"
-              title="Confirm bus stop"
+              title="Nearby bus stops"
               highContrast={appPreferences.highContrast}
             />
             {selectedStop ? (
               <BusStopCard stop={selectedStop} selected />
             ) : (
-              <Text style={styles.bodyText}>No nearby bus stop selected.</Text>
+              <Text style={styles.bodyText}>Select the bus stop where you are waiting.</Text>
             )}
-            <PrimaryButton label="Yes, this stop" onPress={() => confirmBusStop()} disabled={!selectedStop || isLoading} />
+            <PrimaryButton
+              label="This is my stop"
+              accessibilityHint="Confirm this bus stop and show buses arriving here."
+              onPress={() => confirmBusStop()}
+              disabled={!selectedStop || isLoading}
+            />
             <SecondaryButton
               label="Repeat my bus stop"
               onPress={() => selectedStop && AccessibilityInfo.announceForAccessibility(stopAccessibilityLabel(selectedStop))}
               disabled={!selectedStop}
             />
             <Text style={[styles.heading, appPreferences.highContrast && styles.highContrastText]}>
-              Other nearby stops
+              Choose a stop
             </Text>
             {nearbyStops.map((stop) => (
               <BusStopCard
@@ -938,7 +1155,11 @@ function SgGoAssistApp() {
               highContrast={appPreferences.highContrast}
             />
             <View
-              style={styles.statusPanel}
+              style={[
+                styles.statusPanel,
+                (vehicleStatus === "APPROACHING" || vehicleStatus === "ARRIVED") &&
+                  styles.journeyAlertPanel,
+              ]}
               accessible
               accessibilityLabel={`Request status ${requestStatusLabel(
                 requestStatus
@@ -962,6 +1183,15 @@ function SgGoAssistApp() {
               <SecondaryButton label="Cancel request" onPress={cancelRequest} disabled={isLoading} />
             )}
 
+            {vehicleStatus === "ARRIVED" && (
+              <PrimaryButton
+                label="Passenger is onboard"
+                accessibilityHint="Development control. Enter onboard journey mode after boarding."
+                onPress={enterOnboardMode}
+                disabled={isLoading}
+              />
+            )}
+
             <SecondaryButton
               label="Repeat journey status"
               onPress={announceCurrentJourney}
@@ -978,6 +1208,77 @@ function SgGoAssistApp() {
                 <Text style={styles.bodyText}>{new Date(event.timestamp).toLocaleTimeString()}</Text>
               </View>
             ))}
+          </View>
+        )}
+
+        {screen === "ONBOARD" && selectedBus && (
+          <OnboardJourneyScreen
+            appPreferences={appPreferences}
+            selectedBus={selectedBus}
+            destination={selectedArrival?.destination ?? selectedBus.nextStop}
+            currentStop={currentRouteStop}
+            nextStop={nextRouteStop}
+            selectedAlightingStop={selectedAlightingStop}
+            alightingAssistanceTypes={alightingAssistanceTypes}
+            selectedStopIsNext={selectedStopIsNext}
+            selectedStopReached={selectedStopReached}
+            journeyPhase={journeyPhase}
+            onChangeStop={() => setScreen("ALIGHTING_STOP")}
+            onRequestDisembarkation={requestDisembarkation}
+            onRepeat={announceCurrentJourney}
+            onSimulateNextStop={simulateNextStop}
+            onEndJourney={endJourney}
+          />
+        )}
+
+        {screen === "ALIGHTING_STOP" && (
+          <View style={styles.section}>
+            <SectionHeader
+              eyebrow="On board"
+              title="Choose where to get off"
+              highContrast={appPreferences.highContrast}
+            />
+            {routeStops.slice(currentStopIndex + 1).map((stop) => (
+              <AlightingStopRow
+                key={stop.busStopCode}
+                stop={stop}
+                selected={selectedAlightingStop?.busStopCode === stop.busStopCode}
+                onPress={() => chooseAlightingStop(stop)}
+              />
+            ))}
+            <SecondaryButton label="Back to onboard journey" onPress={() => setScreen("ONBOARD")} />
+          </View>
+        )}
+
+        {screen === "COMPLETED" && (
+          <View style={styles.section}>
+            <SectionHeader
+              eyebrow="Journey"
+              title="Journey completed"
+              highContrast={appPreferences.highContrast}
+            />
+            <View style={styles.statusPanel}>
+              <Text style={styles.statusLabel}>You have arrived</Text>
+              <Text style={styles.statusValue}>
+                {selectedAlightingStop?.description ?? "Destination"}
+              </Text>
+              <Text style={styles.bodyText}>Your journey has ended.</Text>
+            </View>
+            <PrimaryButton
+              label="Find another bus"
+              onPress={() => {
+                setJourneyPhase("DISCOVERY");
+                setRequestId(null);
+                setRequestStatus(null);
+                setVehicleStatus(null);
+                setSelectedBus(null);
+                setSelectedArrival(null);
+                setSelectedAlightingStop(null);
+                setRouteStops([]);
+                setCurrentStopIndex(0);
+                setScreen("LOCATION");
+              }}
+            />
           </View>
         )}
 
@@ -1009,7 +1310,8 @@ function ToggleRow({
   highContrast = false,
   largeText = false,
   variant = "default",
-  icon,
+  iconSource,
+  iconSize,
   onPress,
 }: {
   label: string;
@@ -1018,7 +1320,8 @@ function ToggleRow({
   highContrast?: boolean;
   largeText?: boolean;
   variant?: "default" | "assistance" | "phone";
-  icon?: string;
+  iconSource?: ImageSourcePropType;
+  iconSize?: number;
   onPress: () => void;
 }) {
   const isAssistance = variant === "assistance";
@@ -1050,15 +1353,24 @@ function ToggleRow({
             highContrast && styles.highContrastIndicator,
           ]}
         >
-          <Text
-            style={[
-              styles.optionIconText,
-              enabled && styles.selectedOptionIconText,
-              highContrast && styles.highContrastText,
-            ]}
-          >
-            {icon ?? "OK"}
-          </Text>
+          {iconSource ? (
+            <Image
+              source={iconSource}
+              style={[styles.optionIconImage, iconSize ? { height: iconSize, width: iconSize } : undefined]}
+              resizeMode="contain"
+              accessible={false}
+            />
+          ) : (
+            <Text
+              style={[
+                styles.optionIconText,
+                enabled && styles.selectedOptionIconText,
+                highContrast && styles.highContrastText,
+              ]}
+            >
+              OK
+            </Text>
+          )}
         </View>
         <View
           style={[
@@ -1129,7 +1441,8 @@ function AssistancePreferenceToggles({
         highContrast={appPreferences.highContrast}
         largeText={appPreferences.largeText}
         variant="assistance"
-        icon="WC"
+        iconSource={optionIcons.wheelchairAssistance}
+        iconSize={38}
         onPress={() =>
           setRequirements((current) => ({
             ...current,
@@ -1144,7 +1457,8 @@ function AssistancePreferenceToggles({
         highContrast={appPreferences.highContrast}
         largeText={appPreferences.largeText}
         variant="assistance"
-        icon="+T"
+        iconSource={optionIcons.increasedDuration}
+        iconSize={36}
         onPress={() =>
           setRequirements((current) => ({
             ...current,
@@ -1159,7 +1473,8 @@ function AssistancePreferenceToggles({
         highContrast={appPreferences.highContrast}
         largeText={appPreferences.largeText}
         variant="assistance"
-        icon="profile"
+        iconSource={optionIcons.busIdentification}
+        iconSize={37}
         onPress={() =>
           setRequirements((current) => ({
             ...current,
@@ -1187,7 +1502,8 @@ function AppPreferenceToggles({
         highContrast={appPreferences.highContrast}
         largeText={appPreferences.largeText}
         variant="phone"
-        icon="SR"
+        iconSource={optionIcons.screenReader}
+        iconSize={36}
         onPress={() =>
           setAppPreferences((current) => ({
             ...current,
@@ -1202,7 +1518,8 @@ function AppPreferenceToggles({
         highContrast={appPreferences.highContrast}
         largeText={appPreferences.largeText}
         variant="phone"
-        icon="RE"
+        iconSource={optionIcons.repeatAnnouncements}
+        iconSize={37}
         onPress={() =>
           setAppPreferences((current) => ({
             ...current,
@@ -1217,7 +1534,8 @@ function AppPreferenceToggles({
         highContrast={appPreferences.highContrast}
         largeText={appPreferences.largeText}
         variant="phone"
-        icon="HB"
+        iconSource={optionIcons.hapticAlerts}
+        iconSize={36}
         onPress={() =>
           setAppPreferences((current) => ({
             ...current,
@@ -1232,7 +1550,8 @@ function AppPreferenceToggles({
         highContrast={appPreferences.highContrast}
         largeText={appPreferences.largeText}
         variant="phone"
-        icon="Aa"
+        iconSource={optionIcons.largeText}
+        iconSize={38}
         onPress={() =>
           setAppPreferences((current) => ({
             ...current,
@@ -1247,7 +1566,8 @@ function AppPreferenceToggles({
         highContrast={appPreferences.highContrast}
         largeText={appPreferences.largeText}
         variant="phone"
-        icon="HC"
+        iconSource={optionIcons.highContrast}
+        iconSize={36}
         onPress={() =>
           setAppPreferences((current) => ({
             ...current,
@@ -1455,6 +1775,136 @@ function BusArrivalCard({
   );
 }
 
+function OnboardJourneyScreen({
+  appPreferences,
+  selectedBus,
+  destination,
+  currentStop,
+  nextStop,
+  selectedAlightingStop,
+  alightingAssistanceTypes,
+  selectedStopIsNext,
+  selectedStopReached,
+  journeyPhase,
+  onChangeStop,
+  onRequestDisembarkation,
+  onRepeat,
+  onSimulateNextStop,
+  onEndJourney,
+}: {
+  appPreferences: AppAccessibilityPreferences;
+  selectedBus: Bus;
+  destination: string;
+  currentStop: RouteStop | null;
+  nextStop: RouteStop | null;
+  selectedAlightingStop: RouteStop | null;
+  alightingAssistanceTypes: AssistanceType[];
+  selectedStopIsNext: boolean;
+  selectedStopReached: boolean;
+  journeyPhase: JourneyPhase;
+  onChangeStop: () => void;
+  onRequestDisembarkation: () => void;
+  onRepeat: () => void;
+  onSimulateNextStop: () => void;
+  onEndJourney: () => void;
+}) {
+  return (
+    <View style={styles.section}>
+      <View
+        style={styles.onboardHero}
+        accessible
+        accessibilityRole="header"
+        accessibilityLabel={`You are onboard Bus ${selectedBus.busService} towards ${destination}.`}
+      >
+        <Text style={styles.onboardEyebrow}>You're on board</Text>
+        <Text style={styles.onboardBus}>Bus {selectedBus.busService}</Text>
+        <Text style={styles.onboardDestination}>Towards {destination}</Text>
+      </View>
+
+      {selectedStopIsNext && (
+        <View style={styles.priorityPanel} accessible accessibilityRole="alert">
+          <Text style={styles.statusLabel}>Your stop is next</Text>
+          <Text style={styles.statusValue}>{selectedAlightingStop?.description}</Text>
+          <Text style={styles.bodyText}>Your alighting request is ready.</Text>
+        </View>
+      )}
+
+      {selectedStopReached && (
+        <View style={styles.priorityPanel} accessible accessibilityRole="alert">
+          <Text style={styles.statusLabel}>You have arrived</Text>
+          <Text style={styles.statusValue}>{selectedAlightingStop?.description}</Text>
+          <Text style={styles.bodyText}>Your disembarkation request has been sent.</Text>
+        </View>
+      )}
+
+      <View style={styles.statusPanel}>
+        <Text style={styles.statusLabel}>Current stop</Text>
+        <Text style={styles.summaryValue}>{currentStop?.description ?? "Journey starting"}</Text>
+        <Text style={styles.statusLabel}>Next stop</Text>
+        <Text style={styles.summaryValue}>{nextStop?.description ?? "Final stop"}</Text>
+      </View>
+
+      <View style={styles.statusPanel}>
+        <Text style={styles.statusLabel}>Where would you like to get off?</Text>
+        <Text style={styles.statusValue}>
+          {selectedAlightingStop?.description ?? "Choose alighting stop"}
+        </Text>
+        {alightingAssistanceTypes.length > 0 && (
+          <Text style={styles.bodyText}>
+            {alightingAssistanceTypes.map(readableAssistanceType).join(", ")} will be requested for your selected stop.
+          </Text>
+        )}
+        <SecondaryButton label="Change alighting stop" onPress={onChangeStop} />
+      </View>
+
+      <PrimaryButton
+        label={selectedStopReached ? "Disembark at this stop" : "Request to alight here"}
+        accessibilityHint="Send passenger intent to alight. The bus remains responsible for safe operation."
+        onPress={onRequestDisembarkation}
+        variant="attention"
+      />
+      {selectedStopReached && (
+        <PrimaryButton label="End journey" onPress={onEndJourney} variant="attention" />
+      )}
+      <SecondaryButton
+        label="Repeat journey information"
+        onPress={onRepeat}
+        disabled={!appPreferences.repeatAudio}
+      />
+      <SecondaryButton
+        label="Simulate next stop"
+        accessibilityHint="Development control for onboard stop progress."
+        onPress={onSimulateNextStop}
+        disabled={!nextStop || journeyPhase === "COMPLETED"}
+      />
+    </View>
+  );
+}
+
+function AlightingStopRow({
+  stop,
+  selected,
+  onPress,
+}: {
+  stop: RouteStop;
+  selected: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="radio"
+      accessibilityState={{ checked: selected }}
+      accessibilityLabel={`${stop.description}. ${selected ? "Selected" : "Not selected"}. Double tap to choose this alighting stop.`}
+      onPress={onPress}
+      style={[styles.busCard, selected && styles.selectedCard]}
+    >
+      <Text style={styles.busTitle}>{stop.description}</Text>
+      <Text style={styles.bodyText}>Bus Stop {stop.busStopCode}</Text>
+      <Text style={styles.selectHint}>{selected ? "Selected stop" : "Select stop"}</Text>
+    </Pressable>
+  );
+}
+
 function TabButton({
   label,
   icon,
@@ -1650,11 +2100,13 @@ function PrimaryButton({
   accessibilityHint,
   onPress,
   disabled = false,
+  variant = "default",
 }: {
   label: string;
   accessibilityHint?: string;
   onPress: () => void;
   disabled?: boolean;
+  variant?: "default" | "attention";
 }) {
   return (
     <Pressable
@@ -1664,9 +2116,19 @@ function PrimaryButton({
       accessibilityState={{ disabled }}
       disabled={disabled}
       onPress={onPress}
-      style={[styles.primaryButton, disabled && styles.disabledButton]}
+      style={[
+        styles.primaryButton,
+        variant === "attention" && styles.attentionButton,
+        disabled && styles.disabledButton,
+      ]}
     >
-      <Text style={[styles.primaryButtonText, disabled && styles.disabledButtonText]}>
+      <Text
+        style={[
+          styles.primaryButtonText,
+          variant === "attention" && styles.attentionButtonText,
+          disabled && styles.disabledButtonText,
+        ]}
+      >
         {label}
       </Text>
     </Pressable>
@@ -1722,6 +2184,95 @@ function requirementsToAssistanceTypes(requirements: AccessibilityRequirements):
     types.push("EXTENDED_DWELL_TIME");
   }
   return types;
+}
+
+function buildFallbackRouteStops(
+  selectedStop: NearbyBusStop | null,
+  fallbackDestination: string
+): RouteStop[] {
+  const origin: RouteStop = selectedStop
+    ? { ...selectedStop, sequence: 0 }
+    : {
+        sequence: 0,
+        busStopCode: "CURRENT",
+        roadName: "Current route",
+        description: "Current stop",
+        latitude: 0,
+        longitude: 0,
+      };
+
+  return [
+    origin,
+    {
+      sequence: 1,
+      busStopCode: "NEXT",
+      roadName: "Current route",
+      description: fallbackDestination,
+      latitude: origin.latitude,
+      longitude: origin.longitude,
+    },
+  ];
+}
+
+function readSavedPreferences():
+  | {
+      assistanceDefaults: AccessibilityRequirements;
+      appPreferences: AppAccessibilityPreferences;
+    }
+  | null {
+  const storage = getLocalStorage();
+  if (!storage) {
+    return null;
+  }
+
+  try {
+    const raw = storage.getItem(localPreferencesKey);
+    if (!raw) {
+      return null;
+    }
+
+    const parsed = JSON.parse(raw) as Partial<{
+      assistanceDefaults: AccessibilityRequirements;
+      appPreferences: AppAccessibilityPreferences;
+    }>;
+
+    return {
+      assistanceDefaults: {
+        ...defaultRequirements,
+        ...parsed.assistanceDefaults,
+      },
+      appPreferences: {
+        ...defaultAppPreferences,
+        ...parsed.appPreferences,
+      },
+    };
+  } catch {
+    return null;
+  }
+}
+
+function savePreferencesLocally(preferences: {
+  assistanceDefaults: AccessibilityRequirements;
+  appPreferences: AppAccessibilityPreferences;
+}) {
+  const storage = getLocalStorage();
+  if (!storage) {
+    return;
+  }
+
+  try {
+    storage.setItem(localPreferencesKey, JSON.stringify(preferences));
+  } catch {
+    // Local preference persistence should never block the journey flow.
+  }
+}
+
+function getLocalStorage(): Storage | null {
+  if (typeof globalThis === "undefined" || !("localStorage" in globalThis)) {
+    return null;
+  }
+
+  return globalThis.localStorage;
 }
 
 function readableAssistanceType(type: AssistanceType) {
@@ -1797,6 +2348,9 @@ function readableVerificationMethod(method?: VerificationMethod) {
 }
 
 function getActiveTab(screen: Screen): AppTab {
+  if (screen === "ONBOARD" || screen === "ALIGHTING_STOP" || screen === "COMPLETED") {
+    return "JOURNEY";
+  }
   if (screen === "ACCESSIBILITY" || screen === "CONFIRM") {
     return "ASSISTANCE";
   }
@@ -1863,8 +2417,8 @@ const styles = StyleSheet.create({
   },
   brandMark: {
     alignItems: "center",
-    backgroundColor: "#fbfaf5",
-    borderColor: "#ebe7dd",
+    backgroundColor: colors.surface,
+    borderColor: colors.primarySoft,
     borderRadius: 18,
     borderWidth: 1,
     height: 74,
@@ -1987,7 +2541,7 @@ const styles = StyleSheet.create({
     width: 20,
   },
   brandRouteRight: {
-    backgroundColor: "#d8e1d8",
+    backgroundColor: colors.primary,
     borderRadius: 10,
     bottom: 2,
     height: 5,
@@ -2000,7 +2554,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   brandTitle: {
-    color: colors.primaryDark,
+    color: colors.text,
     fontSize: 32,
     fontWeight: "900",
   },
@@ -2032,8 +2586,8 @@ const styles = StyleSheet.create({
     fontWeight: "800",
   },
   tabBar: {
-    backgroundColor: "#e8f1ee",
-    borderColor: "#c3cbc6",
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
     borderTopWidth: 1,
     bottom: 0,
     borderRadius: 8,
@@ -2047,6 +2601,7 @@ const styles = StyleSheet.create({
   },
   tabButton: {
     alignItems: "center",
+    backgroundColor: colors.lightSurface,
     borderRadius: 6,
     flex: 1,
     gap: 3,
@@ -2056,10 +2611,10 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
   },
   selectedTabButton: {
-    backgroundColor: "#115e59",
+    backgroundColor: colors.highlight,
   },
   tabButtonText: {
-    color: "#28332d",
+    color: colors.text,
     fontSize: 14,
     fontWeight: "800",
     textAlign: "center",
@@ -2067,7 +2622,7 @@ const styles = StyleSheet.create({
   tabIconBadge: {
     alignItems: "center",
     backgroundColor: colors.surface,
-    borderColor: colors.primary,
+    borderColor: colors.primarySoft,
     borderRadius: 14,
     borderWidth: 2,
     height: 28,
@@ -2076,18 +2631,18 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6,
   },
   selectedTabIconBadge: {
-    backgroundColor: colors.surface,
-    borderColor: colors.surface,
+    backgroundColor: colors.primaryDark,
+    borderColor: colors.primaryDark,
   },
   tabIconText: {
-    color: colors.primary,
+    color: colors.text,
     fontSize: 13,
     fontWeight: "900",
     lineHeight: 16,
     textAlign: "center",
   },
   selectedTabIconText: {
-    color: colors.primaryDark,
+    color: colors.highlight,
   },
   selectedIcon: {
     height: 18,
@@ -2095,7 +2650,7 @@ const styles = StyleSheet.create({
     width: 22,
   },
   selectedIconShort: {
-    backgroundColor: colors.primaryDark,
+    backgroundColor: colors.highlight,
     borderRadius: 2,
     height: 4,
     left: 3,
@@ -2105,7 +2660,7 @@ const styles = StyleSheet.create({
     width: 9,
   },
   selectedIconLong: {
-    backgroundColor: colors.primaryDark,
+    backgroundColor: colors.highlight,
     borderRadius: 2,
     height: 4,
     left: 9,
@@ -2121,7 +2676,7 @@ const styles = StyleSheet.create({
     width: 24,
   },
   homeRoof: {
-    borderColor: colors.primary,
+    borderColor: colors.primarySoft,
     borderRightWidth: 4,
     borderTopWidth: 4,
     height: 16,
@@ -2131,14 +2686,14 @@ const styles = StyleSheet.create({
     width: 16,
   },
   homeBody: {
-    backgroundColor: colors.primary,
+    backgroundColor: colors.primarySoft,
     borderRadius: 2,
     height: 11,
     width: 16,
   },
   navBusIcon: {
     alignItems: "center",
-    backgroundColor: colors.primary,
+    backgroundColor: colors.primarySoft,
     borderRadius: 4,
     height: 22,
     justifyContent: "space-between",
@@ -2146,7 +2701,7 @@ const styles = StyleSheet.create({
     width: 22,
   },
   navBusWindow: {
-    backgroundColor: colors.surface,
+    backgroundColor: colors.primaryDark,
     borderRadius: 2,
     height: 7,
     width: 13,
@@ -2157,7 +2712,7 @@ const styles = StyleSheet.create({
     width: 14,
   },
   navBusLight: {
-    backgroundColor: colors.surface,
+    backgroundColor: colors.primaryDark,
     borderRadius: 2,
     height: 4,
     width: 4,
@@ -2169,14 +2724,14 @@ const styles = StyleSheet.create({
     width: 22,
   },
   assistIconVertical: {
-    backgroundColor: colors.primary,
+    backgroundColor: colors.primarySoft,
     borderRadius: 2,
     height: 20,
     position: "absolute",
     width: 5,
   },
   assistIconHorizontal: {
-    backgroundColor: colors.primary,
+    backgroundColor: colors.primarySoft,
     borderRadius: 2,
     height: 5,
     position: "absolute",
@@ -2189,32 +2744,32 @@ const styles = StyleSheet.create({
     width: 22,
   },
   profileIconHead: {
-    backgroundColor: colors.primary,
+    backgroundColor: colors.primarySoft,
     borderRadius: 6,
     height: 11,
     marginBottom: 2,
     width: 11,
   },
   profileIconBody: {
-    backgroundColor: colors.primary,
+    backgroundColor: colors.primarySoft,
     borderTopLeftRadius: 8,
     borderTopRightRadius: 8,
     height: 8,
     width: 18,
   },
   tabSelectedText: {
-    color: "#ffffff",
+    color: colors.primaryDark,
     fontSize: 11,
     fontWeight: "800",
   },
   selectedTabButtonText: {
-    color: "#ffffff",
+    color: colors.primaryDark,
   },
   sectionHeader: {
     gap: 4,
   },
   eyebrow: {
-    color: "#115e59",
+    color: colors.primarySoft,
     fontSize: 14,
     fontWeight: "900",
     textTransform: "uppercase",
@@ -2226,8 +2781,8 @@ const styles = StyleSheet.create({
   },
   toggleRow: {
     alignItems: "center",
-    backgroundColor: "#ffffff",
-    borderColor: "#6a756f",
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
     borderRadius: 8,
     borderWidth: 2,
     flexDirection: "row",
@@ -2237,21 +2792,21 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
   },
   assistanceOption: {
-    borderColor: "#0f766e",
+    borderColor: colors.primary,
   },
   phoneOption: {
-    borderColor: "#4b5563",
+    borderColor: colors.metadata,
   },
   selectedToggleRow: {
     borderWidth: 4,
   },
   selectedAssistanceOption: {
-    backgroundColor: "#ecfdf5",
-    borderColor: "#047857",
+    backgroundColor: colors.primaryDark,
+    borderColor: colors.highlight,
   },
   selectedPhoneOption: {
-    backgroundColor: "#eff6ff",
-    borderColor: "#1d4ed8",
+    backgroundColor: colors.primaryDark,
+    borderColor: colors.highlight,
   },
   optionVisualGroup: {
     alignItems: "center",
@@ -2259,38 +2814,42 @@ const styles = StyleSheet.create({
   },
   optionIcon: {
     alignItems: "center",
-    backgroundColor: "#f8faf7",
-    borderColor: "#6a756f",
+    backgroundColor: colors.lightSurface,
+    borderColor: colors.border,
     borderRadius: 8,
     borderWidth: 2,
-    height: 48,
+    height: 56,
     justifyContent: "center",
-    width: 54,
+    width: 56,
   },
   assistanceIcon: {
-    backgroundColor: "#d1fae5",
-    borderColor: "#0f766e",
+    backgroundColor: colors.primaryDark,
+    borderColor: colors.primarySoft,
   },
   phoneIcon: {
-    backgroundColor: "#dbeafe",
-    borderColor: "#1d4ed8",
+    backgroundColor: colors.surface,
+    borderColor: colors.primaryDark,
   },
   selectedOptionIcon: {
-    backgroundColor: "#115e59",
-    borderColor: "#115e59",
+    backgroundColor: colors.primaryDark,
+    borderColor: colors.primaryDark,
   },
   optionIconText: {
-    color: "#10231b",
+    color: colors.text,
     fontSize: 17,
     fontWeight: "900",
     textAlign: "center",
+  },
+  optionIconImage: {
+    height: 36,
+    width: 36,
   },
   selectedOptionIconText: {
     color: "#ffffff",
   },
   selectionIndicator: {
     alignItems: "center",
-    borderColor: "#6a756f",
+    borderColor: colors.border,
     borderRadius: 18,
     borderWidth: 2,
     height: 36,
@@ -2298,43 +2857,43 @@ const styles = StyleSheet.create({
     width: 36,
   },
   selectedSelectionIndicator: {
-    backgroundColor: "#115e59",
-    borderColor: "#115e59",
+    backgroundColor: colors.highlight,
+    borderColor: colors.highlight,
   },
   highContrastIndicator: {
     borderColor: "#ffffff",
   },
   selectionIndicatorText: {
-    color: "#10231b",
+    color: colors.text,
     fontSize: 22,
     fontWeight: "900",
     lineHeight: 28,
   },
   selectedSelectionIndicatorText: {
-    color: "#ffffff",
+    color: colors.primaryDark,
   },
   toggleTextGroup: {
     flex: 1,
     gap: 2,
   },
   toggleText: {
-    color: "#10231b",
+    color: colors.text,
     fontSize: 20,
     fontWeight: "700",
   },
   selectionStatus: {
-    color: "#44524a",
+    color: colors.metadata,
     fontSize: 14,
     fontWeight: "800",
     textAlign: "right",
     width: 78,
   },
   selectedSelectionStatus: {
-    color: "#115e59",
+    color: colors.highlight,
   },
   primaryButton: {
     alignItems: "center",
-    backgroundColor: "#115e59",
+    backgroundColor: colors.primary,
     borderRadius: 8,
     minHeight: 60,
     justifyContent: "center",
@@ -2342,8 +2901,8 @@ const styles = StyleSheet.create({
   },
   secondaryButton: {
     alignItems: "center",
-    backgroundColor: "#ffffff",
-    borderColor: "#115e59",
+    backgroundColor: colors.surface,
+    borderColor: colors.primary,
     borderRadius: 8,
     borderWidth: 2,
     minHeight: 60,
@@ -2352,7 +2911,12 @@ const styles = StyleSheet.create({
   },
   disabledButton: {
     backgroundColor: colors.disabledBackground,
-    borderColor: colors.border,
+    borderColor: colors.disabledBorder,
+  },
+  attentionButton: {
+    backgroundColor: colors.highlight,
+    borderColor: colors.primaryDark,
+    borderWidth: 2,
   },
   disabledButtonText: {
     color: colors.disabledText,
@@ -2364,22 +2928,22 @@ const styles = StyleSheet.create({
     textAlign: "center",
   },
   secondaryButtonText: {
-    color: "#115e59",
+    color: colors.text,
     fontSize: 19,
     fontWeight: "800",
     textAlign: "center",
   },
   busCard: {
-    backgroundColor: "#ffffff",
-    borderColor: "#6a756f",
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
     borderRadius: 8,
     borderWidth: 2,
     gap: 4,
     padding: 16,
   },
   arrivalCard: {
-    backgroundColor: "#ffffff",
-    borderColor: "#6a756f",
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
     borderRadius: 8,
     borderWidth: 2,
     gap: 10,
@@ -2391,14 +2955,14 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
   },
   serviceNumber: {
-    color: "#10231b",
+    color: colors.highlight,
     fontSize: 48,
     fontWeight: "900",
   },
   etaBlock: {
     alignItems: "center",
-    backgroundColor: "#ecfdf5",
-    borderColor: "#115e59",
+    backgroundColor: colors.highlight,
+    borderColor: colors.primaryDark,
     borderRadius: 8,
     borderWidth: 2,
     minWidth: 82,
@@ -2406,17 +2970,17 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   etaNumber: {
-    color: "#115e59",
+    color: colors.primaryDark,
     fontSize: 32,
     fontWeight: "900",
   },
   etaLabel: {
-    color: "#115e59",
+    color: colors.primaryDark,
     fontSize: 13,
     fontWeight: "900",
   },
   destinationText: {
-    color: "#10231b",
+    color: colors.text,
     fontSize: 22,
     fontWeight: "800",
     lineHeight: 28,
@@ -2427,28 +2991,28 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   infoPill: {
-    backgroundColor: "#f1f5f3",
-    borderColor: "#c3cbc6",
+    backgroundColor: colors.lightSurface,
+    borderColor: colors.border,
     borderRadius: 8,
     borderWidth: 1,
-    color: "#28332d",
+    color: colors.text,
     fontSize: 15,
     fontWeight: "800",
     paddingHorizontal: 10,
     paddingVertical: 6,
   },
   selectHint: {
-    color: "#115e59",
+    color: colors.highlight,
     fontSize: 16,
     fontWeight: "900",
     textTransform: "uppercase",
   },
   selectedCard: {
-    borderColor: "#115e59",
+    borderColor: colors.highlight,
     borderWidth: 4,
   },
   busTitle: {
-    color: "#10231b",
+    color: colors.text,
     fontSize: 24,
     fontWeight: "800",
   },
@@ -2458,20 +3022,20 @@ const styles = StyleSheet.create({
     lineHeight: 24,
   },
   summaryRow: {
-    backgroundColor: "#ffffff",
-    borderColor: "#c3cbc6",
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
     borderRadius: 8,
     borderWidth: 1,
     gap: 4,
     padding: 14,
   },
   summaryLabel: {
-    color: "#44524a",
+    color: colors.metadata,
     fontSize: 15,
     fontWeight: "700",
   },
   summaryValue: {
-    color: "#10231b",
+    color: colors.text,
     fontSize: 19,
     fontWeight: "700",
     lineHeight: 26,
@@ -2480,11 +3044,11 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   textInput: {
-    backgroundColor: "#ffffff",
-    borderColor: "#6a756f",
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
     borderRadius: 8,
     borderWidth: 2,
-    color: "#10231b",
+    color: colors.text,
     fontSize: 18,
     minHeight: 56,
     paddingHorizontal: 14,
@@ -2495,8 +3059,8 @@ const styles = StyleSheet.create({
   },
   methodButton: {
     alignItems: "center",
-    backgroundColor: "#ffffff",
-    borderColor: "#6a756f",
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
     borderRadius: 8,
     borderWidth: 2,
     flex: 1,
@@ -2506,11 +3070,11 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
   },
   selectedMethodButton: {
-    backgroundColor: "#115e59",
-    borderColor: "#115e59",
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
   },
   methodButtonText: {
-    color: "#28332d",
+    color: colors.text,
     fontSize: 14,
     fontWeight: "800",
     textAlign: "center",
@@ -2519,38 +3083,42 @@ const styles = StyleSheet.create({
     color: "#ffffff",
   },
   statusPanel: {
-    backgroundColor: "#ffffff",
-    borderColor: "#115e59",
+    backgroundColor: colors.surface,
+    borderColor: colors.primaryDark,
     borderRadius: 8,
     borderWidth: 3,
     gap: 8,
     padding: 18,
   },
+  journeyAlertPanel: {
+    backgroundColor: colors.highlight,
+    borderColor: colors.primaryDark,
+  },
   statusLabel: {
-    color: "#44524a",
+    color: colors.metadata,
     fontSize: 16,
     fontWeight: "700",
   },
   statusValue: {
-    color: "#10231b",
+    color: colors.text,
     fontSize: 28,
     fontWeight: "900",
   },
   confirmationText: {
-    color: "#10231b",
+    color: colors.text,
     fontSize: 18,
     fontWeight: "800",
     lineHeight: 25,
   },
   eventRow: {
-    backgroundColor: "#ffffff",
-    borderColor: "#c3cbc6",
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
     borderRadius: 8,
     borderWidth: 1,
     padding: 14,
   },
   eventStatus: {
-    color: "#10231b",
+    color: colors.text,
     fontSize: 18,
     fontWeight: "800",
   },
@@ -2574,7 +3142,7 @@ const styles = StyleSheet.create({
     padding: spacing.lg,
   },
   errorPanel: {
-    backgroundColor: "#fff1f2",
+    backgroundColor: "#2A0508",
     borderColor: colors.error,
     borderRadius: radius.md,
     borderWidth: 2,
@@ -2582,15 +3150,15 @@ const styles = StyleSheet.create({
     padding: spacing.lg,
   },
   visualAlert: {
-    backgroundColor: "#fff7ed",
-    borderColor: "#9a3412",
+    backgroundColor: colors.highlight,
+    borderColor: colors.primaryDark,
     borderRadius: 8,
     borderWidth: 3,
     gap: 6,
     padding: 16,
   },
   visualAlertTitle: {
-    color: "#10231b",
+    color: colors.primaryDark,
     fontSize: 22,
     fontWeight: "900",
     lineHeight: 30,
@@ -2607,11 +3175,45 @@ const styles = StyleSheet.create({
     color: "#ffffff",
   },
   highContrastMutedText: {
-    color: "#f3f4f6",
+    color: colors.muted,
   },
   largeBody: {
     fontSize: 21,
     lineHeight: 29,
+  },
+  attentionButtonText: {
+    color: colors.text,
+  },
+  onboardHero: {
+    backgroundColor: colors.primaryDark,
+    borderRadius: 8,
+    gap: 6,
+    padding: 20,
+  },
+  onboardEyebrow: {
+    color: colors.highlight,
+    fontSize: 18,
+    fontWeight: "900",
+    textTransform: "uppercase",
+  },
+  onboardBus: {
+    color: "#ffffff",
+    fontSize: 42,
+    fontWeight: "900",
+  },
+  onboardDestination: {
+    color: "#FFFFFF",
+    fontSize: 22,
+    fontWeight: "800",
+    lineHeight: 28,
+  },
+  priorityPanel: {
+    backgroundColor: colors.highlight,
+    borderColor: colors.primaryDark,
+    borderRadius: 8,
+    borderWidth: 3,
+    gap: 8,
+    padding: 18,
   },
 });
 
