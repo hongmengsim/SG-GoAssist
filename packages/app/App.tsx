@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AccessibilityInfo,
   ActivityIndicator,
@@ -22,8 +22,10 @@ import type {
   AssistanceType,
   Bus,
   ArrivalBus,
+  BusStopArrivalsResponse,
   JourneyPhase,
   NearbyBusStop,
+  NearbyBusStopsResponse,
   PassengerProfile,
   RouteStop,
   StatusUpdateMessage,
@@ -73,6 +75,15 @@ type Screen =
   | "COMPLETED";
 
 type AppTab = "HOME" | "JOURNEY" | "ASSISTANCE" | "PROFILE";
+type MapLandmark = {
+  id: string;
+  name: string;
+  category: "building" | "station" | "hospital" | "park" | "crossing";
+  tier: 1 | 2 | 3;
+  latitude: number;
+  longitude: number;
+  relatedStopCodes: string[];
+};
 
 const defaultRequirements: AccessibilityRequirements = {
   wheelchairRamp: false,
@@ -121,32 +132,132 @@ const kentRidgeRouteStops: RouteStop[] = [
 const spacing = {
   xs: 4,
   sm: 8,
-  md: 14,
-  lg: 18,
-  xl: 20,
+  md: 12,
+  lg: 16,
+  xl: 24,
+  xxl: 32,
 };
 const radius = {
+  sm: 6,
   md: 8,
+  pill: 999,
 };
+const borders = {
+  default: 2,
+  selected: 4,
+  highContrast: 4,
+};
+const typography = {
+  pageTitle: 30,
+  sectionTitle: 24,
+  cardTitle: 20,
+  body: 17,
+  secondary: 15,
+  badge: 14,
+};
+const touchTarget = {
+  min: 48,
+  comfortable: 56,
+};
+const manualStopLookup = {
+  latitude: 1.2942,
+  longitude: 103.7711,
+  accuracyMeters: 0,
+};
+const nearbyStopsCacheMs = 5 * 60 * 1000;
+const arrivalsCacheMs = 20 * 1000;
+const maxRenderedMapStops = 8;
+const orientationLandmarks: MapLandmark[] = [
+  {
+    id: "university-hall",
+    name: "University Hall",
+    category: "building",
+    tier: 1,
+    latitude: 1.29455,
+    longitude: 103.77138,
+    relatedStopCodes: ["18301", "18309"],
+  },
+  {
+    id: "kent-ridge-crescent-crossing",
+    name: "Kent Ridge Crescent crossing",
+    category: "crossing",
+    tier: 1,
+    latitude: 1.29408,
+    longitude: 103.77128,
+    relatedStopCodes: ["18301", "18309"],
+  },
+  {
+    id: "nus-park",
+    name: "NUS green",
+    category: "park",
+    tier: 2,
+    latitude: 1.29348,
+    longitude: 103.77265,
+    relatedStopCodes: ["18321"],
+  },
+  {
+    id: "kent-ridge-mrt",
+    name: "Kent Ridge MRT",
+    category: "station",
+    tier: 1,
+    latitude: 1.29318,
+    longitude: 103.78408,
+    relatedStopCodes: ["19011"],
+  },
+];
 const colors = {
-  background: "#071315",
-  surface: "#0D1B1E",
-  lightSurface: "#111D20",
-  primary: "#69C8D8",
-  primaryDark: "#071315",
-  primarySoft: "#69C8D8",
-  highlight: "#69C8D8",
-  success: "#83F4E6",
-  text: "#F7FBFC",
-  muted: "#B7C8CB",
-  metadata: "#B7C8CB",
-  body: "#F7FBFC",
-  border: "#527078",
-  error: "#FF5A5F",
-  disabledBackground: "#39474A",
-  disabledBorder: "#527078",
-  disabledText: "#B7C8CB",
-  focusIndicator: "#8BE9F4",
+  background: "#0F2024",
+  surface: "#183238",
+  lightSurface: "#23474E",
+  primary: "#86C5DA",
+  primaryDark: "#102A30",
+  primarySoft: "#A8D9E5",
+  highlight: "#86C5DA",
+  success: "#A8D9B8",
+  text: "#F7FAFA",
+  muted: "#C5D3D6",
+  metadata: "#C5D3D6",
+  body: "#F7FAFA",
+  border: "#719097",
+  error: "#EF8585",
+  disabledBackground: "#2E464C",
+  disabledBorder: "#719097",
+  disabledText: "#C5D3D6",
+  focusIndicator: "#8DD6E8",
+  surfaceSecondary: "#23474E",
+  textOnPrimary: "#102A30",
+  location: "#8DD6E8",
+  textOnLocation: "#102A30",
+  accessible: "#A8D9B8",
+  textOnAccessible: "#102A30",
+  warning: "#F5C65A",
+  textOnWarning: "#102A30",
+  assistance: "#B9A9E8",
+  textOnAssistance: "#17202B",
+  danger: "#EF8585",
+  textOnDanger: "#251010",
+};
+
+const lightTheme = {
+  background: "#F7FAFA",
+  surface: "#FFFFFF",
+  surfaceSecondary: "#E5ECEE",
+  text: "#203438",
+  textSecondary: "#52676C",
+  primary: "#0B6670",
+  primaryStrong: "#12343B",
+  textOnPrimary: "#FFFFFF",
+  location: "#86C5DA",
+  textOnLocation: "#102A30",
+  accessible: "#CDE8D5",
+  textOnAccessible: "#102A30",
+  warning: "#F5B942",
+  textOnWarning: "#102A30",
+  assistance: "#6B5CA5",
+  textOnAssistance: "#FFFFFF",
+  danger: "#B83F3F",
+  textOnDanger: "#FFFFFF",
+  border: "#A9BABE",
 };
 
 const profileTimestamp = new Date().toISOString();
@@ -228,9 +339,13 @@ function SgGoAssistApp() {
   const [appPreferences, setAppPreferences] = useState(defaultAppPreferences);
   const [nearbyStops, setNearbyStops] = useState<NearbyBusStop[]>([]);
   const [selectedStop, setSelectedStop] = useState<NearbyBusStop | null>(null);
+  const [selectedLandmarkId, setSelectedLandmarkId] = useState<string | null>(null);
   const [mapViewMode, setMapViewMode] = useState<"MAP" | "LIST">("MAP");
   const [stopSearchQuery, setStopSearchQuery] = useState("");
   const [mapManuallyMoved, setMapManuallyMoved] = useState(false);
+  const [directionsActive, setDirectionsActive] = useState(false);
+  const [followMode, setFollowMode] = useState(false);
+  const [mapHeadingDegrees, setMapHeadingDegrees] = useState(24);
   const [currentLocation, setCurrentLocation] = useState<{
     latitude: number;
     longitude: number;
@@ -251,6 +366,24 @@ function SgGoAssistApp() {
   const [loadingMessage, setLoadingMessage] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const nearbyStopsCacheRef = useRef(
+    new Map<string, { timestamp: number; result: NearbyBusStopsResponse }>()
+  );
+  const arrivalsCacheRef = useRef(
+    new Map<string, { timestamp: number; result: BusStopArrivalsResponse }>()
+  );
+  const stopsRequestRef = useRef<{ id: number; controller: AbortController | null }>({
+    id: 0,
+    controller: null,
+  });
+  const arrivalsRequestRef = useRef<{ id: number; controller: AbortController | null }>({
+    id: 0,
+    controller: null,
+  });
+  const lastLocationResultRef = useRef<{
+    timestamp: number;
+    coords: { latitude: number; longitude: number; accuracyMeters?: number };
+  } | null>(null);
 
   const assistanceTypes = useMemo(
     () => assistanceTypesForPhase(requirements, "BOARDING"),
@@ -283,8 +416,89 @@ function SgGoAssistApp() {
         .join(" ")
         .toLowerCase()
         .includes(query)
+        || orientationLandmarks.some(
+          (landmark) =>
+            landmark.relatedStopCodes.includes(stop.busStopCode) &&
+            [landmark.name, landmark.category].join(" ").toLowerCase().includes(query)
+        )
     );
   }, [nearbyStops, stopSearchQuery]);
+  const visibleLandmarks = useMemo(() => {
+    const stopCodes = new Set(visibleStops.map((stop) => stop.busStopCode));
+    const query = stopSearchQuery.trim().toLowerCase();
+    return orientationLandmarks.filter((landmark) => {
+      const relatedToVisibleStop = landmark.relatedStopCodes.some((code) => stopCodes.has(code));
+      const queryMatch = [landmark.name, landmark.category].join(" ").toLowerCase().includes(query);
+      return landmark.tier <= 2 && (relatedToVisibleStop || Boolean(query && queryMatch));
+    });
+  }, [stopSearchQuery, visibleStops]);
+  const selectedLandmark = useMemo(
+    () =>
+      selectedLandmarkId
+        ? orientationLandmarks.find((landmark) => landmark.id === selectedLandmarkId) ?? null
+        : selectedStop
+          ? orientationLandmarks.find((landmark) =>
+              landmark.relatedStopCodes.includes(selectedStop.busStopCode)
+            ) ?? null
+          : null,
+    [selectedLandmarkId, selectedStop]
+  );
+  const selectStopForBoarding = useCallback((stop: NearbyBusStop) => {
+    setSelectedStop(stop);
+    setSelectedLandmarkId(null);
+    setDirectionsActive(false);
+    setFollowMode(false);
+    setMapManuallyMoved(false);
+    AccessibilityInfo.announceForAccessibility(`Selected bus stop, ${stop.description}.`);
+  }, []);
+  const markMapMoved = useCallback(() => {
+    setMapManuallyMoved(true);
+    setFollowMode(false);
+  }, []);
+  const recenterStopMap = useCallback(() => {
+    setMapManuallyMoved(false);
+    setFollowMode(false);
+  }, []);
+  const confirmSelectedStop = useCallback(() => {
+    if (selectedStop) {
+      confirmBusStop(selectedStop);
+    }
+  }, [selectedStop]);
+  const hearSelectedStop = useCallback(() => {
+    if (selectedStop) {
+      AccessibilityInfo.announceForAccessibility(stopAnnouncement(selectedStop));
+    }
+  }, [selectedStop]);
+  const startDirections = useCallback(() => {
+    if (!selectedStop) {
+      return;
+    }
+    setDirectionsActive(true);
+    setFollowMode(false);
+    setMapManuallyMoved(false);
+    AccessibilityInfo.announceForAccessibility(firstMoveInstruction(selectedStop, selectedLandmark));
+  }, [selectedLandmark, selectedStop]);
+  const toggleFollowMode = useCallback(() => {
+    setFollowMode((current) => !current);
+    setMapManuallyMoved(false);
+  }, []);
+  const showWholeRoute = useCallback(() => {
+    setDirectionsActive(true);
+    setMapManuallyMoved(false);
+  }, []);
+  const hearDirections = useCallback(() => {
+    if (selectedStop) {
+      AccessibilityInfo.announceForAccessibility(routeAnnouncement(selectedStop, selectedLandmark));
+    }
+  }, [selectedLandmark, selectedStop]);
+  const selectLandmark = useCallback((landmark: MapLandmark) => {
+    setSelectedLandmarkId(landmark.id);
+    setSelectedStop(null);
+    setDirectionsActive(false);
+    setFollowMode(false);
+    setMapManuallyMoved(false);
+    AccessibilityInfo.announceForAccessibility(`${landmark.name}. Nearby bus stops are shown.`);
+  }, []);
   const sessionId = activeProfile?.profileId ?? "demo-passenger-session";
   const activeTab = getActiveTab(screen);
   const resolvedThemeMode = appPreferences.themeMode;
@@ -517,6 +731,70 @@ function SgGoAssistApp() {
     setIsEditingProfileNeeds(false);
   }
 
+  function nearbyStopsCacheKey(payload: {
+    latitude: number;
+    longitude: number;
+    accuracyMeters?: number;
+  }) {
+    return `${payload.latitude.toFixed(4)}:${payload.longitude.toFixed(4)}:${Math.round(
+      payload.accuracyMeters ?? 0
+    )}`;
+  }
+
+  function applyNearbyStopsResult(result: NearbyBusStopsResponse) {
+    setNearbyStops(result.stops);
+    setSelectedStop(null);
+    setSelectedLandmarkId(null);
+    setDirectionsActive(false);
+    setFollowMode(false);
+    setCurrentLocation({
+      latitude: result.debug.latitude,
+      longitude: result.debug.longitude,
+      accuracyMeters: result.debug.accuracyMeters,
+    });
+    setMapViewMode("MAP");
+    setMapManuallyMoved(false);
+    setScreen("STOP");
+  }
+
+  async function loadNearbyStopsFor(
+    payload: { latitude: number; longitude: number; accuracyMeters?: number },
+    options: { useCache: boolean; announce: boolean }
+  ) {
+    const cacheKey = nearbyStopsCacheKey(payload);
+    const cached = nearbyStopsCacheRef.current.get(cacheKey);
+    const now = Date.now();
+
+    if (options.useCache && cached && now - cached.timestamp < nearbyStopsCacheMs) {
+      applyNearbyStopsResult(cached.result);
+      if (options.announce) {
+        AccessibilityInfo.announceForAccessibility(
+          `${cached.result.stops.length} nearby bus stops found. Please confirm your bus stop.`
+        );
+      }
+      return cached.result;
+    }
+
+    stopsRequestRef.current.controller?.abort();
+    const controller = new AbortController();
+    const requestId = stopsRequestRef.current.id + 1;
+    stopsRequestRef.current = { id: requestId, controller };
+
+    const result = await findNearbyBusStops(payload, controller.signal);
+    if (requestId !== stopsRequestRef.current.id) {
+      return null;
+    }
+
+    nearbyStopsCacheRef.current.set(cacheKey, { timestamp: Date.now(), result });
+    applyNearbyStopsResult(result);
+    if (options.announce) {
+      AccessibilityInfo.announceForAccessibility(
+        `${result.stops.length} nearby bus stops found. Please confirm your bus stop.`
+      );
+    }
+    return result;
+  }
+
   async function findMyBusStop() {
     setIsLoading(true);
     setLoadingMessage("Finding nearby bus stops...");
@@ -529,14 +807,26 @@ function SgGoAssistApp() {
         return;
       }
 
-      const position = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.Balanced,
-      });
-      const result = await findNearbyBusStops({
-        latitude: position.coords.latitude,
-        longitude: position.coords.longitude,
-        accuracyMeters: position.coords.accuracy ?? undefined,
-      });
+      const recentLocation = lastLocationResultRef.current;
+      const position =
+        recentLocation && Date.now() - recentLocation.timestamp < 30_000
+          ? recentLocation
+          : await Location.getCurrentPositionAsync({
+              accuracy: Location.Accuracy.Balanced,
+            }).then((freshPosition) => {
+              const coords = {
+                latitude: freshPosition.coords.latitude,
+                longitude: freshPosition.coords.longitude,
+                accuracyMeters: freshPosition.coords.accuracy ?? undefined,
+              };
+              const cachedPosition = { timestamp: Date.now(), coords };
+              lastLocationResultRef.current = cachedPosition;
+              return cachedPosition;
+            });
+      const result = await loadNearbyStopsFor(position.coords, { useCache: true, announce: true });
+      if (!result) {
+        return;
+      }
 
       if (result.stops.length === 0) {
         setError("We couldn't confidently identify a nearby bus stop.");
@@ -544,21 +834,10 @@ function SgGoAssistApp() {
         setScreen("STOP");
         return;
       }
-
-      setNearbyStops(result.stops);
-      setSelectedStop(null);
-      setCurrentLocation({
-        latitude: result.debug.latitude,
-        longitude: result.debug.longitude,
-        accuracyMeters: result.debug.accuracyMeters,
-      });
-      setMapViewMode("MAP");
-      setMapManuallyMoved(false);
-      setScreen("STOP");
-      AccessibilityInfo.announceForAccessibility(
-        `${result.stops.length} nearby bus stops found. Please confirm your bus stop.`
-      );
     } catch (apiError) {
+      if (apiError instanceof DOMException && apiError.name === "AbortError") {
+        return;
+      }
         setError("We couldn't determine your location.");
     } finally {
       setIsLoading(false);
@@ -571,22 +850,11 @@ function SgGoAssistApp() {
     setLoadingMessage("Loading nearby bus stops...");
     setError(null);
     try {
-      const result = await findNearbyBusStops({
-        latitude: 1.2942,
-        longitude: 103.7711,
-        accuracyMeters: 0,
-      });
-      setNearbyStops(result.stops);
-      setSelectedStop(null);
-      setCurrentLocation({
-        latitude: result.debug.latitude,
-        longitude: result.debug.longitude,
-        accuracyMeters: result.debug.accuracyMeters,
-      });
-      setMapViewMode("MAP");
-      setMapManuallyMoved(false);
-      setScreen("STOP");
+      await loadNearbyStopsFor(manualStopLookup, { useCache: true, announce: false });
     } catch (apiError) {
+      if (apiError instanceof DOMException && apiError.name === "AbortError") {
+        return;
+      }
       setError(apiError instanceof Error ? apiError.message : "Unable to load bus stops.");
     } finally {
       setIsLoading(false);
@@ -599,21 +867,47 @@ function SgGoAssistApp() {
       return;
     }
 
+    setSelectedStop(stop);
+    setSelectedArrival(null);
+    setSelectedBus(null);
+    setArrivingBuses([]);
+    setScreen("BUS");
     setIsLoading(true);
     setLoadingMessage("Loading buses arriving here...");
     setError(null);
     try {
-      const arrivals = await fetchBusStopArrivals(stop.busStopCode);
+      arrivalsRequestRef.current.controller?.abort();
+      const cached = arrivalsCacheRef.current.get(stop.busStopCode);
+      const cachedIsFresh = cached && Date.now() - cached.timestamp < arrivalsCacheMs;
+      const requestId = arrivalsRequestRef.current.id + 1;
+
+      if (cachedIsFresh) {
+        const flattened = cached.result.services.flatMap((service) => service.buses);
+        setArrivingBuses(flattened);
+        setIsLoading(false);
+        setLoadingMessage(null);
+        return;
+      }
+
+      const controller = new AbortController();
+      arrivalsRequestRef.current = { id: requestId, controller };
+      const arrivals = await fetchBusStopArrivals(stop.busStopCode, controller.signal);
+      if (requestId !== arrivalsRequestRef.current.id) {
+        return;
+      }
+      arrivalsCacheRef.current.set(stop.busStopCode, { timestamp: Date.now(), result: arrivals });
       const flattened = arrivals.services.flatMap((service) => service.buses);
       setArrivingBuses(flattened);
-      setSelectedArrival(null);
-      setSelectedBus(null);
-      setScreen("BUS");
       if (flattened.length === 0) {
         setError("Bus arrival information is temporarily unavailable.");
       }
     } catch (apiError) {
-      setError(apiError instanceof Error ? apiError.message : "Unable to load buses for this stop.");
+      if (apiError instanceof DOMException && apiError.name === "AbortError") {
+        return;
+      }
+      setError(
+        "Bus arrival information is temporarily unavailable. Your stop is selected; try refreshing arrivals in a moment."
+      );
     } finally {
       setIsLoading(false);
       setLoadingMessage(null);
@@ -906,9 +1200,11 @@ function SgGoAssistApp() {
             <Text style={[styles.profileName, lightMode && lightStyles.text]}>
               {activeProfile.displayName}
             </Text>
-            <Text style={[styles.bodyText, lightMode && lightStyles.bodyText]}>
-              Defaults: {requirementsLabel(requirements)}
-            </Text>
+            <PassengerDefaultsIcons
+              requirements={requirements}
+              lightMode={lightMode}
+              highContrast={appPreferences.highContrast}
+            />
           </View>
         )}
 
@@ -997,9 +1293,11 @@ function SgGoAssistApp() {
                 <Text style={themedBodyStyle()}>
                   Verification: {verificationStatusLabel(profile)}
                 </Text>
-                <Text style={themedBodyStyle()}>
-                  Defaults: {requirementsLabel(profile.assistanceDefaults)}
-                </Text>
+                <PassengerDefaultsIcons
+                  requirements={profile.assistanceDefaults}
+                  lightMode={lightMode}
+                  highContrast={appPreferences.highContrast}
+                />
               </Pressable>
             ))}
           </View>
@@ -1020,9 +1318,11 @@ function SgGoAssistApp() {
               <Text style={themedBodyStyle()}>
                 Verification: {verificationStatusLabel(activeProfile)}
               </Text>
-              <Text style={themedBodyStyle()}>
-                Saved needs: {requirementsLabel(activeProfile.assistanceDefaults)}
-              </Text>
+              <PassengerDefaultsIcons
+                requirements={activeProfile.assistanceDefaults}
+                lightMode={lightMode}
+                highContrast={appPreferences.highContrast}
+              />
               <Text style={themedBodyStyle()}>
                 App support: {appPreferencesLabel(activeProfile.appPreferences)}
               </Text>
@@ -1089,7 +1389,7 @@ function SgGoAssistApp() {
                   Method: {readableVerificationMethod(activeProfile.verificationMethod)}
                 </Text>
                 <Text style={themedBodyStyle()}>
-                  Credential: {activeProfile.verifiedCredentialLast4 ? `•••• ${activeProfile.verifiedCredentialLast4}` : "Demo credential"}
+                  Credential: {activeProfile.verifiedCredentialLast4 ? `**** ${activeProfile.verifiedCredentialLast4}` : "Demo credential"}
                 </Text>
               </View>
             )}
@@ -1203,40 +1503,88 @@ function SgGoAssistApp() {
           <View style={styles.section}>
             <SectionHeader
               eyebrow="Journey"
-              title="Choose Your Bus Stop"
+              title="Select Bus Stop"
               highContrast={appPreferences.highContrast}
               lightMode={lightMode}
             />
             <StopSearch
               query={stopSearchQuery}
-              onChangeQuery={setStopSearchQuery}
+              onChangeQuery={(query) => {
+                setStopSearchQuery(query);
+                setSelectedLandmarkId(null);
+              }}
               lightMode={lightMode}
               highContrast={appPreferences.highContrast}
             />
+            {stopSearchQuery.trim() ? (
+              <LandmarkSearchResults
+                query={stopSearchQuery}
+                landmarks={visibleLandmarks}
+                lightMode={lightMode}
+                highContrast={appPreferences.highContrast}
+                onSelectLandmark={selectLandmark}
+              />
+            ) : null}
             <MapListToggle
               value={mapViewMode}
               onChange={setMapViewMode}
               lightMode={lightMode}
               highContrast={appPreferences.highContrast}
             />
-            <Text style={themedBodyStyle()}>Select the bus stop where you are waiting.</Text>
+            <Text style={themedBodyStyle()}>Select a bus stop from the map or list.</Text>
+            {currentLocation?.accuracyMeters && currentLocation.accuracyMeters > 100 ? (
+              <View
+                style={[
+                  styles.locationWarning,
+                  lightMode && lightStyles.locationWarning,
+                  appPreferences.highContrast && !lightMode && styles.highContrastControl,
+                  appPreferences.highContrast && lightMode && lightStyles.highContrastControl,
+                ]}
+                accessible
+                accessibilityRole="alert"
+              >
+                <Text
+                  style={[
+                    styles.locationWarningTitle,
+                    lightMode && lightStyles.text,
+                    appPreferences.highContrast && !lightMode && styles.highContrastText,
+                    appPreferences.highContrast && lightMode && lightStyles.highContrastText,
+                  ]}
+                >
+                  Location may be imprecise
+                </Text>
+                <Text
+                  style={[
+                    styles.bodyText,
+                    appPreferences.largeText && styles.largeBody,
+                    lightMode && lightStyles.bodyText,
+                  ]}
+                >
+                  Confirm your bus stop using its name or stop number.
+                </Text>
+              </View>
+            ) : null}
             {mapViewMode === "MAP" ? (
               <NearbyStopsMap
                 stops={visibleStops}
                 selectedStop={selectedStop}
+                selectedLandmark={selectedLandmark}
+                landmarks={visibleLandmarks}
                 currentLocation={currentLocation}
                 mapManuallyMoved={mapManuallyMoved}
+                directionsActive={directionsActive}
+                followMode={followMode}
+                headingDegrees={mapHeadingDegrees}
                 largeText={appPreferences.largeText}
                 lightMode={lightMode}
                 highContrast={appPreferences.highContrast}
-                onSelectStop={(stop) => {
-                  setSelectedStop(stop);
-                  AccessibilityInfo.announceForAccessibility(
-                    `Selected bus stop, ${stop.description}.`
-                  );
-                }}
-                onMoveMap={() => setMapManuallyMoved(true)}
-                onRecenter={() => setMapManuallyMoved(false)}
+                onSelectStop={selectStopForBoarding}
+                onSelectLandmark={selectLandmark}
+                onMoveMap={markMapMoved}
+                onRecenter={recenterStopMap}
+                onRefreshLocation={findMyBusStop}
+                onShowRoute={showWholeRoute}
+                onToggleFollow={toggleFollowMode}
               />
             ) : (
               <NearbyStopsList
@@ -1244,12 +1592,7 @@ function SgGoAssistApp() {
                 selectedStop={selectedStop}
                 lightMode={lightMode}
                 highContrast={appPreferences.highContrast}
-                onSelectStop={(stop) => {
-                  setSelectedStop(stop);
-                  AccessibilityInfo.announceForAccessibility(
-                    `Selected bus stop, ${stop.description}.`
-                  );
-                }}
+                onSelectStop={selectStopForBoarding}
               />
             )}
             {visibleStops.length === 0 && (
@@ -1263,56 +1606,14 @@ function SgGoAssistApp() {
                 lightMode={lightMode}
                 highContrast={appPreferences.highContrast}
                 largeText={appPreferences.largeText}
-                onSelect={() => confirmBusStop(selectedStop)}
-                onDirections={() =>
-                  AccessibilityInfo.announceForAccessibility(
-                    `Directions to ${selectedStop.description}: continue to the marked boarding point, approximately ${selectedStop.distanceMeters} metres away.`
-                  )
-                }
+                directionsActive={directionsActive}
+                landmark={selectedLandmark}
+                onConfirm={confirmSelectedStop}
+                onHear={hearSelectedStop}
+                onDirections={startDirections}
+                onHearDirections={hearDirections}
               />
             )}
-            <PrimaryButton
-              label="This is my stop"
-              accessibilityHint="Confirm this bus stop and show buses arriving here."
-              onPress={() => confirmBusStop()}
-              disabled={!selectedStop || isLoading}
-              lightMode={lightMode}
-              highContrast={appPreferences.highContrast}
-            />
-            <SecondaryButton
-              label="Repeat my bus stop"
-              onPress={() => selectedStop && AccessibilityInfo.announceForAccessibility(stopAccessibilityLabel(selectedStop))}
-              disabled={!selectedStop}
-              lightMode={lightMode}
-              highContrast={appPreferences.highContrast}
-            />
-            {mapViewMode === "MAP" && (
-              <>
-                <Text style={themedHeadingStyle()}>
-                  List View
-                </Text>
-                {visibleStops.map((stop) => (
-                  <BusStopCard
-                    key={stop.busStopCode}
-                    stop={stop}
-                    selected={selectedStop?.busStopCode === stop.busStopCode}
-                    onPress={() => {
-                      setSelectedStop(stop);
-                      setMapViewMode("LIST");
-                    }}
-                    lightMode={lightMode}
-                    highContrast={appPreferences.highContrast}
-                  />
-                ))}
-              </>
-            )}
-            <SecondaryButton
-              label="Refresh location"
-              onPress={findMyBusStop}
-              disabled={isLoading}
-              lightMode={lightMode}
-              highContrast={appPreferences.highContrast}
-            />
           </View>
         )}
 
@@ -1379,7 +1680,7 @@ function SgGoAssistApp() {
             />
             {selectedStop && (
               <Text style={themedBodyStyle()}>
-                Bus Stop {selectedStop.busStopCode} · {selectedStop.description}
+                Bus Stop {selectedStop.busStopCode} - {selectedStop.description}
               </Text>
             )}
             {arrivingBuses.map((bus) => (
@@ -1427,7 +1728,7 @@ function SgGoAssistApp() {
               label="Boarding stop"
               value={
                 selectedStop
-                  ? `${selectedStop.busStopCode} · ${selectedStop.description}, ${selectedStop.roadName}`
+                  ? `${selectedStop.busStopCode} - ${selectedStop.description}, ${selectedStop.roadName}`
                   : boardingStop
               }
               lightMode={lightMode}
@@ -1620,9 +1921,18 @@ function SgGoAssistApp() {
         )}
         {error && (
           <ErrorState
+            title={screen === "BUS" ? "Arrival info unavailable" : undefined}
             message={error}
-            primaryActionLabel={screen === "LOCATION" || screen === "STOP" ? "Try again" : "Try again"}
-            onPrimaryAction={screen === "LOCATION" || screen === "STOP" ? findMyBusStop : undefined}
+            primaryActionLabel={
+              screen === "LOCATION" || screen === "STOP" || screen === "BUS" ? "Try again" : undefined
+            }
+            onPrimaryAction={
+              screen === "LOCATION" || screen === "STOP"
+                ? findMyBusStop
+                : screen === "BUS" && selectedStop
+                  ? () => confirmBusStop(selectedStop)
+                  : undefined
+            }
             secondaryActionLabel={screen === "LOCATION" || screen === "STOP" ? "Select stop manually" : undefined}
             onSecondaryAction={screen === "LOCATION" || screen === "STOP" ? loadManualStops : undefined}
             lightMode={lightMode}
@@ -1643,7 +1953,7 @@ function SgGoAssistApp() {
   );
 }
 
-function ToggleRow({
+const ToggleRow = memo(function ToggleRow({
   label,
   description,
   enabled,
@@ -1653,6 +1963,7 @@ function ToggleRow({
   variant = "default",
   iconSource,
   iconSize,
+  preserveIconColors = false,
   customIcon,
   onPress,
 }: {
@@ -1665,6 +1976,7 @@ function ToggleRow({
   variant?: "default" | "assistance" | "phone";
   iconSource?: ImageSourcePropType;
   iconSize?: number;
+  preserveIconColors?: boolean;
   customIcon?: React.ReactNode;
   onPress: () => void;
 }) {
@@ -1719,7 +2031,7 @@ function ToggleRow({
               <Image
                 source={iconSource}
                 style={[
-                  styles.optionIconImage,
+                  preserveIconColors ? styles.optionIconImageOriginal : styles.optionIconImage,
                   highContrast && styles.highContrastOptionIconImage,
                   iconSize ? { height: iconSize, width: iconSize } : undefined,
                 ]}
@@ -1780,18 +2092,24 @@ function ToggleRow({
             highContrast && enabled && styles.highContrastSelectedIndicator,
           ]}
         >
-          <Text
-            style={[
-              styles.selectionIndicatorText,
-              enabled && styles.selectedSelectionIndicatorText,
-              lightMode && lightStyles.text,
-              lightMode && enabled && lightStyles.selectedSelectionIndicatorText,
-              highContrast && !lightMode && styles.highContrastText,
-              highContrast && lightMode && lightStyles.highContrastText,
-            ]}
-          >
-            {enabled ? "✓" : ""}
-          </Text>
+          {enabled ? (
+            <View style={styles.selectionCheck} accessible={false}>
+              <View
+                style={[
+                  styles.selectionCheckShort,
+                  lightMode && lightStyles.selectionCheckMark,
+                  highContrast && styles.highContrastSelectionCheckMark,
+                ]}
+              />
+              <View
+                style={[
+                  styles.selectionCheckLong,
+                  lightMode && lightStyles.selectionCheckMark,
+                  highContrast && styles.highContrastSelectionCheckMark,
+                ]}
+              />
+            </View>
+          ) : null}
         </View>
         <Text
           style={[
@@ -1809,7 +2127,93 @@ function ToggleRow({
       </View>
     </Pressable>
   );
-}
+});
+
+const PassengerDefaultsIcons = memo(function PassengerDefaultsIcons({
+  requirements,
+  lightMode,
+  highContrast,
+}: {
+  requirements: AccessibilityRequirements;
+  lightMode: boolean;
+  highContrast: boolean;
+}) {
+  const metadata: Record<
+    AssistanceType,
+    { label: string; icon: ImageSourcePropType; preserveIconColors?: boolean }
+  > = {
+    WHEELCHAIR_RAMP: {
+      label: "Wheelchair ramp",
+      icon: optionIcons.wheelchairAssistance,
+    },
+    BUS_AUDIO_IDENTIFICATION: {
+      label: "Bus identification",
+      icon: optionIcons.busIdentification,
+    },
+    EXTENDED_DWELL_TIME: {
+      label: "More boarding time",
+      icon: optionIcons.increasedDuration,
+      preserveIconColors: true,
+    },
+  };
+  const defaults = requirementsToAssistanceTypes(requirements).map((type) => metadata[type]);
+  const label = requirementsLabel(requirements);
+
+  return (
+    <View
+      style={styles.defaultsIconGroup}
+      accessible
+      accessibilityLabel={`Passenger defaults: ${label}.`}
+    >
+      <Text
+        style={[
+          styles.defaultsIconLabel,
+          lightMode && lightStyles.mutedText,
+          highContrast && !lightMode && styles.highContrastMutedText,
+          highContrast && lightMode && lightStyles.highContrastMutedText,
+        ]}
+      >
+        Passenger defaults
+      </Text>
+      {defaults.length > 0 ? (
+        <View style={styles.defaultsIconRow}>
+          {defaults.map((item) => (
+            <View
+              key={item.label}
+              style={[
+                styles.defaultsIconChip,
+                lightMode && lightStyles.defaultsIconChip,
+                highContrast && !lightMode && styles.highContrastControl,
+                highContrast && lightMode && lightStyles.highContrastControl,
+              ]}
+            >
+              <Image
+                source={item.icon}
+                style={item.preserveIconColors ? styles.defaultsIconImageOriginal : styles.defaultsIconImage}
+                resizeMode="contain"
+                accessible={false}
+              />
+              <Text
+                style={[
+                  styles.defaultsIconText,
+                  lightMode && lightStyles.text,
+                  highContrast && !lightMode && styles.highContrastText,
+                  highContrast && lightMode && lightStyles.highContrastText,
+                ]}
+              >
+                {item.label}
+              </Text>
+            </View>
+          ))}
+        </View>
+      ) : (
+        <Text style={[styles.bodyText, lightMode && lightStyles.bodyText]}>
+          No bus assistance defaults
+        </Text>
+      )}
+    </View>
+  );
+});
 
 function BoardingTimeIcon({
   selected,
@@ -1825,8 +2229,10 @@ function BoardingTimeIcon({
       ? "#000000"
       : "#FFFFFF"
     : lightMode && !selected
-      ? "#145A64"
-      : "#7DD7E5";
+      ? lightTheme.primary
+      : selected
+        ? colors.textOnPrimary
+        : colors.primary;
 
   return (
     <View style={styles.boardingTimeIcon} accessible={false}>
@@ -1955,26 +2361,36 @@ function SunIcon({
   highContrast: boolean;
   lightMode: boolean;
 }) {
+  const sunAccent = highContrast
+    ? lightMode
+      ? "#000000"
+      : "#FFFFFF"
+    : lightMode
+      ? lightTheme.warning
+      : colors.warning;
+  const sunPartStyle = { backgroundColor: sunAccent };
+
   return (
     <View
       style={[
         styles.sunIcon,
         selected && styles.selectedModeIcon,
         lightMode && lightStyles.modeIcon,
-        highContrast && styles.highContrastIndicator,
         selected && styles.selectedSunIcon,
+        selected && lightMode && lightStyles.selectedSunIcon,
+        highContrast && styles.highContrastIndicator,
       ]}
       accessible={false}
     >
-      <View style={[styles.sunRay, styles.sunRayTop, selected && styles.selectedSunRay]} />
-      <View style={[styles.sunRay, styles.sunRayBottom, selected && styles.selectedSunRay]} />
-      <View style={[styles.sunRay, styles.sunRayLeft, selected && styles.selectedSunRay]} />
-      <View style={[styles.sunRay, styles.sunRayRight, selected && styles.selectedSunRay]} />
-      <View style={[styles.sunRay, styles.sunRayTopLeft, selected && styles.selectedSunRay]} />
-      <View style={[styles.sunRay, styles.sunRayTopRight, selected && styles.selectedSunRay]} />
-      <View style={[styles.sunRay, styles.sunRayBottomLeft, selected && styles.selectedSunRay]} />
-      <View style={[styles.sunRay, styles.sunRayBottomRight, selected && styles.selectedSunRay]} />
-      <View style={[styles.sunCore, selected && styles.selectedSunCore]} />
+      <View style={[styles.sunRay, styles.sunRayTop, sunPartStyle]} />
+      <View style={[styles.sunRay, styles.sunRayBottom, sunPartStyle]} />
+      <View style={[styles.sunRay, styles.sunRayLeft, sunPartStyle]} />
+      <View style={[styles.sunRay, styles.sunRayRight, sunPartStyle]} />
+      <View style={[styles.sunRay, styles.sunRayTopLeft, sunPartStyle]} />
+      <View style={[styles.sunRay, styles.sunRayTopRight, sunPartStyle]} />
+      <View style={[styles.sunRay, styles.sunRayBottomLeft, sunPartStyle]} />
+      <View style={[styles.sunRay, styles.sunRayBottomRight, sunPartStyle]} />
+      <View style={[styles.sunCore, sunPartStyle]} />
     </View>
   );
 }
@@ -1994,6 +2410,7 @@ function MoonIcon({
         styles.moonIcon,
         selected && styles.selectedModeIcon,
         lightMode && lightStyles.modeIcon,
+        lightMode && styles.moonIconFrame,
         highContrast && styles.highContrastIndicator,
         selected && styles.selectedMoonIcon,
       ]}
@@ -2049,13 +2466,9 @@ function AssistancePreferenceToggles({
         largeText={appPreferences.largeText}
         lightMode={resolvedThemeMode === "light"}
         variant="assistance"
-        customIcon={
-          <BoardingTimeIcon
-            selected={requirements.extendedDwellTime}
-            highContrast={appPreferences.highContrast}
-            lightMode={resolvedThemeMode === "light"}
-          />
-        }
+        iconSource={optionIcons.increasedDuration}
+        iconSize={40}
+        preserveIconColors
         onPress={() =>
           setRequirements((current) => ({
             ...current,
@@ -2392,7 +2805,7 @@ function TabBar({
   );
 }
 
-function BusStopCard({
+const BusStopCard = memo(function BusStopCard({
   stop,
   selected = false,
   onPress,
@@ -2459,7 +2872,7 @@ function BusStopCard({
       {content}
     </Pressable>
   );
-}
+});
 
 function BusArrivalCard({
   bus,
@@ -2729,38 +3142,155 @@ function MapListToggle({
   );
 }
 
-function NearbyStopsMap({
+const LandmarkSearchResults = memo(function LandmarkSearchResults({
+  query,
+  landmarks,
+  lightMode,
+  highContrast,
+  onSelectLandmark,
+}: {
+  query: string;
+  landmarks: MapLandmark[];
+  lightMode: boolean;
+  highContrast: boolean;
+  onSelectLandmark: (landmark: MapLandmark) => void;
+}) {
+  const matchingLandmarks = landmarks.filter((landmark) =>
+    landmark.name.toLowerCase().includes(query.trim().toLowerCase())
+  );
+
+  if (matchingLandmarks.length === 0) {
+    return null;
+  }
+
+  return (
+    <View style={styles.landmarkSearchResults}>
+      {matchingLandmarks.slice(0, 2).map((landmark) => (
+        <Pressable
+          key={landmark.id}
+          accessibilityRole="button"
+          accessibilityLabel={`${landmark.name}. Landmark. Show nearby bus stops.`}
+          onPress={() => onSelectLandmark(landmark)}
+          style={[
+            styles.landmarkSearchResult,
+            lightMode && lightStyles.landmarkSearchResult,
+            highContrast && !lightMode && styles.highContrastControl,
+            highContrast && lightMode && lightStyles.highContrastControl,
+          ]}
+        >
+          <Text style={[styles.landmarkIconText, lightMode && lightStyles.landmarkText]}>
+            {landmarkIcon(landmark)}
+          </Text>
+          <View style={styles.landmarkSearchTextGroup}>
+            <Text style={[styles.summaryValue, lightMode && lightStyles.text]}>{landmark.name}</Text>
+            <Text style={[styles.summaryLabel, lightMode && lightStyles.mutedText]}>
+              Nearby bus stops shown on map
+            </Text>
+          </View>
+        </Pressable>
+      ))}
+    </View>
+  );
+});
+
+const NearbyStopsMap = memo(function NearbyStopsMap({
   stops,
   selectedStop,
+  selectedLandmark,
+  landmarks,
   currentLocation,
   mapManuallyMoved,
+  directionsActive,
+  followMode,
+  headingDegrees,
   largeText,
   lightMode,
   highContrast,
   onSelectStop,
+  onSelectLandmark,
   onMoveMap,
   onRecenter,
+  onRefreshLocation,
+  onShowRoute,
+  onToggleFollow,
 }: {
   stops: NearbyBusStop[];
   selectedStop: NearbyBusStop | null;
+  selectedLandmark: MapLandmark | null;
+  landmarks: MapLandmark[];
   currentLocation: { latitude: number; longitude: number; accuracyMeters?: number } | null;
   mapManuallyMoved: boolean;
+  directionsActive: boolean;
+  followMode: boolean;
+  headingDegrees: number;
   largeText: boolean;
   lightMode: boolean;
   highContrast: boolean;
   onSelectStop: (stop: NearbyBusStop) => void;
+  onSelectLandmark: (landmark: MapLandmark) => void;
   onMoveMap: () => void;
   onRecenter: () => void;
+  onRefreshLocation: () => void;
+  onShowRoute: () => void;
+  onToggleFollow: () => void;
 }) {
-  const positionedStops = stops.slice(0, 8).map((stop, index) => {
-    const angle = (index / Math.max(stops.length, 1)) * Math.PI * 2 - Math.PI / 2;
-    const radius = Math.min(38, 16 + stop.distanceMeters / 10);
-    return {
-      stop,
-      left: `${50 + Math.cos(angle) * radius}%` as const,
-      top: `${50 + Math.sin(angle) * radius}%` as const,
-    };
-  });
+  const [expandedCluster, setExpandedCluster] = useState(false);
+  const mapTileCells = useMemo(
+    () => Array.from({ length: 12 }).map((_, index) => <View key={index} style={styles.mapTileCell} />),
+    []
+  );
+  const positionedStops = useMemo(() => {
+    const latitudeBasis = currentLocation?.latitude ?? stops[0]?.latitude ?? manualStopLookup.latitude;
+    const longitudeBasis = currentLocation?.longitude ?? stops[0]?.longitude ?? manualStopLookup.longitude;
+
+    return stops.slice(0, maxRenderedMapStops).map((stop, index) => {
+      const fallbackAngle = (index / Math.max(stops.length, 1)) * Math.PI * 2 - Math.PI / 2;
+      const latOffset = (latitudeBasis - stop.latitude) * 9000;
+      const lngOffset = (stop.longitude - longitudeBasis) * 9000;
+      return {
+        stop,
+        left: `${Math.max(8, Math.min(92, 50 + (lngOffset || Math.cos(fallbackAngle) * 24)))}%` as const,
+        top: `${Math.max(10, Math.min(88, 50 + (latOffset || Math.sin(fallbackAngle) * 24)))}%` as const,
+      };
+    });
+  }, [currentLocation?.latitude, currentLocation?.longitude, stops]);
+  const positionedLandmarks = useMemo(() => {
+    const latitudeBasis = currentLocation?.latitude ?? stops[0]?.latitude ?? manualStopLookup.latitude;
+    const longitudeBasis = currentLocation?.longitude ?? stops[0]?.longitude ?? manualStopLookup.longitude;
+
+    return landmarks.slice(0, 4).map((landmark) => {
+      const latOffset = (latitudeBasis - landmark.latitude) * 9000;
+      const lngOffset = (landmark.longitude - longitudeBasis) * 9000;
+      return {
+        landmark,
+        left: `${Math.max(10, Math.min(90, 50 + lngOffset))}%` as const,
+        top: `${Math.max(12, Math.min(82, 50 + latOffset))}%` as const,
+      };
+    });
+  }, [currentLocation?.latitude, currentLocation?.longitude, landmarks, stops]);
+  const selectedPosition = useMemo(
+    () => positionedStops.find(({ stop }) => stop.busStopCode === selectedStop?.busStopCode),
+    [positionedStops, selectedStop?.busStopCode]
+  );
+  const closeClusterStops = useMemo(
+    () =>
+      positionedStops.filter(
+        ({ stop }, index) =>
+          index > 0 &&
+          stop.distanceMeters < 80 &&
+          stop.busStopCode !== selectedStop?.busStopCode
+      ),
+    [positionedStops, selectedStop?.busStopCode]
+  );
+  const shouldClusterCloseStops = closeClusterStops.length > 1 && !expandedCluster;
+  const clusteredStopCodes = useMemo(
+    () =>
+      new Set(
+        shouldClusterCloseStops ? closeClusterStops.map(({ stop }) => stop.busStopCode) : []
+      ),
+    [closeClusterStops, shouldClusterCloseStops]
+  );
+  const clusterPosition = closeClusterStops[0] ?? null;
 
   return (
     <View
@@ -2773,85 +3303,329 @@ function NearbyStopsMap({
       accessible
       accessibilityLabel={`Nearby bus stop map. ${stops.length} stops shown.`}
     >
-      <View style={styles.mapMetaRow}>
-        <Text
-          style={[
-            styles.mapMetaText,
-            largeText && styles.largeBody,
-            lightMode && lightStyles.mutedText,
-            highContrast && !lightMode && styles.highContrastMutedText,
-            highContrast && lightMode && lightStyles.highContrastMutedText,
-          ]}
-        >
-          {currentLocation
-            ? `Centred near you · ${currentLocation.accuracyMeters ?? 0} m accuracy`
-            : "Manual browsing"}
-        </Text>
-        <Text style={[styles.mapMetaText, lightMode && lightStyles.mutedText]}>
-          {mapManuallyMoved ? "Map moved" : "Auto-centred"}
-        </Text>
-      </View>
       <Pressable
         accessibilityRole="button"
         accessibilityLabel="Move map manually"
-        accessibilityHint="Simulates manually panning the nearby bus stop map."
+        accessibilityHint="Pan or zoom the nearby bus stop map."
         onPress={onMoveMap}
-        style={styles.mapCanvas}
+        style={[styles.mapCanvas, mapManuallyMoved && styles.mapCanvasMoved]}
       >
-        <View style={styles.mapRoadHorizontal} />
-        <View style={styles.mapRoadVertical} />
+        <View style={styles.mapTileGrid}>
+          {mapTileCells}
+        </View>
+        <View style={styles.mapParkPatch} />
+        <View style={styles.mapWaterPatch} />
+        <View style={styles.mapRoadMajor} />
+        <View style={styles.mapRoadMinorOne} />
+        <View style={styles.mapRoadMinorTwo} />
+        <Text style={[styles.mapRoadLabel, largeText && styles.largeBody]}>Kent Ridge Cres</Text>
+        {positionedLandmarks.map(({ landmark, left, top }) => {
+          const destination = selectedLandmark?.id === landmark.id;
+          return (
+            <Pressable
+              key={landmark.id}
+              accessibilityRole="button"
+              accessibilityLabel={`${landmark.name}. ${landmark.category} landmark.`}
+              onPress={() => onSelectLandmark(landmark)}
+              style={[
+                styles.landmarkMarker,
+                { left, top },
+                destination && styles.destinationLandmarkMarker,
+                lightMode && lightStyles.landmarkMarker,
+                destination && lightMode && lightStyles.destinationLandmarkMarker,
+                highContrast && styles.highContrastMapStopMarker,
+              ]}
+            >
+              <Text style={[styles.landmarkIconText, lightMode && lightStyles.landmarkText]}>
+                {landmarkIcon(landmark)}
+              </Text>
+              <Text
+                style={[
+                  styles.landmarkLabel,
+                  lightMode && lightStyles.landmarkLabel,
+                  destination && styles.destinationLandmarkLabel,
+                ]}
+              >
+                {landmark.name}
+              </Text>
+            </Pressable>
+          );
+        })}
+        <View
+          style={[
+            styles.accuracyRadius,
+            Boolean(currentLocation?.accuracyMeters && currentLocation.accuracyMeters > 100) &&
+              styles.largeAccuracyRadius,
+            highContrast && styles.highContrastAccuracyRadius,
+          ]}
+          accessible={false}
+        />
+        {selectedPosition ? (
+          <>
+            <View
+              style={[
+                styles.selectedStopRoute,
+                directionsActive && styles.activeWalkingRoute,
+                {
+                  left: selectedPosition.left,
+                  top: selectedPosition.top,
+                },
+                lightMode && lightStyles.selectedStopRoute,
+                highContrast && styles.highContrastSelectedStopRoute,
+              ]}
+              accessible={false}
+            >
+              <Text style={styles.selectedStopRouteText}>
+                {selectedPosition.stop.distanceMeters} m
+              </Text>
+            </View>
+            {directionsActive ? (
+              <View
+                style={[
+                  styles.routeArrow,
+                  {
+                    left: selectedPosition.left,
+                    top: selectedPosition.top,
+                  },
+                  lightMode && lightStyles.routeArrow,
+                  highContrast && styles.highContrastRouteArrow,
+                ]}
+                accessible={false}
+              >
+                <Text style={styles.routeArrowText}>›</Text>
+              </View>
+            ) : null}
+          </>
+        ) : null}
         <View
           style={[
             styles.currentLocationMarker,
             highContrast && styles.highContrastCurrentLocationMarker,
           ]}
-          accessible={false}
+          accessibilityRole="image"
+          accessibilityLabel="Your current location."
         >
-          <Text style={styles.currentLocationText}>Me</Text>
+          <View
+            style={[
+              styles.headingCone,
+              { transform: [{ rotate: `${headingDegrees}deg` }] },
+              lightMode && lightStyles.headingCone,
+            ]}
+          />
+          <View style={styles.currentLocationDot} />
+          <Text style={styles.currentLocationText}>You</Text>
         </View>
+        {shouldClusterCloseStops && clusterPosition ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`${closeClusterStops.length} nearby bus stops. Activate to view individual stops.`}
+            accessibilityHint="Expands nearby bus stops that are close together."
+            onPress={() => {
+              setExpandedCluster(true);
+              onMoveMap();
+            }}
+            style={[
+              styles.stopClusterMarker,
+              { left: clusterPosition.left, top: clusterPosition.top },
+              lightMode && lightStyles.stopClusterMarker,
+              highContrast && styles.highContrastMapStopMarker,
+            ]}
+          >
+            <Text style={[styles.stopClusterCount, lightMode && lightStyles.stopClusterCount]}>
+              {closeClusterStops.length}
+            </Text>
+            <Text style={[styles.stopClusterLabel, lightMode && lightStyles.stopClusterLabel]}>
+              stops
+            </Text>
+          </Pressable>
+        ) : null}
         {positionedStops.map(({ stop, left, top }, index) => {
+          if (clusteredStopCodes.has(stop.busStopCode)) {
+            return null;
+          }
           const selected = selectedStop?.busStopCode === stop.busStopCode;
-          const clustered = index > 0 && stop.distanceMeters < 80;
+          const nearest = index === 0 && !selectedStop;
+          const clustered = expandedCluster && index > 0 && stop.distanceMeters < 80;
           return (
             <Pressable
               key={stop.busStopCode}
               accessibilityRole="button"
-              accessibilityLabel={`Bus stop ${stop.busStopCode}, ${stop.description}, ${stop.distanceMeters} metres away.`}
+              accessibilityLabel={`${selected ? "Selected bus stop. " : ""}${stop.description}, bus stop ${stop.busStopCode}, ${stop.distanceMeters} metres away.`}
               accessibilityState={{ selected }}
               onPress={() => onSelectStop(stop)}
               style={[
                 styles.mapStopMarker,
                 { left, top },
+                lightMode && lightStyles.mapStopMarker,
                 clustered && styles.clusteredMapStopMarker,
+                nearest && styles.nearestMapStopMarker,
+                selectedStop && !selected && styles.dimmedMapStopMarker,
                 selected && styles.selectedMapStopMarker,
+                selected && lightMode && lightStyles.selectedMapStopMarker,
                 highContrast && styles.highContrastMapStopMarker,
                 selected && highContrast && styles.highContrastSelectedMapStopMarker,
               ]}
             >
-              <Text
-                style={[
-                  styles.mapStopMarkerText,
-                  selected && styles.selectedMapStopMarkerText,
-                ]}
-              >
-                {clustered ? `${index + 1}` : "Bus"}
-              </Text>
+              <BusStopMarkerIcon selected={selected} nearest={nearest} lightMode={lightMode} />
+              {nearest ? (
+                <Text style={[styles.nearestStopLabel, lightMode && lightStyles.nearestStopLabel]}>
+                  Nearest
+                </Text>
+              ) : null}
+              {selected ? (
+                <Text style={[styles.mapStopMarkerLabel, lightMode && lightStyles.mapStopMarkerLabel]}>
+                  {stop.busStopCode}
+                </Text>
+              ) : null}
             </Pressable>
           );
         })}
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Re-centre map on my current location."
+          accessibilityHint="Refreshes your current coordinates and recentres the map."
+          onPress={() => {
+            onRecenter();
+            onRefreshLocation();
+          }}
+          style={[
+            styles.recenterControl,
+            lightMode && lightStyles.recenterControl,
+            highContrast && !lightMode && styles.highContrastSelectedControl,
+            highContrast && lightMode && lightStyles.highContrastSelectedControl,
+          ]}
+        >
+          <View style={styles.recenterGlyph}>
+            <View style={styles.recenterGlyphDot} />
+          </View>
+        </Pressable>
+        {directionsActive ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Show whole route."
+            accessibilityHint="Frames your current location, walking route and selected stop."
+            onPress={onShowRoute}
+            style={[
+              styles.showRouteControl,
+              lightMode && lightStyles.recenterControl,
+              highContrast && !lightMode && styles.highContrastSelectedControl,
+              highContrast && lightMode && lightStyles.highContrastSelectedControl,
+            ]}
+          >
+            <Text style={[styles.mapControlText, lightMode && lightStyles.text]}>Route</Text>
+          </Pressable>
+        ) : null}
+        {selectedStop ? (
+          <Pressable
+            accessibilityRole="switch"
+            accessibilityLabel="Follow Me"
+            accessibilityState={{ checked: followMode }}
+            accessibilityHint="When on, the map follows your current location until you manually pan."
+            onPress={onToggleFollow}
+            style={[
+              styles.followControl,
+              followMode && styles.activeFollowControl,
+              lightMode && lightStyles.recenterControl,
+              highContrast && !lightMode && styles.highContrastSelectedControl,
+              highContrast && lightMode && lightStyles.highContrastSelectedControl,
+            ]}
+          >
+            <Text style={[styles.mapControlText, lightMode && lightStyles.text]}>
+              {followMode ? "Following" : "Follow"}
+            </Text>
+          </Pressable>
+        ) : null}
+        {mapManuallyMoved ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Search this area."
+            accessibilityHint="Loads bus stops around the current map area."
+            onPress={onRefreshLocation}
+            style={[
+              styles.searchAreaControl,
+              lightMode && lightStyles.recenterControl,
+              highContrast && !lightMode && styles.highContrastSelectedControl,
+              highContrast && lightMode && lightStyles.highContrastSelectedControl,
+            ]}
+          >
+            <Text style={[styles.mapControlText, lightMode && lightStyles.text]}>
+              Search this area
+            </Text>
+          </Pressable>
+        ) : null}
+        <View style={[styles.mapScale, lightMode && lightStyles.mapScale]} accessible={false}>
+          <View style={[styles.mapScaleLine, lightMode && lightStyles.mapScaleLine]} />
+          <Text style={[styles.mapScaleText, lightMode && lightStyles.mutedText]}>100 m</Text>
+        </View>
       </Pressable>
-      <SecondaryButton
-        label="Re-centre on Me"
-        accessibilityHint="Centres the nearby bus stop map around your current location."
-        onPress={onRecenter}
-        lightMode={lightMode}
-        highContrast={highContrast}
+    </View>
+  );
+});
+
+function BusStopMarkerIcon({
+  selected,
+  nearest,
+  lightMode,
+}: {
+  selected: boolean;
+  nearest: boolean;
+  lightMode: boolean;
+}) {
+  return (
+    <View style={styles.busStopGlyph} accessible={false}>
+      <View
+        style={[
+          styles.busStopGlyphBody,
+          nearest && styles.nearestBusStopGlyphBody,
+          selected && styles.selectedBusStopGlyphBody,
+          nearest && lightMode && lightStyles.nearestBusStopGlyphBody,
+          selected && lightMode && lightStyles.selectedBusStopGlyphBody,
+        ]}
+      >
+        <View
+          style={[
+            styles.busStopGlyphWindow,
+            nearest && styles.nearestBusStopGlyphWindow,
+            selected && styles.selectedBusStopGlyphWindow,
+            nearest && lightMode && lightStyles.nearestBusStopGlyphWindow,
+            selected && lightMode && lightStyles.selectedBusStopGlyphWindow,
+          ]}
+        />
+        <View style={styles.busStopGlyphWheels}>
+          <View
+            style={[
+              styles.busStopGlyphWheel,
+              nearest && styles.nearestBusStopGlyphWheel,
+              selected && styles.selectedBusStopGlyphWheel,
+              nearest && lightMode && lightStyles.nearestBusStopGlyphWheel,
+              selected && lightMode && lightStyles.selectedBusStopGlyphWheel,
+            ]}
+          />
+          <View
+            style={[
+              styles.busStopGlyphWheel,
+              nearest && styles.nearestBusStopGlyphWheel,
+              selected && styles.selectedBusStopGlyphWheel,
+              nearest && lightMode && lightStyles.nearestBusStopGlyphWheel,
+              selected && lightMode && lightStyles.selectedBusStopGlyphWheel,
+            ]}
+          />
+        </View>
+      </View>
+      <View
+        style={[
+          styles.busStopGlyphPointer,
+          nearest && styles.nearestBusStopGlyphPointer,
+          selected && styles.selectedBusStopGlyphPointer,
+          nearest && lightMode && lightStyles.nearestBusStopGlyphPointer,
+          selected && lightMode && lightStyles.selectedBusStopGlyphPointer,
+        ]}
       />
     </View>
   );
 }
 
-function NearbyStopsList({
+const NearbyStopsList = memo(function NearbyStopsList({
   stops,
   selectedStop,
   lightMode,
@@ -2878,24 +3652,34 @@ function NearbyStopsList({
       ))}
     </View>
   );
-}
+});
 
-function SelectedStopCard({
+const SelectedStopCard = memo(function SelectedStopCard({
   stop,
   lightMode,
   highContrast,
   largeText,
-  onSelect,
+  directionsActive,
+  landmark,
+  onConfirm,
+  onHear,
   onDirections,
+  onHearDirections,
 }: {
   stop: NearbyBusStop;
   lightMode: boolean;
   highContrast: boolean;
   largeText: boolean;
-  onSelect: () => void;
+  directionsActive: boolean;
+  landmark: MapLandmark | null;
+  onConfirm: () => void;
+  onHear: () => void;
   onDirections: () => void;
+  onHearDirections: () => void;
 }) {
   const walkingMinutes = Math.max(1, Math.round(stop.distanceMeters / 70));
+  const services = busServicesForStop(stop);
+  const firstInstruction = firstMoveInstruction(stop, landmark);
   return (
     <View
       style={[
@@ -2907,34 +3691,94 @@ function SelectedStopCard({
       accessible
       accessibilityLabel={`Selected bus stop, ${stop.description}, bus stop ${stop.busStopCode}, approximately ${stop.distanceMeters} metres away.`}
     >
+      <View style={styles.sheetHandle} />
       <Text style={[styles.busTitle, largeText && styles.largeBody, lightMode && lightStyles.text]}>
-        {stop.description} - Bus Stop {stop.busStopCode}
+        {stop.description}
       </Text>
       <Text style={[styles.bodyText, largeText && styles.largeBody, lightMode && lightStyles.bodyText]}>
-        Approx. {stop.distanceMeters} m away · {walkingMinutes} min walk
+        Bus Stop {stop.busStopCode}
       </Text>
-      <View style={styles.infoRow}>
-        <Text style={[styles.infoPill, lightMode && lightStyles.infoPill]}>Services load after selection</Text>
-        <Text style={[styles.infoPill, lightMode && lightStyles.infoPill]}>Accessible boarding available</Text>
+      <Text style={[styles.bodyText, largeText && styles.largeBody, lightMode && lightStyles.bodyText]}>
+        {stop.distanceMeters} m away - approx. {walkingMinutes} min
+      </Text>
+      {landmark ? (
+        <Text style={[styles.bodyText, largeText && styles.largeBody, lightMode && lightStyles.bodyText]}>
+          Near {landmark.name}
+        </Text>
+      ) : null}
+      <View style={[styles.directionsSummary, lightMode && lightStyles.directionsSummary]}>
+        <Text style={[styles.statusLabel, lightMode && lightStyles.mutedText]}>
+          Walking to Stop {stop.busStopCode}
+        </Text>
+        <Text style={[styles.summaryValue, largeText && styles.largeBody, lightMode && lightStyles.text]}>
+          {stop.distanceMeters} m - approx. {walkingMinutes} min
+        </Text>
+        <Text style={[styles.bodyText, largeText && styles.largeBody, lightMode && lightStyles.bodyText]}>
+          ↑ {firstInstruction}
+        </Text>
+        {directionsActive ? (
+          <Text style={[styles.infoPill, styles.accessibleChip, lightMode && lightStyles.accessibleChip]}>
+            Accessible route data incomplete
+          </Text>
+        ) : null}
       </View>
-      <PrimaryButton
-        label="Select This Stop"
-        accessibilityHint="Stores this as your boarding stop and loads available buses."
-        onPress={onSelect}
+      <View style={styles.infoRow}>
+        {services.map((service) => (
+          <Text
+            key={service}
+            style={[
+              styles.infoPill,
+              styles.serviceChip,
+              lightMode && lightStyles.infoPill,
+              lightMode && lightStyles.serviceChip,
+            ]}
+          >
+            {service}
+          </Text>
+        ))}
+      </View>
+      <View style={styles.infoRow}>
+        <Text
+          style={[
+            styles.infoPill,
+            styles.accessibleChip,
+            lightMode && lightStyles.accessibleChip,
+          ]}
+        >
+          Accessible boarding
+        </Text>
+      </View>
+      <SecondaryButton
+        label={directionsActive ? "Hear directions" : "Directions"}
+        accessibilityHint="Announces the selected bus stop name, code, distance and services."
+        onPress={directionsActive ? onHearDirections : onDirections}
         lightMode={lightMode}
         highContrast={highContrast}
       />
       <SecondaryButton
-        label="Directions to Stop"
-        accessibilityHint="Announces simple walking guidance to the selected stop."
-        onPress={onDirections}
+        label="I can't find this stop"
+        accessibilityHint="Repeats the first direction and keeps nearby stops available."
+        onPress={onHearDirections}
+        lightMode={lightMode}
+        highContrast={highContrast}
+      />
+      <SecondaryButton
+        label="Hear stop information"
+        accessibilityHint="Announces the selected bus stop name, code, distance and services."
+        onPress={onHear}
+        lightMode={lightMode}
+        highContrast={highContrast}
+      />
+      <PrimaryButton
+        label="THIS IS MY STOP"
+        accessibilityHint={`Confirm ${stop.description} as my boarding stop.`}
+        onPress={onConfirm}
         lightMode={lightMode}
         highContrast={highContrast}
       />
     </View>
   );
-}
-
+});
 function AlightingStopRow({
   stop,
   selected,
@@ -3228,6 +4072,7 @@ function LoadingState({
 }
 
 function ErrorState({
+  title = "Something went wrong",
   message,
   primaryActionLabel,
   onPrimaryAction,
@@ -3236,6 +4081,7 @@ function ErrorState({
   lightMode = false,
   highContrast = false,
 }: {
+  title?: string;
   message: string;
   primaryActionLabel?: string;
   onPrimaryAction?: () => void;
@@ -3246,7 +4092,7 @@ function ErrorState({
 }) {
   return (
     <View style={styles.errorPanel} accessible accessibilityRole="alert" accessibilityLabel={message}>
-      <Text style={styles.errorTitle}>Something went wrong</Text>
+      <Text style={styles.errorTitle}>{title}</Text>
       <Text style={styles.errorText}>{message}</Text>
       {primaryActionLabel && onPrimaryAction && (
         <PrimaryButton
@@ -3606,6 +4452,55 @@ function stopAccessibilityLabel(stop: NearbyBusStop) {
   return `You appear to be at bus stop ${stop.busStopCode}, ${stop.description}, ${stop.roadName}, approximately ${stop.distanceMeters} metres away.`;
 }
 
+function busServicesForStop(stop: NearbyBusStop) {
+  const knownServices: Record<string, string[]> = {
+    "18301": ["95", "151", "A1", "A2"],
+    "18321": ["95", "151", "A1"],
+    "19011": ["95", "A1", "A2"],
+  };
+
+  return knownServices[stop.busStopCode] ?? ["Services available after confirmation"];
+}
+
+function landmarkIcon(landmark: MapLandmark) {
+  const icons: Record<MapLandmark["category"], string> = {
+    building: "▣",
+    station: "M",
+    hospital: "+",
+    park: "○",
+    crossing: "╋",
+  };
+  return icons[landmark.category];
+}
+
+function firstMoveInstruction(stop: NearbyBusStop, landmark: MapLandmark | null) {
+  if (landmark?.category === "crossing") {
+    return `Head towards ${landmark.name} on ${stop.roadName}.`;
+  }
+  if (landmark) {
+    return `Head towards ${stop.roadName}, using ${landmark.name} as your landmark.`;
+  }
+  return `Head towards ${stop.roadName}.`;
+}
+
+function routeAnnouncement(stop: NearbyBusStop, landmark: MapLandmark | null) {
+  const walkingMinutes = Math.max(1, Math.round(stop.distanceMeters / 70));
+  return [
+    `Walking to bus stop ${stop.busStopCode}, ${stop.description}.`,
+    `${stop.distanceMeters} metres, approximately ${walkingMinutes} minutes.`,
+    firstMoveInstruction(stop, landmark),
+    landmark ? `Look for ${landmark.name} nearby.` : undefined,
+    `Look for bus stop ${stop.busStopCode} before confirming this is your stop.`,
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
+function stopAnnouncement(stop: NearbyBusStop) {
+  const services = busServicesForStop(stop).join(", ");
+  return `${stop.description}, bus stop ${stop.busStopCode}, approximately ${stop.distanceMeters} metres away. Services ${services}.`;
+}
+
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
@@ -3615,9 +4510,9 @@ const styles = StyleSheet.create({
     backgroundColor: "#000000",
   },
   container: {
-    padding: 20,
-    paddingBottom: 150,
-    gap: 18,
+    padding: spacing.xl,
+    paddingBottom: 170,
+    gap: spacing.lg,
   },
   compactContainer: {
     paddingHorizontal: 16,
@@ -3627,7 +4522,7 @@ const styles = StyleSheet.create({
   },
   appTitle: {
     color: colors.text,
-    fontSize: 34,
+    fontSize: typography.pageTitle,
     fontWeight: "800",
   },
   brandHeader: {
@@ -3824,21 +4719,62 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: "800",
   },
-  createProfilePanel: {
-    backgroundColor: "#102529",
-    borderColor: "#69C8D8",
+  defaultsIconGroup: {
+    gap: 8,
+  },
+  defaultsIconLabel: {
+    color: colors.metadata,
+    fontSize: 15,
+    fontWeight: "800",
+  },
+  defaultsIconRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  defaultsIconChip: {
+    alignItems: "center",
+    backgroundColor: colors.surfaceSecondary,
+    borderColor: colors.assistance,
     borderRadius: 8,
     borderWidth: 2,
-    gap: 12,
-    padding: 16,
+    flexDirection: "row",
+    gap: 8,
+    minHeight: 48,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  defaultsIconImage: {
+    height: 28,
+    tintColor: colors.assistance,
+    width: 28,
+  },
+  defaultsIconImageOriginal: {
+    height: 28,
+    width: 28,
+  },
+  defaultsIconText: {
+    color: colors.text,
+    flexShrink: 1,
+    fontSize: 15,
+    fontWeight: "900",
+    lineHeight: 20,
+  },
+  createProfilePanel: {
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    borderWidth: borders.default,
+    gap: spacing.md,
+    padding: spacing.lg,
   },
   themeSwitchCard: {
     backgroundColor: colors.surface,
     borderColor: colors.border,
-    borderRadius: 8,
-    borderWidth: 2,
-    gap: 12,
-    padding: 14,
+    borderRadius: radius.md,
+    borderWidth: borders.default,
+    gap: spacing.md,
+    padding: spacing.lg,
   },
   themeSwitchTextGroup: {
     flex: 1,
@@ -3860,8 +4796,8 @@ const styles = StyleSheet.create({
   modeLabel: {
     alignItems: "center",
     borderColor: colors.border,
-    borderRadius: 8,
-    borderWidth: 2,
+    borderRadius: radius.md,
+    borderWidth: borders.default,
     flex: 1,
     gap: 8,
     minHeight: 92,
@@ -3870,22 +4806,23 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
   },
   selectedModeLabel: {
-    backgroundColor: colors.highlight,
-    borderColor: colors.highlight,
+    backgroundColor: colors.surfaceSecondary,
+    borderColor: colors.primary,
+    borderWidth: borders.selected,
   },
   modeLabelText: {
     color: colors.text,
-    fontSize: 16,
+    fontSize: typography.secondary,
     fontWeight: "900",
   },
   selectedModeLabelText: {
-    color: colors.primaryDark,
+    color: "#FFFFFF",
   },
   highContrastSelectedText: {
     color: "#000000",
   },
   modeSwitchTrack: {
-    backgroundColor: colors.highlight,
+    backgroundColor: colors.primary,
     borderColor: colors.border,
     borderRadius: 17,
     borderWidth: 2,
@@ -3918,20 +4855,20 @@ const styles = StyleSheet.create({
     width: 44,
   },
   sunCore: {
-    backgroundColor: colors.highlight,
+    backgroundColor: colors.warning,
     borderRadius: 9,
     height: 18,
     width: 18,
   },
   selectedSunCore: {
-    backgroundColor: "#FFD766",
+    backgroundColor: colors.warning,
   },
   selectedSunIcon: {
-    backgroundColor: "#FFF9E6",
-    borderColor: "#145A64",
+    backgroundColor: colors.surfaceSecondary,
+    borderColor: colors.primary,
   },
   selectedSunRay: {
-    backgroundColor: "#FFD766",
+    backgroundColor: colors.warning,
   },
   sunRay: {
     backgroundColor: colors.highlight,
@@ -3987,38 +4924,44 @@ const styles = StyleSheet.create({
     width: 7,
   },
   moonIcon: {
+    alignItems: "center",
     backgroundColor: colors.lightSurface,
-    borderColor: colors.border,
+    borderColor: colors.primary,
     borderRadius: 22,
     borderWidth: 2,
     height: 44,
+    justifyContent: "center",
     overflow: "hidden",
     width: 44,
   },
+  moonIconFrame: {
+    borderColor: colors.primary,
+    borderWidth: 2,
+  },
   moonInner: {
-    backgroundColor: colors.highlight,
-    borderRadius: 14,
-    height: 28,
+    backgroundColor: colors.primary,
+    borderRadius: 13,
+    height: 26,
     left: 8,
     position: "absolute",
-    top: 7,
-    width: 28,
+    top: 6,
+    width: 26,
   },
   selectedMoonInner: {
-    backgroundColor: colors.highlight,
+    backgroundColor: colors.primaryDark,
   },
   selectedMoonIcon: {
-    backgroundColor: colors.primaryDark,
-    borderColor: colors.highlight,
+    backgroundColor: "transparent",
+    borderColor: colors.primaryDark,
   },
   selectedMoonCutout: {
-    backgroundColor: colors.primaryDark,
+    backgroundColor: colors.surfaceSecondary,
   },
   moonCutout: {
     backgroundColor: colors.surface,
-    borderRadius: 13,
-    height: 26,
-    left: 19,
+    borderRadius: 12,
+    height: 24,
+    left: 17,
     position: "absolute",
     top: 4,
     width: 24,
@@ -4267,18 +5210,18 @@ const styles = StyleSheet.create({
   },
   heading: {
     color: colors.text,
-    fontSize: 26,
+    fontSize: typography.sectionTitle,
     fontWeight: "800",
   },
   toggleRow: {
     backgroundColor: colors.surface,
     borderColor: colors.border,
-    borderRadius: 8,
-    borderWidth: 2,
-    gap: 12,
+    borderRadius: radius.md,
+    borderWidth: borders.default,
+    gap: spacing.md,
     minHeight: 92,
-    paddingHorizontal: 16,
-    paddingVertical: 16,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.lg,
   },
   assistanceOption: {
     borderColor: colors.primary,
@@ -4287,15 +5230,15 @@ const styles = StyleSheet.create({
     borderColor: colors.metadata,
   },
   selectedToggleRow: {
-    borderWidth: 4,
+    borderWidth: borders.selected,
   },
   selectedAssistanceOption: {
-    backgroundColor: colors.primaryDark,
-    borderColor: colors.highlight,
+    backgroundColor: colors.surfaceSecondary,
+    borderColor: colors.primary,
   },
   selectedPhoneOption: {
-    backgroundColor: colors.primaryDark,
-    borderColor: colors.highlight,
+    backgroundColor: colors.surfaceSecondary,
+    borderColor: colors.primary,
   },
   toggleHeaderRow: {
     alignItems: "flex-start",
@@ -4310,11 +5253,11 @@ const styles = StyleSheet.create({
     alignItems: "center",
     backgroundColor: colors.lightSurface,
     borderColor: colors.border,
-    borderRadius: 8,
-    borderWidth: 2,
-    height: 56,
+    borderRadius: radius.md,
+    borderWidth: borders.default,
+    height: touchTarget.comfortable,
     justifyContent: "center",
-    width: 56,
+    width: touchTarget.comfortable,
   },
   assistanceIcon: {
     backgroundColor: colors.primaryDark,
@@ -4325,8 +5268,8 @@ const styles = StyleSheet.create({
     borderColor: colors.primaryDark,
   },
   selectedOptionIcon: {
-    backgroundColor: "#00181D",
-    borderColor: colors.primaryDark,
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
   },
   optionIconText: {
     color: colors.text,
@@ -4336,7 +5279,11 @@ const styles = StyleSheet.create({
   },
   optionIconImage: {
     height: 36,
-    tintColor: "#7DD7E5",
+    tintColor: colors.primary,
+    width: 36,
+  },
+  optionIconImageOriginal: {
+    height: 36,
     width: 36,
   },
   boardingTimeIcon: {
@@ -4429,6 +5376,34 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     lineHeight: 28,
   },
+  selectionCheck: {
+    height: 18,
+    position: "relative",
+    width: 22,
+  },
+  selectionCheckShort: {
+    backgroundColor: colors.primaryDark,
+    borderRadius: 2,
+    height: 4,
+    left: 2,
+    position: "absolute",
+    top: 10,
+    transform: [{ rotate: "45deg" }],
+    width: 9,
+  },
+  selectionCheckLong: {
+    backgroundColor: colors.primaryDark,
+    borderRadius: 2,
+    height: 4,
+    left: 8,
+    position: "absolute",
+    top: 8,
+    transform: [{ rotate: "-45deg" }],
+    width: 15,
+  },
+  highContrastSelectionCheckMark: {
+    backgroundColor: "#ffffff",
+  },
   selectedSelectionIndicatorText: {
     color: colors.primaryDark,
   },
@@ -4444,8 +5419,10 @@ const styles = StyleSheet.create({
   },
   selectionStatus: {
     color: colors.metadata,
+    flexShrink: 1,
     fontSize: 18,
     fontWeight: "900",
+    lineHeight: 24,
   },
   selectedSelectionStatus: {
     color: colors.highlight,
@@ -4453,41 +5430,43 @@ const styles = StyleSheet.create({
   selectionRow: {
     alignItems: "center",
     flexDirection: "row",
+    flexWrap: "wrap",
     gap: 10,
-    paddingLeft: 70,
+    marginLeft: 70,
+    minHeight: 44,
   },
   primaryButton: {
     alignItems: "center",
     backgroundColor: colors.primary,
-    borderRadius: 8,
+    borderRadius: radius.md,
     minHeight: 60,
     justifyContent: "center",
-    padding: 16,
+    padding: spacing.lg,
   },
   secondaryButton: {
     alignItems: "center",
     backgroundColor: colors.surface,
     borderColor: colors.primary,
-    borderRadius: 8,
-    borderWidth: 2,
+    borderRadius: radius.md,
+    borderWidth: borders.default,
     minHeight: 60,
     justifyContent: "center",
-    padding: 16,
+    padding: spacing.lg,
   },
   disabledButton: {
     backgroundColor: colors.disabledBackground,
     borderColor: colors.disabledBorder,
   },
   attentionButton: {
-    backgroundColor: colors.highlight,
-    borderColor: colors.primaryDark,
-    borderWidth: 2,
+    backgroundColor: colors.warning,
+    borderColor: colors.textOnWarning,
+    borderWidth: borders.default,
   },
   disabledButtonText: {
     color: colors.disabledText,
   },
   primaryButtonText: {
-    color: "#ffffff",
+    color: colors.textOnPrimary,
     fontSize: 19,
     fontWeight: "800",
     textAlign: "center",
@@ -4501,22 +5480,40 @@ const styles = StyleSheet.create({
   busCard: {
     backgroundColor: colors.surface,
     borderColor: colors.border,
-    borderRadius: 8,
-    borderWidth: 2,
+    borderRadius: radius.md,
+    borderWidth: borders.default,
     gap: 4,
-    padding: 16,
+    padding: spacing.lg,
   },
   stopSearchInput: {
     backgroundColor: colors.surface,
     borderColor: colors.border,
-    borderRadius: 8,
-    borderWidth: 2,
+    borderRadius: radius.md,
+    borderWidth: borders.default,
     color: colors.text,
     fontSize: 18,
     fontWeight: "700",
     minHeight: 56,
     paddingHorizontal: 16,
     paddingVertical: 12,
+  },
+  landmarkSearchResults: {
+    gap: spacing.sm,
+  },
+  landmarkSearchResult: {
+    alignItems: "center",
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    borderWidth: borders.default,
+    flexDirection: "row",
+    gap: spacing.md,
+    minHeight: touchTarget.comfortable,
+    padding: spacing.md,
+  },
+  landmarkSearchTextGroup: {
+    flex: 1,
+    gap: 2,
   },
   mapListToggle: {
     backgroundColor: colors.surface,
@@ -4535,7 +5532,7 @@ const styles = StyleSheet.create({
     minHeight: 48,
   },
   selectedMapListToggleButton: {
-    backgroundColor: colors.highlight,
+    backgroundColor: colors.primary,
   },
   mapListToggleText: {
     color: colors.text,
@@ -4543,15 +5540,28 @@ const styles = StyleSheet.create({
     fontWeight: "900",
   },
   selectedMapListToggleText: {
-    color: colors.primaryDark,
+    color: colors.textOnPrimary,
   },
   stopMapPanel: {
     backgroundColor: colors.surface,
     borderColor: colors.border,
     borderRadius: 8,
     borderWidth: 2,
-    gap: 10,
     padding: 12,
+  },
+  locationWarning: {
+    backgroundColor: "rgba(245, 198, 90, 0.18)",
+    borderColor: colors.warning,
+    borderRadius: 8,
+    borderWidth: 1,
+    gap: 2,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  locationWarningTitle: {
+    color: colors.warning,
+    fontSize: 16,
+    fontWeight: "900",
   },
   mapMetaRow: {
     flexDirection: "row",
@@ -4565,62 +5575,164 @@ const styles = StyleSheet.create({
     fontWeight: "800",
   },
   mapCanvas: {
-    backgroundColor: "#0A252B",
-    borderColor: colors.border,
+    backgroundColor: "#DCE9E7",
+    borderColor: "#8BA7AA",
     borderRadius: 8,
     borderWidth: 2,
-    height: 330,
+    height: 370,
     overflow: "hidden",
     position: "relative",
   },
-  mapRoadHorizontal: {
-    backgroundColor: "#24525B",
-    height: 28,
-    left: "-10%",
-    position: "absolute",
-    top: "45%",
-    transform: [{ rotate: "-10deg" }],
-    width: "120%",
+  mapCanvasMoved: {
+    borderColor: colors.highlight,
   },
-  mapRoadVertical: {
-    backgroundColor: "#1D464E",
-    height: "120%",
-    left: "46%",
+  mapTileGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    height: "100%",
+    width: "100%",
+  },
+  mapTileCell: {
+    borderColor: "rgba(65, 98, 101, 0.18)",
+    borderRightWidth: 1,
+    borderTopWidth: 1,
+    height: "33.3333%",
+    width: "25%",
+  },
+  mapParkPatch: {
+    backgroundColor: "#BFDCC8",
+    borderRadius: 8,
+    height: "36%",
+    left: "4%",
     position: "absolute",
-    top: "-10%",
-    transform: [{ rotate: "18deg" }],
-    width: 32,
+    top: "7%",
+    transform: [{ rotate: "-8deg" }],
+    width: "42%",
+  },
+  mapWaterPatch: {
+    backgroundColor: "#B7DDE8",
+    borderRadius: 8,
+    bottom: "7%",
+    height: "20%",
+    position: "absolute",
+    right: "-5%",
+    transform: [{ rotate: "12deg" }],
+    width: "40%",
+  },
+  mapRoadMajor: {
+    backgroundColor: "#FFFFFF",
+    borderColor: "#B3BEC0",
+    borderWidth: 2,
+    height: 34,
+    left: "-12%",
+    position: "absolute",
+    top: "48%",
+    transform: [{ rotate: "-11deg" }],
+    width: "126%",
+  },
+  mapRoadMinorOne: {
+    backgroundColor: "#F8FAFA",
+    borderColor: "#CAD4D6",
+    borderWidth: 1,
+    height: 22,
+    left: "34%",
+    position: "absolute",
+    top: "-8%",
+    transform: [{ rotate: "20deg" }],
+    width: "9%",
+  },
+  mapRoadMinorTwo: {
+    backgroundColor: "#F8FAFA",
+    borderColor: "#CAD4D6",
+    borderWidth: 1,
+    height: 20,
+    left: "0%",
+    position: "absolute",
+    top: "72%",
+    transform: [{ rotate: "16deg" }],
+    width: "70%",
+  },
+  mapRoadLabel: {
+    color: "#385258",
+    fontSize: 11,
+    fontWeight: "600",
+    left: "34%",
+    position: "absolute",
+    top: "42%",
+    transform: [{ rotate: "-11deg" }],
+  },
+  accuracyRadius: {
+    backgroundColor: "rgba(141, 214, 232, 0.14)",
+    borderColor: "rgba(141, 214, 232, 0.22)",
+    borderRadius: 54,
+    borderWidth: 1,
+    height: 108,
+    left: "50%",
+    marginLeft: -54,
+    marginTop: -54,
+    position: "absolute",
+    top: "50%",
+    width: 108,
+  },
+  largeAccuracyRadius: {
+    borderRadius: 82,
+    height: 164,
+    marginLeft: -82,
+    marginTop: -82,
+    width: 164,
+  },
+  highContrastAccuracyRadius: {
+    backgroundColor: "rgba(255, 255, 255, 0.18)",
+    borderColor: "#000000",
   },
   currentLocationMarker: {
     alignItems: "center",
-    backgroundColor: "#FFFFFF",
-    borderColor: colors.highlight,
-    borderRadius: 26,
-    borderWidth: 4,
-    height: 52,
+    backgroundColor: "transparent",
+    height: 58,
     justifyContent: "center",
     left: "50%",
-    marginLeft: -26,
-    marginTop: -26,
+    marginLeft: -29,
+    marginTop: -29,
     position: "absolute",
     top: "50%",
-    width: 52,
+    width: 58,
+  },
+  headingCone: {
+    borderBottomColor: colors.location,
+    borderBottomWidth: 22,
+    borderLeftColor: "transparent",
+    borderLeftWidth: 10,
+    borderRightColor: "transparent",
+    borderRightWidth: 10,
+    height: 0,
+    opacity: 0.35,
+    position: "absolute",
+    top: -16,
+    width: 0,
   },
   highContrastCurrentLocationMarker: {
     borderColor: "#000000",
-    borderWidth: 5,
+  },
+  currentLocationDot: {
+    backgroundColor: colors.location,
+    borderColor: colors.text,
+    borderRadius: 9,
+    borderWidth: 4,
+    height: 18,
+    width: 18,
   },
   currentLocationText: {
-    color: colors.primaryDark,
-    fontSize: 13,
+    color: colors.location,
+    fontSize: 12,
     fontWeight: "900",
+    marginTop: 2,
   },
   mapStopMarker: {
     alignItems: "center",
-    backgroundColor: colors.highlight,
-    borderColor: "#FFFFFF",
-    borderRadius: 24,
-    borderWidth: 3,
+    backgroundColor: "transparent",
+    borderColor: "transparent",
+    borderRadius: 8,
+    borderWidth: 0,
     height: 48,
     justifyContent: "center",
     marginLeft: -24,
@@ -4631,18 +5743,23 @@ const styles = StyleSheet.create({
     width: 48,
   },
   clusteredMapStopMarker: {
-    borderRadius: 18,
-    height: 44,
-    width: 44,
+    transform: [{ translateX: 10 }, { translateY: -10 }],
+  },
+  nearestMapStopMarker: {
+    zIndex: 3,
+  },
+  dimmedMapStopMarker: {
+    opacity: 0.65,
   },
   selectedMapStopMarker: {
-    backgroundColor: "#FFFFFF",
-    borderColor: colors.highlight,
-    borderWidth: 5,
-    height: 58,
-    marginLeft: -29,
-    marginTop: -29,
-    width: 58,
+    backgroundColor: "rgba(134, 197, 218, 0.18)",
+    borderColor: colors.primary,
+    borderWidth: 3,
+    borderRadius: 32,
+    height: 64,
+    marginLeft: -32,
+    marginTop: -32,
+    width: 64,
     zIndex: 2,
   },
   highContrastMapStopMarker: {
@@ -4654,12 +5771,325 @@ const styles = StyleSheet.create({
     borderColor: "#000000",
   },
   mapStopMarkerText: {
-    color: colors.primaryDark,
-    fontSize: 11,
+    color: colors.textOnPrimary,
+    fontSize: 24,
     fontWeight: "900",
   },
   selectedMapStopMarkerText: {
+    fontSize: 26,
+  },
+  busStopGlyph: {
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  busStopGlyphBody: {
+    alignItems: "center",
+    backgroundColor: colors.surface,
+    borderColor: colors.primary,
+    borderRadius: 5,
+    borderWidth: 2,
+    height: 22,
+    justifyContent: "space-around",
+    paddingVertical: 3,
+    width: 26,
+  },
+  nearestBusStopGlyphBody: {
+    borderColor: colors.location,
+  },
+  selectedBusStopGlyphBody: {
+    backgroundColor: colors.primary,
+    borderColor: colors.textOnPrimary,
+    height: 28,
+    width: 34,
+  },
+  busStopGlyphWindow: {
+    backgroundColor: colors.primary,
+    borderRadius: 2,
+    height: 8,
+    width: 17,
+  },
+  selectedBusStopGlyphWindow: {
+    backgroundColor: colors.textOnPrimary,
+    width: 21,
+  },
+  busStopGlyphWheels: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    width: 17,
+  },
+  busStopGlyphWheel: {
+    backgroundColor: colors.primary,
+    borderRadius: 3,
+    height: 5,
+    width: 5,
+  },
+  selectedBusStopGlyphWheel: {
+    backgroundColor: colors.textOnPrimary,
+  },
+  busStopGlyphPointer: {
+    borderLeftColor: "transparent",
+    borderLeftWidth: 5,
+    borderRightColor: "transparent",
+    borderRightWidth: 5,
+    borderTopColor: colors.primary,
+    borderTopWidth: 7,
+    height: 0,
+    marginTop: -1,
+    width: 0,
+  },
+  selectedBusStopGlyphPointer: {
+    borderTopColor: colors.textOnPrimary,
+    borderLeftWidth: 6,
+    borderRightWidth: 6,
+    borderTopWidth: 8,
+  },
+  nearestBusStopGlyphWindow: {
+    backgroundColor: colors.location,
+  },
+  nearestBusStopGlyphWheel: {
+    backgroundColor: colors.location,
+  },
+  nearestBusStopGlyphPointer: {
+    borderTopColor: colors.location,
+  },
+  nearestStopLabel: {
+    backgroundColor: colors.surface,
+    borderColor: colors.location,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    color: colors.location,
+    fontSize: 9,
+    fontWeight: "900",
+    paddingHorizontal: 4,
+    position: "absolute",
+    top: 36,
+  },
+  stopClusterMarker: {
+    alignItems: "center",
+    backgroundColor: colors.surface,
+    borderColor: colors.primary,
+    borderRadius: radius.md,
+    borderWidth: borders.default,
+    height: 48,
+    justifyContent: "center",
+    marginLeft: -24,
+    marginTop: -24,
+    minHeight: 48,
+    minWidth: 48,
+    position: "absolute",
+    width: 48,
+    zIndex: 4,
+  },
+  stopClusterCount: {
+    color: colors.primary,
+    fontSize: 18,
+    fontWeight: "900",
+    lineHeight: 21,
+  },
+  stopClusterLabel: {
+    color: colors.metadata,
+    fontSize: 10,
+    fontWeight: "800",
+    lineHeight: 12,
+  },
+  selectedStopRoute: {
+    backgroundColor: colors.warning,
+    height: 3,
+    marginLeft: -55,
+    marginTop: -2,
+    opacity: 0.8,
+    position: "absolute",
+    transform: [{ rotate: "-35deg" }],
+    width: 110,
+    zIndex: 1,
+  },
+  activeWalkingRoute: {
+    backgroundColor: colors.location,
+    height: 5,
+    opacity: 1,
+    width: 126,
+  },
+  selectedStopRouteText: {
+    color: colors.textOnWarning,
+    fontSize: 10,
+    fontWeight: "900",
+    left: 36,
+    position: "absolute",
+    top: -16,
+    transform: [{ rotate: "35deg" }],
+  },
+  highContrastSelectedStopRoute: {
+    backgroundColor: "#FFFF00",
+    height: 5,
+    opacity: 1,
+  },
+  routeArrow: {
+    alignItems: "center",
+    backgroundColor: colors.primary,
+    borderColor: colors.textOnPrimary,
+    borderRadius: 14,
+    borderWidth: 2,
+    height: 28,
+    justifyContent: "center",
+    marginLeft: -2,
+    marginTop: -34,
+    position: "absolute",
+    transform: [{ rotate: "-35deg" }],
+    width: 28,
+    zIndex: 3,
+  },
+  routeArrowText: {
+    color: colors.textOnPrimary,
+    fontSize: 26,
+    fontWeight: "900",
+    lineHeight: 26,
+  },
+  highContrastRouteArrow: {
+    backgroundColor: "#FFFF00",
+    borderColor: "#000000",
+  },
+  landmarkMarker: {
+    alignItems: "center",
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    gap: 1,
+    marginLeft: -36,
+    marginTop: -16,
+    minWidth: 72,
+    paddingHorizontal: 5,
+    paddingVertical: 3,
+    position: "absolute",
+    zIndex: 2,
+  },
+  destinationLandmarkMarker: {
+    borderColor: colors.assistance,
+    borderWidth: 2,
+  },
+  landmarkIconText: {
+    color: colors.metadata,
+    fontSize: 14,
+    fontWeight: "900",
+  },
+  landmarkLabel: {
+    color: colors.metadata,
+    fontSize: 9,
+    fontWeight: "800",
+    textAlign: "center",
+  },
+  destinationLandmarkLabel: {
+    color: colors.text,
+  },
+  mapStopMarkerLabel: {
+    backgroundColor: colors.surface,
+    borderColor: colors.primary,
+    borderRadius: 6,
+    borderWidth: 1,
+    color: colors.text,
+    fontSize: 11,
+    fontWeight: "900",
+    paddingHorizontal: 4,
+    position: "absolute",
+    top: 58,
+  },
+  recenterControl: {
+    alignItems: "center",
+    backgroundColor: colors.surface,
+    borderColor: colors.location,
+    borderRadius: 8,
+    borderWidth: 3,
+    bottom: 14,
+    height: 54,
+    justifyContent: "center",
+    position: "absolute",
+    right: 14,
+    width: 54,
+  },
+  recenterControlText: {
+    color: colors.location,
+    fontSize: 30,
+    fontWeight: "900",
+  },
+  recenterGlyph: {
+    alignItems: "center",
+    borderColor: colors.location,
+    borderRadius: 14,
+    borderWidth: 3,
+    height: 28,
+    justifyContent: "center",
+    width: 28,
+  },
+  recenterGlyphDot: {
+    backgroundColor: colors.location,
+    borderRadius: 5,
+    height: 10,
+    width: 10,
+  },
+  showRouteControl: {
+    alignItems: "center",
+    backgroundColor: colors.surface,
+    borderColor: colors.location,
+    borderRadius: 8,
+    borderWidth: 3,
+    bottom: 76,
+    height: 46,
+    justifyContent: "center",
+    position: "absolute",
+    right: 14,
+    width: 70,
+  },
+  followControl: {
+    alignItems: "center",
+    backgroundColor: colors.surface,
+    borderColor: colors.primary,
+    borderRadius: 8,
+    borderWidth: 2,
+    bottom: 130,
+    minHeight: 42,
+    justifyContent: "center",
+    paddingHorizontal: 8,
+    position: "absolute",
+    right: 14,
+    width: 86,
+  },
+  activeFollowControl: {
+    backgroundColor: colors.primary,
+  },
+  searchAreaControl: {
+    alignItems: "center",
+    alignSelf: "center",
+    backgroundColor: colors.surface,
+    borderColor: colors.warning,
+    borderRadius: 8,
+    borderWidth: 2,
+    minHeight: 42,
+    justifyContent: "center",
+    paddingHorizontal: 10,
+    position: "absolute",
+    top: 12,
+  },
+  mapControlText: {
+    color: colors.text,
     fontSize: 12,
+    fontWeight: "900",
+    textAlign: "center",
+  },
+  mapScale: {
+    alignItems: "center",
+    bottom: 16,
+    left: 16,
+    position: "absolute",
+  },
+  mapScaleLine: {
+    backgroundColor: colors.metadata,
+    height: 3,
+    width: 46,
+  },
+  mapScaleText: {
+    color: colors.metadata,
+    fontSize: 10,
+    fontWeight: "800",
   },
   nearbyStopsList: {
     gap: 10,
@@ -4667,18 +6097,33 @@ const styles = StyleSheet.create({
   selectedStopSheet: {
     backgroundColor: colors.primaryDark,
     borderColor: colors.highlight,
-    borderRadius: 8,
-    borderWidth: 3,
-    gap: 12,
-    padding: 16,
+    borderRadius: radius.md,
+    borderWidth: borders.selected,
+    gap: spacing.md,
+    padding: spacing.lg,
+  },
+  directionsSummary: {
+    backgroundColor: colors.surface,
+    borderColor: colors.location,
+    borderRadius: radius.md,
+    borderWidth: 2,
+    gap: spacing.sm,
+    padding: spacing.md,
+  },
+  sheetHandle: {
+    alignSelf: "center",
+    backgroundColor: colors.border,
+    borderRadius: 2,
+    height: 4,
+    width: 88,
   },
   arrivalCard: {
     backgroundColor: colors.surface,
     borderColor: colors.border,
-    borderRadius: 8,
-    borderWidth: 2,
-    gap: 10,
-    padding: 18,
+    borderRadius: radius.md,
+    borderWidth: borders.default,
+    gap: spacing.md,
+    padding: spacing.lg,
   },
   arrivalTopRow: {
     alignItems: "center",
@@ -4686,14 +6131,14 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
   },
   serviceNumber: {
-    color: colors.highlight,
+    color: colors.primary,
     fontSize: 48,
     fontWeight: "900",
   },
   etaBlock: {
     alignItems: "center",
-    backgroundColor: colors.highlight,
-    borderColor: colors.primaryDark,
+    backgroundColor: colors.warning,
+    borderColor: colors.textOnWarning,
     borderRadius: 8,
     borderWidth: 2,
     minWidth: 82,
@@ -4701,12 +6146,12 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   etaNumber: {
-    color: colors.primaryDark,
+    color: colors.textOnWarning,
     fontSize: 32,
     fontWeight: "900",
   },
   etaLabel: {
-    color: colors.primaryDark,
+    color: colors.textOnWarning,
     fontSize: 13,
     fontWeight: "900",
   },
@@ -4722,7 +6167,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   infoPill: {
-    backgroundColor: colors.lightSurface,
+    backgroundColor: colors.surfaceSecondary,
     borderColor: colors.border,
     borderRadius: 8,
     borderWidth: 1,
@@ -4731,6 +6176,16 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     paddingHorizontal: 10,
     paddingVertical: 6,
+  },
+  serviceChip: {
+    backgroundColor: colors.surfaceSecondary,
+    borderColor: colors.primary,
+    color: colors.primary,
+  },
+  accessibleChip: {
+    backgroundColor: colors.accessible,
+    borderColor: colors.accessible,
+    color: colors.textOnAccessible,
   },
   selectHint: {
     color: colors.highlight,
@@ -4822,8 +6277,8 @@ const styles = StyleSheet.create({
     padding: 18,
   },
   journeyAlertPanel: {
-    backgroundColor: colors.highlight,
-    borderColor: colors.primaryDark,
+    backgroundColor: colors.warning,
+    borderColor: colors.textOnWarning,
   },
   statusLabel: {
     color: colors.metadata,
@@ -4873,23 +6328,23 @@ const styles = StyleSheet.create({
     padding: spacing.lg,
   },
   errorPanel: {
-    backgroundColor: "#2A0508",
-    borderColor: colors.error,
+    backgroundColor: "rgba(239, 133, 133, 0.16)",
+    borderColor: colors.danger,
     borderRadius: radius.md,
     borderWidth: 2,
     gap: spacing.md,
     padding: spacing.lg,
   },
   visualAlert: {
-    backgroundColor: colors.highlight,
-    borderColor: colors.primaryDark,
+    backgroundColor: colors.assistance,
+    borderColor: colors.textOnAssistance,
     borderRadius: 8,
     borderWidth: 3,
     gap: 6,
     padding: 16,
   },
   visualAlertTitle: {
-    color: colors.primaryDark,
+    color: colors.textOnAssistance,
     fontSize: 22,
     fontWeight: "900",
     lineHeight: 30,
@@ -4935,8 +6390,8 @@ const styles = StyleSheet.create({
     lineHeight: 28,
   },
   priorityPanel: {
-    backgroundColor: colors.highlight,
-    borderColor: colors.primaryDark,
+    backgroundColor: colors.accessible,
+    borderColor: colors.textOnAccessible,
     borderRadius: 8,
     borderWidth: 3,
     gap: 8,
@@ -4946,49 +6401,67 @@ const styles = StyleSheet.create({
 
 const lightStyles = StyleSheet.create({
   safeArea: {
-    backgroundColor: "#F6FBFC",
+    backgroundColor: lightTheme.background,
   },
   highContrastSafeArea: {
     backgroundColor: "#FFFFFF",
   },
   surface: {
-    backgroundColor: "#FFFFFF",
-    borderColor: "#8AB8C0",
+    backgroundColor: lightTheme.surface,
+    borderColor: lightTheme.border,
   },
   selectedCard: {
-    backgroundColor: "#D7F4F7",
-    borderColor: "#145A64",
+    backgroundColor: lightTheme.surfaceSecondary,
+    borderColor: lightTheme.primary,
   },
   infoPill: {
-    backgroundColor: "#EDF4F5",
-    borderColor: "#9DB9BE",
-    color: "#0A2A30",
+    backgroundColor: lightTheme.surfaceSecondary,
+    borderColor: lightTheme.border,
+    color: lightTheme.text,
+  },
+  serviceChip: {
+    backgroundColor: lightTheme.surface,
+    borderColor: lightTheme.primary,
+    color: lightTheme.primary,
+  },
+  accessibleChip: {
+    backgroundColor: lightTheme.accessible,
+    borderColor: lightTheme.accessible,
+    color: lightTheme.textOnAccessible,
   },
   themeSwitchCard: {
-    backgroundColor: "#FFFFFF",
-    borderColor: "#9DB9BE",
+    backgroundColor: lightTheme.surface,
+    borderColor: lightTheme.border,
+  },
+  defaultsIconChip: {
+    backgroundColor: lightTheme.surface,
+    borderColor: lightTheme.assistance,
   },
   createProfilePanel: {
-    backgroundColor: "#EEF7F8",
-    borderColor: "#8EB4BA",
+    backgroundColor: lightTheme.surface,
+    borderColor: lightTheme.border,
   },
   modeLabel: {
-    backgroundColor: "#FFFFFF",
-    borderColor: "#9DB9BE",
+    backgroundColor: lightTheme.surface,
+    borderColor: lightTheme.border,
   },
   selectedModeLabel: {
-    backgroundColor: "#A8E4EC",
-    borderColor: "#145A64",
+    backgroundColor: lightTheme.surfaceSecondary,
+    borderColor: lightTheme.primary,
   },
   selectedModeLabelText: {
     color: "#082E35",
   },
   modeIcon: {
-    backgroundColor: "#EDF4F5",
-    borderColor: "#145A64",
+    backgroundColor: lightTheme.surfaceSecondary,
+    borderColor: lightTheme.primary,
+  },
+  selectedSunIcon: {
+    backgroundColor: "#FFF3CF",
+    borderColor: lightTheme.warning,
   },
   moonCutout: {
-    backgroundColor: "#FFFFFF",
+    backgroundColor: lightTheme.surfaceSecondary,
   },
   highContrastIndicator: {
     backgroundColor: "#FFFFFF",
@@ -5011,62 +6484,165 @@ const lightStyles = StyleSheet.create({
     borderWidth: 4,
   },
   visualAlert: {
-    backgroundColor: "#E5F8FA",
-    borderColor: "#006E7A",
+    backgroundColor: "#EFEAFB",
+    borderColor: lightTheme.assistance,
   },
   textInput: {
-    backgroundColor: "#FFFFFF",
-    borderColor: "#9DB9BE",
-    color: "#0A2A30",
+    backgroundColor: lightTheme.surface,
+    borderColor: lightTheme.border,
+    color: lightTheme.text,
+  },
+  landmarkSearchResult: {
+    backgroundColor: lightTheme.surface,
+    borderColor: lightTheme.border,
   },
   mapListToggle: {
-    backgroundColor: "#FFFFFF",
-    borderColor: "#9DB9BE",
+    backgroundColor: lightTheme.surface,
+    borderColor: lightTheme.border,
   },
   mapListToggleButton: {
-    backgroundColor: "#FFFFFF",
+    backgroundColor: lightTheme.surface,
   },
   selectedMapListToggleButton: {
-    backgroundColor: "#A8E4EC",
+    backgroundColor: lightTheme.primary,
   },
   selectedMapListToggleText: {
-    color: "#082E35",
+    color: lightTheme.textOnPrimary,
   },
   stopMapPanel: {
-    backgroundColor: "#FFFFFF",
-    borderColor: "#9DB9BE",
+    backgroundColor: lightTheme.surface,
+    borderColor: lightTheme.border,
+  },
+  locationWarning: {
+    backgroundColor: "#FFF3CF",
+    borderColor: lightTheme.warning,
   },
   selectedStopSheet: {
-    backgroundColor: "#EEF7F8",
-    borderColor: "#145A64",
+    backgroundColor: lightTheme.surface,
+    borderColor: lightTheme.primary,
+  },
+  directionsSummary: {
+    backgroundColor: lightTheme.surfaceSecondary,
+    borderColor: lightTheme.location,
+  },
+  recenterControl: {
+    backgroundColor: "#FFFFFF",
+    borderColor: lightTheme.location,
+  },
+  mapStopMarker: {
+    backgroundColor: "transparent",
+    borderColor: "transparent",
+  },
+  selectedMapStopMarker: {
+    backgroundColor: "rgba(11, 102, 112, 0.16)",
+    borderColor: lightTheme.primary,
+  },
+  nearestBusStopGlyphBody: {
+    borderColor: lightTheme.location,
+  },
+  nearestBusStopGlyphWindow: {
+    backgroundColor: lightTheme.location,
+  },
+  nearestBusStopGlyphWheel: {
+    backgroundColor: lightTheme.location,
+  },
+  nearestBusStopGlyphPointer: {
+    borderTopColor: lightTheme.location,
+  },
+  mapStopMarkerText: {
+    color: lightTheme.primary,
+  },
+  selectedMapStopMarkerText: {
+    color: lightTheme.textOnPrimary,
+  },
+  selectedBusStopGlyphBody: {
+    borderColor: lightTheme.textOnPrimary,
+  },
+  selectedBusStopGlyphWindow: {
+    backgroundColor: lightTheme.textOnPrimary,
+  },
+  selectedBusStopGlyphWheel: {
+    backgroundColor: lightTheme.textOnPrimary,
+  },
+  selectedBusStopGlyphPointer: {
+    borderTopColor: lightTheme.textOnPrimary,
+  },
+  selectedStopRoute: {
+    backgroundColor: lightTheme.warning,
+  },
+  routeArrow: {
+    backgroundColor: lightTheme.primary,
+    borderColor: lightTheme.textOnPrimary,
+  },
+  headingCone: {
+    borderBottomColor: lightTheme.location,
+  },
+  landmarkMarker: {
+    backgroundColor: lightTheme.surface,
+    borderColor: lightTheme.border,
+  },
+  destinationLandmarkMarker: {
+    borderColor: lightTheme.assistance,
+  },
+  landmarkText: {
+    color: lightTheme.textSecondary,
+  },
+  landmarkLabel: {
+    color: lightTheme.textSecondary,
+  },
+  mapScale: {
+    backgroundColor: "transparent",
+  },
+  mapScaleLine: {
+    backgroundColor: lightTheme.textSecondary,
+  },
+  nearestStopLabel: {
+    backgroundColor: lightTheme.surface,
+    borderColor: lightTheme.location,
+    color: lightTheme.textOnLocation,
+  },
+  stopClusterMarker: {
+    backgroundColor: lightTheme.surface,
+    borderColor: lightTheme.primary,
+  },
+  stopClusterCount: {
+    color: lightTheme.primary,
+  },
+  stopClusterLabel: {
+    color: lightTheme.textSecondary,
+  },
+  mapStopMarkerLabel: {
+    backgroundColor: lightTheme.surface,
+    borderColor: lightTheme.primary,
+    color: lightTheme.text,
   },
   primaryButton: {
-    backgroundColor: "#145A64",
-    borderColor: "#145A64",
+    backgroundColor: lightTheme.primary,
+    borderColor: lightTheme.primary,
   },
   primaryButtonText: {
     color: "#FFFFFF",
   },
   secondaryButton: {
-    backgroundColor: "#FFFFFF",
-    borderColor: "#145A64",
+    backgroundColor: lightTheme.surface,
+    borderColor: lightTheme.primary,
   },
   secondaryButtonText: {
-    color: "#145A64",
+    color: lightTheme.primary,
   },
   tabBar: {
-    backgroundColor: "#FFFFFF",
-    borderColor: "#9DB9BE",
+    backgroundColor: lightTheme.surface,
+    borderColor: lightTheme.border,
   },
   tabButton: {
-    backgroundColor: "#EDF4F5",
+    backgroundColor: lightTheme.surfaceSecondary,
   },
   selectedTabButton: {
-    backgroundColor: "#A8E4EC",
+    backgroundColor: lightTheme.surfaceSecondary,
   },
   disabledTabButton: {
-    backgroundColor: "#E7EEF0",
-    borderColor: "#C4D4D8",
+    backgroundColor: lightTheme.surfaceSecondary,
+    borderColor: lightTheme.border,
     borderWidth: 1,
   },
   tabIconBadge: {
@@ -5079,60 +6655,63 @@ const lightStyles = StyleSheet.create({
     backgroundColor: "transparent",
   },
   tabButtonText: {
-    color: "#183B41",
+    color: lightTheme.text,
   },
   selectedTabButtonText: {
-    color: "#082E35",
+    color: lightTheme.primaryStrong,
   },
   disabledTabButtonText: {
-    color: "#5E777D",
+    color: lightTheme.textSecondary,
   },
   tabSelectedText: {
-    color: "#082E35",
+    color: lightTheme.primaryStrong,
   },
   tabUnavailableText: {
-    color: "#6F858A",
+    color: lightTheme.textSecondary,
   },
   toggleRow: {
-    backgroundColor: "#FFFFFF",
-    borderColor: "#8AB8C0",
+    backgroundColor: lightTheme.surface,
+    borderColor: lightTheme.border,
   },
   selectedToggleRow: {
-    backgroundColor: "#D7F4F7",
-    borderColor: "#145A64",
+    backgroundColor: lightTheme.surfaceSecondary,
+    borderColor: lightTheme.primary,
   },
   optionIcon: {
-    backgroundColor: "#EEF7F8",
-    borderColor: "#8AB8C0",
+    backgroundColor: lightTheme.surfaceSecondary,
+    borderColor: lightTheme.border,
   },
   selectedOptionIcon: {
-    backgroundColor: "#006E7A",
-    borderColor: "#006E7A",
+    backgroundColor: lightTheme.primary,
+    borderColor: lightTheme.primary,
   },
   selectionIndicator: {
-    borderColor: "#5F929B",
+    borderColor: lightTheme.border,
   },
   selectedSelectionIndicator: {
-    backgroundColor: "#006E7A",
-    borderColor: "#006E7A",
+    backgroundColor: lightTheme.primary,
+    borderColor: lightTheme.primary,
+  },
+  selectionCheckMark: {
+    backgroundColor: "#FFFFFF",
   },
   text: {
-    color: "#0A2A30",
+    color: lightTheme.text,
   },
   highContrastText: {
     color: "#000000",
   },
   bodyText: {
-    color: "#0A2A30",
+    color: lightTheme.text,
   },
   highContrastMutedText: {
     color: "#111111",
   },
   mutedText: {
-    color: "#536B70",
+    color: lightTheme.textSecondary,
   },
   eyebrow: {
-    color: "#145A64",
+    color: lightTheme.primary,
   },
   selectedOptionIconText: {
     color: "#FFFFFF",
@@ -5141,8 +6720,6 @@ const lightStyles = StyleSheet.create({
     color: "#FFFFFF",
   },
   selectedSelectionStatus: {
-    color: "#006E7A",
+    color: lightTheme.primary,
   },
 });
-
-

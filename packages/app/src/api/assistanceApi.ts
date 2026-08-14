@@ -49,13 +49,14 @@ export async function findNearbyBusStops(payload: {
   latitude: number;
   longitude: number;
   accuracyMeters?: number;
-}): Promise<NearbyBusStopsResponse> {
+}, signal?: AbortSignal): Promise<NearbyBusStopsResponse> {
   const response = await fetch(`${API_BASE_URL}/api/location/nearby-bus-stops`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
     body: JSON.stringify(payload),
+    signal,
   });
 
   if (!response.ok) {
@@ -66,9 +67,12 @@ export async function findNearbyBusStops(payload: {
 }
 
 export async function fetchBusStopArrivals(
-  busStopCode: string
+  busStopCode: string,
+  signal?: AbortSignal
 ): Promise<BusStopArrivalsResponse> {
-  const response = await fetch(`${API_BASE_URL}/api/location/bus-stops/${busStopCode}/arrivals`);
+  const response = await fetch(`${API_BASE_URL}/api/location/bus-stops/${busStopCode}/arrivals`, {
+    signal,
+  });
 
   if (!response.ok) {
     throw new Error("Unable to load buses for this stop.");
