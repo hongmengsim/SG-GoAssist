@@ -9,7 +9,8 @@ import { logger } from "../services/logger";
 
 export const router = Router();
 
-const maxDistanceMeters = 150;
+const nearbyStopLimit = 8;
+const maxDistanceMeters = 800;
 
 router.post("/nearby-bus-stops", (req: Request, res: Response) => {
   const payload: NearbyBusStopsRequest = req.body;
@@ -23,7 +24,7 @@ router.post("/nearby-bus-stops", (req: Request, res: Response) => {
   const stops = findNearestBusStops(
     payload.latitude,
     payload.longitude,
-    3,
+    nearbyStopLimit,
     maxDistanceMeters
   );
 

@@ -23,6 +23,15 @@ test("nearby bus stop lookup returns no stops when outside the confidence radius
   assert.deepEqual(stops, []);
 });
 
+test("wider manual lookup can surface a larger bus stop library around Kent Ridge", () => {
+  const stops = findNearestBusStops(1.2942, 103.7711, 8, 800);
+  const stopCodes = stops.map((stop) => stop.busStopCode);
+
+  assert.ok(stops.length > 3);
+  assert.ok(stopCodes.includes("18341"));
+  assert.ok(stopCodes.includes("19019"));
+});
+
 test("arrival buses map to backend-known autonomous vehicle records", () => {
   const services = getArrivalsForStop("19011");
   const arrivals = services.flatMap((service) => service.buses);

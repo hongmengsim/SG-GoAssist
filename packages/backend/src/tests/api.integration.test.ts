@@ -143,7 +143,7 @@ test("location API validates coordinates and returns deterministic nearby stops"
     assert.equal(nearby.status, 200);
     assert.deepEqual(
       nearby.body.stops.map((stop: any) => stop.busStopCode),
-      ["19011", "18309", "18301"]
+      ["19011", "18309", "18301", "19019", "18311", "18349", "18341", "18321"]
     );
 
     const invalid = await requestJson(server.baseUrl, "/api/location/nearby-bus-stops", {

@@ -83,7 +83,7 @@ async function selectBusFromManualStopFlow() {
 
   fireEvent.press(screen.getByText("Select bus stop manually"));
 
-  await screen.findByText("Nearby bus stops");
+  await screen.findByText("Choose Your Bus Stop");
   fireEvent.press(
     screen.getByLabelText(
       /Kent Ridge Crescent, Kent Ridge Cres, bus stop 18301, approximately 45 metres away/i
@@ -118,8 +118,12 @@ it("lets a passenger manually choose a stop, confirm it, and see arriving buses"
 
   fireEvent.press(screen.getByText("Select bus stop manually"));
 
-  await screen.findByText("Nearby bus stops");
+  await screen.findByText("Choose Your Bus Stop");
   expect(screen.getByText("Select the bus stop where you are waiting.")).toBeTruthy();
+  expect(screen.getByLabelText("Search bus stop or location")).toBeTruthy();
+  expect(screen.getByLabelText("Map view")).toBeTruthy();
+  expect(screen.getByLabelText("List view")).toBeTruthy();
+  expect(screen.getByLabelText("Nearby bus stop map. 2 stops shown.")).toBeTruthy();
   expect(screen.getByLabelText("This is my stop").props.accessibilityState).toMatchObject({
     disabled: true,
   });
@@ -137,6 +141,48 @@ it("lets a passenger manually choose a stop, confirm it, and see arriving buses"
   expect(screen.getByText("Kent Ridge Terminal")).toBeTruthy();
 });
 
+it("selects a nearby stop from the map and opens the selected stop card", async () => {
+  mockSuccessfulJourneyApis();
+  render(<App />);
+
+  fireEvent.press(screen.getByText("Select bus stop manually"));
+
+  await screen.findByText("Choose Your Bus Stop");
+  fireEvent.press(screen.getByLabelText(/Bus stop 18301, Kent Ridge Crescent, 45 metres away/i));
+
+  expect(screen.getByText("Kent Ridge Crescent - Bus Stop 18301")).toBeTruthy();
+  expect(screen.getByText(/Approx\. 45 m away/i)).toBeTruthy();
+  expect(screen.getByText("Accessible boarding available")).toBeTruthy();
+
+  fireEvent.press(screen.getByText("Select This Stop"));
+
+  await screen.findByText("Choose your bus");
+  expect(screen.getByText("95")).toBeTruthy();
+});
+
+it("filters nearby stops by search and supports list view selection", async () => {
+  mockSuccessfulJourneyApis();
+  render(<App />);
+
+  fireEvent.press(screen.getByText("Select bus stop manually"));
+
+  await screen.findByText("Choose Your Bus Stop");
+  fireEvent.changeText(screen.getByLabelText("Search bus stop or location"), "18321");
+  expect(screen.queryByText("Kent Ridge Crescent")).toBeNull();
+  expect(screen.getByText("Opp Heng Mui Keng Terrace")).toBeTruthy();
+
+  fireEvent.press(screen.getByLabelText("List view"));
+  expect(screen.getByLabelText("List view").props.accessibilityState).toMatchObject({
+    selected: true,
+  });
+  fireEvent.press(
+    screen.getByLabelText(
+      /Opp Heng Mui Keng Terrace, Kent Ridge Cres, bus stop 18321, approximately 210 metres away/i
+    )
+  );
+  expect(screen.getByText("Opp Heng Mui Keng Terrace - Bus Stop 18321")).toBeTruthy();
+});
+
 it("falls back to manual stop selection when location permission is denied", async () => {
   mockSuccessfulJourneyApis();
   (Location.requestForegroundPermissionsAsync as jest.Mock).mockResolvedValue({ status: "denied" });
@@ -144,7 +190,7 @@ it("falls back to manual stop selection when location permission is denied", asy
 
   fireEvent.press(screen.getByText("Use my location"));
 
-  await screen.findByText("Nearby bus stops");
+  await screen.findByText("Choose Your Bus Stop");
   expect(screen.getByText("Kent Ridge Crescent")).toBeTruthy();
   expect(global.fetch).toHaveBeenCalledWith(
     expect.stringContaining("/api/location/nearby-bus-stops"),
@@ -174,8 +220,25 @@ it("shows phone accessibility controls on the assistance screen for guest journe
   await selectBusFromManualStopFlow();
 
   await waitFor(() => expect(screen.getByText("Phone Accessibility")).toBeTruthy());
+  expect(screen.queryByText("Appearance")).toBeNull();
   expect(screen.getByText("Screen-reader optimised")).toBeTruthy();
   expect(screen.getByText("Haptic alerts")).toBeTruthy();
   expect(screen.getByText("Large text")).toBeTruthy();
   expect(screen.getByText("High contrast")).toBeTruthy();
+});
+
+it("keeps appearance mode in profile and toggles between light and dark", () => {
+  render(<App />);
+
+  fireEvent.press(screen.getByLabelText("Profile, tab, 4 of 4"));
+  expect(screen.getByText("Appearance")).toBeTruthy();
+  expect(screen.getByLabelText("Dark mode").props.accessibilityState).toMatchObject({
+    checked: false,
+  });
+
+  fireEvent.press(screen.getByLabelText("Dark mode"));
+
+  expect(screen.getByLabelText("Dark mode").props.accessibilityState).toMatchObject({
+    checked: true,
+  });
 });

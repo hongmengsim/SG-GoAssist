@@ -44,11 +44,130 @@ export const mockBusStops: BusStop[] = [
     longitude: 103.78382,
   },
   {
+    busStopCode: "18129",
+    roadName: "Lower Kent Ridge Rd",
+    description: "Opp NUH",
+    latitude: 1.29394,
+    longitude: 103.78428,
+  },
+  {
+    busStopCode: "18131",
+    roadName: "Lower Kent Ridge Rd",
+    description: "Yusof Ishak House",
+    latitude: 1.29831,
+    longitude: 103.77392,
+  },
+  {
+    busStopCode: "18139",
+    roadName: "Lower Kent Ridge Rd",
+    description: "Opp Yusof Ishak House",
+    latitude: 1.29812,
+    longitude: 103.77424,
+  },
+  {
+    busStopCode: "18331",
+    roadName: "Kent Ridge Cres",
+    description: "University Hall",
+    latitude: 1.29708,
+    longitude: 103.77602,
+  },
+  {
+    busStopCode: "18339",
+    roadName: "Kent Ridge Cres",
+    description: "Opp University Hall",
+    latitude: 1.29674,
+    longitude: 103.77581,
+  },
+  {
+    busStopCode: "18341",
+    roadName: "Kent Ridge Cres",
+    description: "Central Library",
+    latitude: 1.29618,
+    longitude: 103.77331,
+  },
+  {
+    busStopCode: "18349",
+    roadName: "Kent Ridge Cres",
+    description: "Opp Central Library",
+    latitude: 1.29572,
+    longitude: 103.77318,
+  },
+  {
+    busStopCode: "19019",
+    roadName: "Kent Ridge Cres",
+    description: "Opp Kent Ridge Terminal",
+    latitude: 1.29447,
+    longitude: 103.77135,
+  },
+  {
+    busStopCode: "15131",
+    roadName: "Commonwealth Ave",
+    description: "Buona Vista Stn Exit D",
+    latitude: 1.30731,
+    longitude: 103.79021,
+  },
+  {
+    busStopCode: "15139",
+    roadName: "Commonwealth Ave",
+    description: "Buona Vista Stn Exit C",
+    latitude: 1.30692,
+    longitude: 103.79056,
+  },
+  {
+    busStopCode: "17171",
+    roadName: "Clementi Rd",
+    description: "SIM HQ",
+    latitude: 1.32951,
+    longitude: 103.77612,
+  },
+  {
+    busStopCode: "17179",
+    roadName: "Clementi Rd",
+    description: "Opp SIM HQ",
+    latitude: 1.32915,
+    longitude: 103.77574,
+  },
+  {
     busStopCode: "01012",
     roadName: "Victoria St",
     description: "Hotel Grand Pacific",
     latitude: 1.2969,
     longitude: 103.8531,
+  },
+  {
+    busStopCode: "01013",
+    roadName: "Victoria St",
+    description: "St Joseph's Church",
+    latitude: 1.29772,
+    longitude: 103.85271,
+  },
+  {
+    busStopCode: "02049",
+    roadName: "Bras Basah Rd",
+    description: "Raffles Hotel",
+    latitude: 1.29612,
+    longitude: 103.85402,
+  },
+  {
+    busStopCode: "04167",
+    roadName: "North Bridge Rd",
+    description: "City Hall Stn Exit B",
+    latitude: 1.29335,
+    longitude: 103.85201,
+  },
+  {
+    busStopCode: "95029",
+    roadName: "Airport Blvd",
+    description: "Changi Airport Terminal 1",
+    latitude: 1.3589,
+    longitude: 103.9875,
+  },
+  {
+    busStopCode: "95019",
+    roadName: "Airport Blvd",
+    description: "Changi Airport Terminal 2",
+    latitude: 1.35684,
+    longitude: 103.98912,
   },
 ];
 
@@ -69,6 +188,28 @@ const mockArrivalsByStop: Record<string, BusArrivalService[]> = {
       buses: [arrival("AV-095-02", "95", "NEXT_BUS", 240, true, "Buona Vista")],
     },
   ],
+  "18321": [
+    {
+      serviceNo: "95",
+      buses: [arrival("AV-095-01", "95", "NEXT_BUS", 360, true, "Kent Ridge Terminal")],
+    },
+    {
+      serviceNo: "151",
+      buses: [arrival("AV-151-01", "151", "NEXT_BUS", 540, true, "Kent Ridge Terminal")],
+    },
+  ],
+  "18341": [
+    {
+      serviceNo: "95",
+      buses: [arrival("AV-095-02", "95", "NEXT_BUS", 260, true, "Buona Vista")],
+    },
+  ],
+  "18349": [
+    {
+      serviceNo: "95",
+      buses: [arrival("AV-095-01", "95", "NEXT_BUS", 300, true, "Kent Ridge Terminal")],
+    },
+  ],
   "19011": [
     {
       serviceNo: "191",
@@ -86,6 +227,18 @@ const mockArrivalsByStop: Record<string, BusArrivalService[]> = {
     {
       serviceNo: "191",
       buses: [arrival("AV-191-05", "191", "NEXT_BUS", 210, true, "Buona Vista")],
+    },
+  ],
+  "95029": [
+    {
+      serviceNo: "191",
+      buses: [arrival("SBS-191-001", "191", "NEXT_BUS", 120, true, "Changi Airport Terminal 2")],
+    },
+  ],
+  "95019": [
+    {
+      serviceNo: "191",
+      buses: [arrival("SBS-191-001", "191", "NEXT_BUS", 240, true, "Changi Airport Terminal 1")],
     },
   ],
   "01012": [

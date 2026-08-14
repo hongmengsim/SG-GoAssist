@@ -68,6 +68,7 @@ export interface AppAccessibilityPreferences {
   largeText: boolean;
   highContrast: boolean;
   repeatAudio: boolean;
+  themeMode: "light" | "dark";
 }
 
 export interface PassengerProfile {

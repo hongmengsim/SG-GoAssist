@@ -10,6 +10,7 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  useWindowDimensions,
   View,
   type ImageSourcePropType,
 } from "react-native";
@@ -39,7 +40,7 @@ import {
 import { subscribeToRequestStatus } from "./src/api/statusSocket";
 import * as Location from "expo-location";
 
-const brandLogo = Platform.OS === "web" ? { uri: "/icon.png" } : require("./assets/icon.png");
+const brandLogo = require("./assets/applogo.png");
 const optionIcons = {
   wheelchairAssistance: require("./assets/wheelchair-assistance.png"),
   busIdentification: require("./assets/bus-identification.png"),
@@ -49,6 +50,12 @@ const optionIcons = {
   hapticAlerts: require("./assets/haptic_alerts.png"),
   largeText: require("./assets/large-text.png"),
   highContrast: require("./assets/high-contrast.png"),
+};
+const tabIcons: Record<TabIconName, ImageSourcePropType> = {
+  home: require("./assets/homelogo.png"),
+  bus: require("./assets/journeylogo.png"),
+  assist: require("./assets/buslogo.png"),
+  profile: require("./assets/profilelogo.png"),
 };
 type TabIconName = "home" | "bus" | "assist" | "profile";
 
@@ -79,6 +86,7 @@ const defaultAppPreferences: AppAccessibilityPreferences = {
   largeText: false,
   highContrast: false,
   repeatAudio: true,
+  themeMode: "light",
 };
 
 const localPreferencesKey = "sg-goassist.preferences.v1";
@@ -121,24 +129,24 @@ const radius = {
   md: 8,
 };
 const colors = {
-  background: "#000000",
-  surface: "#02090B",
-  lightSurface: "#061D22",
-  primary: "#006E7A",
-  primaryDark: "#001F26",
-  primarySoft: "#00A7B7",
-  highlight: "#00C2D1",
+  background: "#071315",
+  surface: "#0D1B1E",
+  lightSurface: "#111D20",
+  primary: "#69C8D8",
+  primaryDark: "#071315",
+  primarySoft: "#69C8D8",
+  highlight: "#69C8D8",
   success: "#83F4E6",
-  text: "#FFFFFF",
-  muted: "#D6F5F7",
-  metadata: "#A8CED3",
-  body: "#FFFFFF",
-  border: "#2B8793",
+  text: "#F7FBFC",
+  muted: "#B7C8CB",
+  metadata: "#B7C8CB",
+  body: "#F7FBFC",
+  border: "#527078",
   error: "#FF5A5F",
-  disabledBackground: "#111827",
-  disabledBorder: "#4B7280",
-  disabledText: "#C6D2D6",
-  focusIndicator: "#00E5F0",
+  disabledBackground: "#39474A",
+  disabledBorder: "#527078",
+  disabledText: "#B7C8CB",
+  focusIndicator: "#8BE9F4",
 };
 
 const profileTimestamp = new Date().toISOString();
@@ -162,6 +170,7 @@ const demoProfiles: PassengerProfile[] = [
       largeText: true,
       highContrast: true,
       repeatAudio: true,
+      themeMode: "light",
     },
     createdAt: profileTimestamp,
     updatedAt: profileTimestamp,
@@ -204,6 +213,8 @@ export default function App() {
 }
 
 function SgGoAssistApp() {
+  const { width } = useWindowDimensions();
+  const isCompactWidth = width < 380;
   const [screen, setScreen] = useState<Screen>("LOCATION");
   const [profiles, setProfiles] = useState<PassengerProfile[]>(demoProfiles);
   const [activeProfile, setActiveProfile] = useState<PassengerProfile | null>(null);
@@ -217,6 +228,14 @@ function SgGoAssistApp() {
   const [appPreferences, setAppPreferences] = useState(defaultAppPreferences);
   const [nearbyStops, setNearbyStops] = useState<NearbyBusStop[]>([]);
   const [selectedStop, setSelectedStop] = useState<NearbyBusStop | null>(null);
+  const [mapViewMode, setMapViewMode] = useState<"MAP" | "LIST">("MAP");
+  const [stopSearchQuery, setStopSearchQuery] = useState("");
+  const [mapManuallyMoved, setMapManuallyMoved] = useState(false);
+  const [currentLocation, setCurrentLocation] = useState<{
+    latitude: number;
+    longitude: number;
+    accuracyMeters?: number;
+  } | null>(null);
   const [arrivingBuses, setArrivingBuses] = useState<ArrivalBus[]>([]);
   const [selectedBus, setSelectedBus] = useState<Bus | null>(null);
   const [selectedArrival, setSelectedArrival] = useState<ArrivalBus | null>(null);
@@ -253,8 +272,25 @@ function SgGoAssistApp() {
   const selectedStopReached =
     Boolean(selectedAlightingStop && currentRouteStop) &&
     selectedAlightingStop?.busStopCode === currentRouteStop?.busStopCode;
+  const visibleStops = useMemo(() => {
+    const query = stopSearchQuery.trim().toLowerCase();
+    if (!query) {
+      return nearbyStops;
+    }
+
+    return nearbyStops.filter((stop) =>
+      [stop.description, stop.roadName, stop.busStopCode]
+        .join(" ")
+        .toLowerCase()
+        .includes(query)
+    );
+  }, [nearbyStops, stopSearchQuery]);
   const sessionId = activeProfile?.profileId ?? "demo-passenger-session";
   const activeTab = getActiveTab(screen);
+  const resolvedThemeMode = appPreferences.themeMode;
+  const lightMode = resolvedThemeMode === "light";
+  const highContrastDark = appPreferences.highContrast && !lightMode;
+  const highContrastLight = appPreferences.highContrast && lightMode;
 
   useEffect(() => {
     const saved = readSavedPreferences();
@@ -511,6 +547,13 @@ function SgGoAssistApp() {
 
       setNearbyStops(result.stops);
       setSelectedStop(null);
+      setCurrentLocation({
+        latitude: result.debug.latitude,
+        longitude: result.debug.longitude,
+        accuracyMeters: result.debug.accuracyMeters,
+      });
+      setMapViewMode("MAP");
+      setMapManuallyMoved(false);
       setScreen("STOP");
       AccessibilityInfo.announceForAccessibility(
         `${result.stops.length} nearby bus stops found. Please confirm your bus stop.`
@@ -535,6 +578,13 @@ function SgGoAssistApp() {
       });
       setNearbyStops(result.stops);
       setSelectedStop(null);
+      setCurrentLocation({
+        latitude: result.debug.latitude,
+        longitude: result.debug.longitude,
+        accuracyMeters: result.debug.accuracyMeters,
+      });
+      setMapViewMode("MAP");
+      setMapManuallyMoved(false);
       setScreen("STOP");
     } catch (apiError) {
       setError(apiError instanceof Error ? apiError.message : "Unable to load bus stops.");
@@ -718,6 +768,52 @@ function SgGoAssistApp() {
     }
   }
 
+  function themedHeadingStyle() {
+    return [
+      styles.heading,
+      lightMode && lightStyles.text,
+      highContrastDark && styles.highContrastText,
+      highContrastLight && lightStyles.highContrastText,
+    ];
+  }
+
+  function themedPanelStyle() {
+    return [
+      styles.statusPanel,
+      lightMode && lightStyles.surface,
+      highContrastDark && styles.highContrastControl,
+      highContrastLight && lightStyles.highContrastControl,
+    ];
+  }
+
+  function themedBodyStyle() {
+    return [
+      styles.bodyText,
+      appPreferences.largeText && styles.largeBody,
+      lightMode && lightStyles.bodyText,
+      highContrastDark && styles.highContrastMutedText,
+      highContrastLight && lightStyles.highContrastMutedText,
+    ];
+  }
+
+  function themedLabelStyle() {
+    return [
+      styles.statusLabel,
+      lightMode && lightStyles.mutedText,
+      highContrastDark && styles.highContrastMutedText,
+      highContrastLight && lightStyles.highContrastMutedText,
+    ];
+  }
+
+  function themedValueStyle() {
+    return [
+      styles.statusValue,
+      lightMode && lightStyles.text,
+      highContrastDark && styles.highContrastText,
+      highContrastLight && lightStyles.highContrastText,
+    ];
+  }
+
   async function requestDisembarkation() {
     if (!selectedBus || !selectedAlightingStop || isLoading) {
       setError("Choose where to get off before requesting disembarkation.");
@@ -789,13 +885,30 @@ function SgGoAssistApp() {
   }
 
   return (
-    <SafeAreaView style={[styles.safeArea, appPreferences.highContrast && styles.highContrastSafeArea]}>
-      <ScrollView contentContainerStyle={styles.container}>
-        <BrandHeader highContrast={appPreferences.highContrast} />
+    <SafeAreaView
+      style={[
+        styles.safeArea,
+        lightMode && lightStyles.safeArea,
+        highContrastDark && styles.highContrastSafeArea,
+        highContrastLight && lightStyles.highContrastSafeArea,
+      ]}
+    >
+      <ScrollView
+        contentContainerStyle={[styles.container, isCompactWidth && styles.compactContainer]}
+      >
+        <BrandHeader
+          highContrast={appPreferences.highContrast}
+          lightMode={lightMode}
+          compact={isCompactWidth}
+        />
         {activeProfile && (
-          <View style={styles.profileBar}>
-            <Text style={styles.profileName}>{activeProfile.displayName}</Text>
-            <Text style={styles.bodyText}>Defaults: {requirementsLabel(requirements)}</Text>
+          <View style={[styles.profileBar, lightMode && lightStyles.surface]}>
+            <Text style={[styles.profileName, lightMode && lightStyles.text]}>
+              {activeProfile.displayName}
+            </Text>
+            <Text style={[styles.bodyText, lightMode && lightStyles.bodyText]}>
+              Defaults: {requirementsLabel(requirements)}
+            </Text>
           </View>
         )}
 
@@ -805,38 +918,68 @@ function SgGoAssistApp() {
               eyebrow="Profile"
               title="Your SG GoAssist profile"
               highContrast={appPreferences.highContrast}
+              lightMode={lightMode}
             />
-            <Text style={[styles.bodyText, appPreferences.largeText && styles.largeBody]}>
+            <Text style={themedBodyStyle()}>
               Save your assistance needs for easier, safer and more independent bus journeys.
             </Text>
-            <View style={styles.statusPanel}>
-              <Text style={styles.statusLabel}>Designed for accessible journeys</Text>
-              <Text style={styles.statusValue}>Guided with care</Text>
-              <Text style={styles.bodyText}>
+            <AppearanceSwitch
+              themeMode={appPreferences.themeMode}
+              highContrast={appPreferences.highContrast}
+              largeText={appPreferences.largeText}
+              onToggle={() =>
+                setAppPreferences((current) => ({
+                  ...current,
+                  themeMode: current.themeMode === "light" ? "dark" : "light",
+                }))
+              }
+            />
+            <View style={themedPanelStyle()}>
+              <Text style={themedLabelStyle()}>Designed for accessible journeys</Text>
+              <Text style={themedValueStyle()}>Guided with care</Text>
+              <Text style={themedBodyStyle()}>
                 SG GoAssist helps less-abled passengers travel with confidence by making bus journeys easier, safer and more independent.
               </Text>
-              <Text style={styles.bodyText}>
+              <Text style={themedBodyStyle()}>
                 Current app support: {appPreferencesLabel(appPreferences)}
               </Text>
             </View>
-            <Text style={[styles.heading, appPreferences.highContrast && styles.highContrastText]}>
-              Create Profile
-            </Text>
-            <LabeledInput
-              label="Name"
-              value={authName}
-              onChangeText={setAuthName}
-              placeholder="Passenger name"
-            />
-            <LabeledInput
-              label="Email"
-              value={authEmail}
-              onChangeText={setAuthEmail}
-              placeholder="name@example.com"
-              keyboardType="email-address"
-            />
-            <PrimaryButton label="Create profile" onPress={createProfile} />
-            <Text style={[styles.heading, appPreferences.highContrast && styles.highContrastText]}>
+            <View
+              style={[
+                styles.createProfilePanel,
+                lightMode && lightStyles.createProfilePanel,
+                highContrastDark && styles.highContrastControl,
+                highContrastLight && lightStyles.highContrastControl,
+              ]}
+            >
+              <Text style={themedHeadingStyle()}>
+                Create Profile
+              </Text>
+              <LabeledInput
+                label="Name"
+                value={authName}
+                onChangeText={setAuthName}
+                placeholder="Passenger name"
+                lightMode={lightMode}
+                highContrast={appPreferences.highContrast}
+              />
+              <LabeledInput
+                label="Email"
+                value={authEmail}
+                onChangeText={setAuthEmail}
+                placeholder="name@example.com"
+                keyboardType="email-address"
+                lightMode={lightMode}
+                highContrast={appPreferences.highContrast}
+              />
+              <PrimaryButton
+                label="Create profile"
+                onPress={createProfile}
+                lightMode={lightMode}
+                highContrast={appPreferences.highContrast}
+              />
+            </View>
+            <Text style={themedHeadingStyle()}>
               Saved Profiles
             </Text>
             {profiles.map((profile) => (
@@ -847,14 +990,14 @@ function SgGoAssistApp() {
                   profile.assistanceDefaults
                 )}.`}
                 onPress={() => applyProfile(profile, "PROFILE")}
-                style={styles.busCard}
+                style={[styles.busCard, lightMode && lightStyles.surface]}
               >
-                <Text style={styles.busTitle}>{profile.displayName}</Text>
-                <Text style={styles.bodyText}>{profile.email}</Text>
-                <Text style={styles.bodyText}>
+                <Text style={[styles.busTitle, lightMode && lightStyles.text]}>{profile.displayName}</Text>
+                <Text style={themedBodyStyle()}>{profile.email}</Text>
+                <Text style={themedBodyStyle()}>
                   Verification: {verificationStatusLabel(profile)}
                 </Text>
-                <Text style={styles.bodyText}>
+                <Text style={themedBodyStyle()}>
                   Defaults: {requirementsLabel(profile.assistanceDefaults)}
                 </Text>
               </Pressable>
@@ -868,35 +1011,54 @@ function SgGoAssistApp() {
               eyebrow="Profile"
               title="My profile"
               highContrast={appPreferences.highContrast}
+              lightMode={lightMode}
             />
-            <View style={styles.statusPanel}>
-              <Text style={styles.statusLabel}>Account</Text>
-              <Text style={styles.statusValue}>{activeProfile.displayName}</Text>
-              <Text style={styles.bodyText}>{activeProfile.email}</Text>
-              <Text style={styles.bodyText}>
+            <View style={themedPanelStyle()}>
+              <Text style={themedLabelStyle()}>Account</Text>
+              <Text style={themedValueStyle()}>{activeProfile.displayName}</Text>
+              <Text style={themedBodyStyle()}>{activeProfile.email}</Text>
+              <Text style={themedBodyStyle()}>
                 Verification: {verificationStatusLabel(activeProfile)}
               </Text>
-              <Text style={styles.bodyText}>
+              <Text style={themedBodyStyle()}>
                 Saved needs: {requirementsLabel(activeProfile.assistanceDefaults)}
               </Text>
-              <Text style={styles.bodyText}>
+              <Text style={themedBodyStyle()}>
                 App support: {appPreferencesLabel(activeProfile.appPreferences)}
               </Text>
             </View>
+            <AppearanceSwitch
+              themeMode={appPreferences.themeMode}
+              highContrast={appPreferences.highContrast}
+              largeText={appPreferences.largeText}
+              onToggle={() =>
+                setAppPreferences((current) => ({
+                  ...current,
+                  themeMode: current.themeMode === "light" ? "dark" : "light",
+                }))
+              }
+            />
             {!isEditingProfileNeeds && (
               <>
-                <PrimaryButton label="Edit needs" onPress={() => setIsEditingProfileNeeds(true)} />
+                <PrimaryButton
+                  label="Edit needs"
+                  onPress={() => setIsEditingProfileNeeds(true)}
+                  lightMode={lightMode}
+                  highContrast={appPreferences.highContrast}
+                />
                 <SecondaryButton
                   label="Use saved needs for this trip"
                   onPress={() => applyProfile(activeProfile, "PROFILE")}
+                  lightMode={lightMode}
+                  highContrast={appPreferences.highContrast}
                 />
               </>
             )}
             {!isEditingProfileNeeds && activeProfile.verificationStatus !== "VERIFIED" && (
-              <View style={styles.summaryRow}>
-                <Text style={styles.summaryLabel}>Accessibility Verification</Text>
-                <Text style={styles.summaryValue}>Verify eligibility separately from your needs</Text>
-                <Text style={styles.bodyText}>
+              <View style={[styles.summaryRow, lightMode && lightStyles.surface]}>
+                <Text style={[styles.summaryLabel, lightMode && lightStyles.mutedText]}>Accessibility Verification</Text>
+                <Text style={[styles.summaryValue, lightMode && lightStyles.text]}>Verify eligibility separately from your needs</Text>
+                <Text style={themedBodyStyle()}>
                   Demo verification accepts the built-in credential. Card numbers are mocked for the prototype.
                 </Text>
                 <VerificationMethodPicker
@@ -908,42 +1070,58 @@ function SgGoAssistApp() {
                   value={credentialLast4}
                   onChangeText={setCredentialLast4}
                   placeholder="4821"
+                  lightMode={lightMode}
+                  highContrast={appPreferences.highContrast}
                 />
-                <PrimaryButton label="Verify accessibility profile" onPress={verifyActiveProfile} />
+                <PrimaryButton
+                  label="Verify accessibility profile"
+                  onPress={verifyActiveProfile}
+                  lightMode={lightMode}
+                  highContrast={appPreferences.highContrast}
+                />
               </View>
             )}
             {!isEditingProfileNeeds && activeProfile.verificationStatus === "VERIFIED" && (
-              <View style={styles.summaryRow}>
-                <Text style={styles.summaryLabel}>Accessibility Verification</Text>
-                <Text style={styles.summaryValue}>Verified accessibility user</Text>
-                <Text style={styles.bodyText}>
+              <View style={[styles.summaryRow, lightMode && lightStyles.surface]}>
+                <Text style={[styles.summaryLabel, lightMode && lightStyles.mutedText]}>Accessibility Verification</Text>
+                <Text style={[styles.summaryValue, lightMode && lightStyles.text]}>Verified accessibility user</Text>
+                <Text style={themedBodyStyle()}>
                   Method: {readableVerificationMethod(activeProfile.verificationMethod)}
                 </Text>
-                <Text style={styles.bodyText}>
+                <Text style={themedBodyStyle()}>
                   Credential: {activeProfile.verifiedCredentialLast4 ? `•••• ${activeProfile.verifiedCredentialLast4}` : "Demo credential"}
                 </Text>
               </View>
             )}
             {isEditingProfileNeeds && (
               <>
-                <Text style={[styles.heading, appPreferences.highContrast && styles.highContrastText]}>
+                <Text style={themedHeadingStyle()}>
                   Bus Assistance Defaults
                 </Text>
                 <AssistancePreferenceToggles
                   requirements={requirements}
                   appPreferences={appPreferences}
+                  resolvedThemeMode={resolvedThemeMode}
                   setRequirements={setRequirements}
                 />
-                <Text style={[styles.heading, appPreferences.highContrast && styles.highContrastText]}>
+                <Text style={themedHeadingStyle()}>
                   App Accessibility Defaults
                 </Text>
                 <AppPreferenceToggles
                   appPreferences={appPreferences}
+                  resolvedThemeMode={resolvedThemeMode}
                   setAppPreferences={setAppPreferences}
                 />
-                <PrimaryButton label="Save needs" onPress={saveActiveProfile} />
+                <PrimaryButton
+                  label="Save needs"
+                  onPress={saveActiveProfile}
+                  lightMode={lightMode}
+                  highContrast={appPreferences.highContrast}
+                />
                 <SecondaryButton
                   label="Cancel editing"
+                  lightMode={lightMode}
+                  highContrast={appPreferences.highContrast}
                   onPress={() => {
                     setRequirements(activeProfile.assistanceDefaults);
                     setAppPreferences(activeProfile.appPreferences);
@@ -952,10 +1130,17 @@ function SgGoAssistApp() {
                 />
               </>
             )}
-            <SecondaryButton label="Continue journey" onPress={() => setScreen("LOCATION")} />
+            <SecondaryButton
+              label="Continue journey"
+              onPress={() => setScreen("LOCATION")}
+              lightMode={lightMode}
+              highContrast={appPreferences.highContrast}
+            />
             <SecondaryButton
               label="Sign out"
               onPress={signOut}
+              lightMode={lightMode}
+              highContrast={appPreferences.highContrast}
             />
           </View>
         )}
@@ -965,6 +1150,7 @@ function SgGoAssistApp() {
             message={visualAlert}
             detail={appPreferences.hapticAlerts ? "Haptic alert sent." : "Haptic alerts are off."}
             highContrast={appPreferences.highContrast}
+            lightMode={lightMode}
           />
         )}
 
@@ -974,11 +1160,12 @@ function SgGoAssistApp() {
               eyebrow="Journey"
               title="Find your bus"
               highContrast={appPreferences.highContrast}
+              lightMode={lightMode}
             />
-            <Text style={[styles.bodyText, appPreferences.largeText && styles.largeBody]}>
+            <Text style={themedBodyStyle()}>
               Use your location to find nearby bus stops.
             </Text>
-            <Text style={[styles.bodyText, appPreferences.largeText && styles.largeBody]}>
+            <Text style={themedBodyStyle()}>
               You will always choose the stop and bus yourself.
             </Text>
             <PrimaryButton
@@ -986,12 +1173,16 @@ function SgGoAssistApp() {
               accessibilityHint="Find nearby bus stops using your current location."
               onPress={findMyBusStop}
               disabled={isLoading}
+              lightMode={lightMode}
+              highContrast={appPreferences.highContrast}
             />
             <SecondaryButton
               label="Select bus stop manually"
               accessibilityHint="Opens a list of nearby bus stops."
               onPress={loadManualStops}
               disabled={isLoading}
+              lightMode={lightMode}
+              highContrast={appPreferences.highContrast}
             />
             <SecondaryButton
               label="Repeat guidance"
@@ -1002,6 +1193,8 @@ function SgGoAssistApp() {
               }
               onPress={announceCurrentJourney}
               disabled={!appPreferences.repeatAudio || (!selectedBus && !selectedStop)}
+              lightMode={lightMode}
+              highContrast={appPreferences.highContrast}
             />
           </View>
         )}
@@ -1010,37 +1203,116 @@ function SgGoAssistApp() {
           <View style={styles.section}>
             <SectionHeader
               eyebrow="Journey"
-              title="Nearby bus stops"
+              title="Choose Your Bus Stop"
+              highContrast={appPreferences.highContrast}
+              lightMode={lightMode}
+            />
+            <StopSearch
+              query={stopSearchQuery}
+              onChangeQuery={setStopSearchQuery}
+              lightMode={lightMode}
               highContrast={appPreferences.highContrast}
             />
-            {selectedStop ? (
-              <BusStopCard stop={selectedStop} selected />
+            <MapListToggle
+              value={mapViewMode}
+              onChange={setMapViewMode}
+              lightMode={lightMode}
+              highContrast={appPreferences.highContrast}
+            />
+            <Text style={themedBodyStyle()}>Select the bus stop where you are waiting.</Text>
+            {mapViewMode === "MAP" ? (
+              <NearbyStopsMap
+                stops={visibleStops}
+                selectedStop={selectedStop}
+                currentLocation={currentLocation}
+                mapManuallyMoved={mapManuallyMoved}
+                largeText={appPreferences.largeText}
+                lightMode={lightMode}
+                highContrast={appPreferences.highContrast}
+                onSelectStop={(stop) => {
+                  setSelectedStop(stop);
+                  AccessibilityInfo.announceForAccessibility(
+                    `Selected bus stop, ${stop.description}.`
+                  );
+                }}
+                onMoveMap={() => setMapManuallyMoved(true)}
+                onRecenter={() => setMapManuallyMoved(false)}
+              />
             ) : (
-              <Text style={styles.bodyText}>Select the bus stop where you are waiting.</Text>
+              <NearbyStopsList
+                stops={visibleStops}
+                selectedStop={selectedStop}
+                lightMode={lightMode}
+                highContrast={appPreferences.highContrast}
+                onSelectStop={(stop) => {
+                  setSelectedStop(stop);
+                  AccessibilityInfo.announceForAccessibility(
+                    `Selected bus stop, ${stop.description}.`
+                  );
+                }}
+              />
+            )}
+            {visibleStops.length === 0 && (
+              <Text style={themedBodyStyle()}>
+                No nearby stops match your search. Try a stop code, road or landmark.
+              </Text>
+            )}
+            {selectedStop && (
+              <SelectedStopCard
+                stop={selectedStop}
+                lightMode={lightMode}
+                highContrast={appPreferences.highContrast}
+                largeText={appPreferences.largeText}
+                onSelect={() => confirmBusStop(selectedStop)}
+                onDirections={() =>
+                  AccessibilityInfo.announceForAccessibility(
+                    `Directions to ${selectedStop.description}: continue to the marked boarding point, approximately ${selectedStop.distanceMeters} metres away.`
+                  )
+                }
+              />
             )}
             <PrimaryButton
               label="This is my stop"
               accessibilityHint="Confirm this bus stop and show buses arriving here."
               onPress={() => confirmBusStop()}
               disabled={!selectedStop || isLoading}
+              lightMode={lightMode}
+              highContrast={appPreferences.highContrast}
             />
             <SecondaryButton
               label="Repeat my bus stop"
               onPress={() => selectedStop && AccessibilityInfo.announceForAccessibility(stopAccessibilityLabel(selectedStop))}
               disabled={!selectedStop}
+              lightMode={lightMode}
+              highContrast={appPreferences.highContrast}
             />
-            <Text style={[styles.heading, appPreferences.highContrast && styles.highContrastText]}>
-              Choose a stop
-            </Text>
-            {nearbyStops.map((stop) => (
-              <BusStopCard
-                key={stop.busStopCode}
-                stop={stop}
-                selected={selectedStop?.busStopCode === stop.busStopCode}
-                onPress={() => setSelectedStop(stop)}
-              />
-            ))}
-            <SecondaryButton label="Refresh location" onPress={findMyBusStop} disabled={isLoading} />
+            {mapViewMode === "MAP" && (
+              <>
+                <Text style={themedHeadingStyle()}>
+                  List View
+                </Text>
+                {visibleStops.map((stop) => (
+                  <BusStopCard
+                    key={stop.busStopCode}
+                    stop={stop}
+                    selected={selectedStop?.busStopCode === stop.busStopCode}
+                    onPress={() => {
+                      setSelectedStop(stop);
+                      setMapViewMode("LIST");
+                    }}
+                    lightMode={lightMode}
+                    highContrast={appPreferences.highContrast}
+                  />
+                ))}
+              </>
+            )}
+            <SecondaryButton
+              label="Refresh location"
+              onPress={findMyBusStop}
+              disabled={isLoading}
+              lightMode={lightMode}
+              highContrast={appPreferences.highContrast}
+            />
           </View>
         )}
 
@@ -1050,37 +1322,47 @@ function SgGoAssistApp() {
               eyebrow="Assistance"
               title="How can we assist?"
               highContrast={appPreferences.highContrast}
+              lightMode={lightMode}
             />
             {activeProfile ? (
               <AssistancePreferenceToggles
                 requirements={requirements}
                 appPreferences={appPreferences}
+                resolvedThemeMode={resolvedThemeMode}
                 setRequirements={setRequirements}
               />
             ) : (
-              <View style={styles.summaryRow}>
-                <Text style={styles.summaryLabel}>Bus Assistance</Text>
-                <Text style={styles.summaryValue}>Profile required</Text>
-                <Text style={styles.bodyText}>
+              <View style={[styles.summaryRow, lightMode && lightStyles.surface]}>
+                <Text style={[styles.summaryLabel, lightMode && lightStyles.mutedText]}>Bus Assistance</Text>
+                <Text style={[styles.summaryValue, lightMode && lightStyles.text]}>Profile required</Text>
+                <Text style={themedBodyStyle()}>
                   Sign in or create a profile to request wheelchair ramp, bus identification, or additional boarding time.
                 </Text>
-                <SecondaryButton label="Go to profile" onPress={() => setScreen("PROFILE")} />
+                <SecondaryButton
+                  label="Go to profile"
+                  onPress={() => setScreen("PROFILE")}
+                  lightMode={lightMode}
+                  highContrast={appPreferences.highContrast}
+                />
               </View>
             )}
-            <Text style={[styles.heading, appPreferences.highContrast && styles.highContrastText]}>
+            <Text style={themedHeadingStyle()}>
               Phone Accessibility
             </Text>
             <AppPreferenceToggles
               appPreferences={appPreferences}
+              resolvedThemeMode={resolvedThemeMode}
               setAppPreferences={setAppPreferences}
             />
             <PrimaryButton
               label="Review assistance request"
               onPress={() => setScreen("CONFIRM")}
               disabled={!activeProfile || assistanceTypes.length === 0 || !selectedBus}
+              lightMode={lightMode}
+              highContrast={appPreferences.highContrast}
             />
             {!activeProfile && (
-              <Text style={styles.bodyText}>
+              <Text style={themedBodyStyle()}>
                 Create a profile to request bus-side assistance.
               </Text>
             )}
@@ -1093,9 +1375,10 @@ function SgGoAssistApp() {
               eyebrow="Journey"
               title="Choose your bus"
               highContrast={appPreferences.highContrast}
+              lightMode={lightMode}
             />
             {selectedStop && (
-              <Text style={styles.bodyText}>
+              <Text style={themedBodyStyle()}>
                 Bus Stop {selectedStop.busStopCode} · {selectedStop.description}
               </Text>
             )}
@@ -1105,17 +1388,23 @@ function SgGoAssistApp() {
                 bus={bus}
                 selected={selectedArrival?.busId === bus.busId}
                 onPress={() => selectArrival(bus)}
+                lightMode={lightMode}
+                highContrast={appPreferences.highContrast}
               />
             ))}
             <SecondaryButton
               label="Repeat selected bus"
               onPress={announceCurrentJourney}
               disabled={!selectedArrival || !appPreferences.repeatAudio}
+              lightMode={lightMode}
+              highContrast={appPreferences.highContrast}
             />
             <PrimaryButton
               label={activeProfile ? "Choose assistance" : "Set app accessibility"}
               onPress={() => setScreen("ACCESSIBILITY")}
               disabled={!selectedArrival}
+              lightMode={lightMode}
+              highContrast={appPreferences.highContrast}
             />
           </View>
         )}
@@ -1126,8 +1415,14 @@ function SgGoAssistApp() {
               eyebrow="Assistance"
               title="Confirm request"
               highContrast={appPreferences.highContrast}
+              lightMode={lightMode}
             />
-            <SummaryRow label="Bus" value={`${selectedBus.busService} (${selectedBus.busId})`} />
+            <SummaryRow
+              label="Bus"
+              value={`${selectedBus.busService} (${selectedBus.busId})`}
+              lightMode={lightMode}
+              highContrast={appPreferences.highContrast}
+            />
             <SummaryRow
               label="Boarding stop"
               value={
@@ -1135,15 +1430,35 @@ function SgGoAssistApp() {
                   ? `${selectedStop.busStopCode} · ${selectedStop.description}, ${selectedStop.roadName}`
                   : boardingStop
               }
+              lightMode={lightMode}
+              highContrast={appPreferences.highContrast}
             />
-            <SummaryRow label="Destination" value={selectedArrival?.destination ?? destination} />
-            <SummaryRow label="Assistance" value={selectedNeeds} />
+            <SummaryRow
+              label="Destination"
+              value={selectedArrival?.destination ?? destination}
+              lightMode={lightMode}
+              highContrast={appPreferences.highContrast}
+            />
+            <SummaryRow
+              label="Assistance"
+              value={selectedNeeds}
+              lightMode={lightMode}
+              highContrast={appPreferences.highContrast}
+            />
             <SecondaryButton
               label="Repeat request summary"
               onPress={announceCurrentJourney}
               disabled={!appPreferences.repeatAudio}
+              lightMode={lightMode}
+              highContrast={appPreferences.highContrast}
             />
-            <PrimaryButton label="Send assistance request" onPress={submitRequest} disabled={isLoading} />
+            <PrimaryButton
+              label="Send assistance request"
+              onPress={submitRequest}
+              disabled={isLoading}
+              lightMode={lightMode}
+              highContrast={appPreferences.highContrast}
+            />
           </View>
         )}
 
@@ -1153,10 +1468,14 @@ function SgGoAssistApp() {
               eyebrow="Status"
               title="Live journey status"
               highContrast={appPreferences.highContrast}
+              lightMode={lightMode}
             />
             <View
               style={[
                 styles.statusPanel,
+                lightMode && lightStyles.surface,
+                highContrastDark && styles.highContrastControl,
+                highContrastLight && lightStyles.highContrastControl,
                 (vehicleStatus === "APPROACHING" || vehicleStatus === "ARRIVED") &&
                   styles.journeyAlertPanel,
               ]}
@@ -1165,22 +1484,22 @@ function SgGoAssistApp() {
                 requestStatus
               )}. Vehicle status ${vehicleStatusLabel(vehicleStatus)}.`}
             >
-              <Text style={styles.statusLabel}>Request</Text>
-              <Text style={styles.statusValue}>{requestStatusLabel(requestStatus)}</Text>
-              <Text style={styles.bodyText}>{selectedNeeds} requested for Bus {selectedBus.busService}.</Text>
+              <Text style={themedLabelStyle()}>Request</Text>
+              <Text style={themedValueStyle()}>{requestStatusLabel(requestStatus)}</Text>
+              <Text style={themedBodyStyle()}>{selectedNeeds} requested for Bus {selectedBus.busService}.</Text>
               {requestStatus === "ACKNOWLEDGED" && (
-                <Text style={styles.confirmationText}>Bus {selectedBus.busService} has received your request.</Text>
+                <Text style={[styles.confirmationText, lightMode && lightStyles.text]}>Bus {selectedBus.busService} has received your request.</Text>
               )}
-              <Text style={styles.bodyText}>Every spoken update is also displayed on this screen.</Text>
-              <Text style={styles.bodyText}>
+              <Text style={themedBodyStyle()}>Every spoken update is also displayed on this screen.</Text>
+              <Text style={themedBodyStyle()}>
                 {appPreferences.hapticAlerts ? "Haptic alerts are enabled." : "Haptic alerts are off."}
               </Text>
-              <Text style={styles.statusLabel}>Vehicle</Text>
-              <Text style={styles.statusValue}>{vehicleStatusLabel(vehicleStatus)}</Text>
+              <Text style={themedLabelStyle()}>Vehicle</Text>
+              <Text style={themedValueStyle()}>{vehicleStatusLabel(vehicleStatus)}</Text>
             </View>
 
             {requestStatus === "ACKNOWLEDGED" && (
-              <SecondaryButton label="Cancel request" onPress={cancelRequest} disabled={isLoading} />
+              <SecondaryButton label="Cancel request" onPress={cancelRequest} disabled={isLoading} lightMode={lightMode} highContrast={appPreferences.highContrast} />
             )}
 
             {vehicleStatus === "ARRIVED" && (
@@ -1189,6 +1508,8 @@ function SgGoAssistApp() {
                 accessibilityHint="Development control. Enter onboard journey mode after boarding."
                 onPress={enterOnboardMode}
                 disabled={isLoading}
+                lightMode={lightMode}
+                highContrast={appPreferences.highContrast}
               />
             )}
 
@@ -1196,16 +1517,18 @@ function SgGoAssistApp() {
               label="Repeat journey status"
               onPress={announceCurrentJourney}
               disabled={!appPreferences.repeatAudio}
+              lightMode={lightMode}
+              highContrast={appPreferences.highContrast}
             />
 
             {requestStatus === "FAILED" && (
-              <PrimaryButton label="Retry" onPress={submitRequest} disabled={isLoading} />
+              <PrimaryButton label="Retry" onPress={submitRequest} disabled={isLoading} lightMode={lightMode} highContrast={appPreferences.highContrast} />
             )}
 
             {events.map((event) => (
-              <View key={`${event.type}-${event.timestamp}`} style={styles.eventRow}>
-                <Text style={styles.eventStatus}>{eventLabel(event)}</Text>
-                <Text style={styles.bodyText}>{new Date(event.timestamp).toLocaleTimeString()}</Text>
+              <View key={`${event.type}-${event.timestamp}`} style={[styles.eventRow, lightMode && lightStyles.surface]}>
+                <Text style={[styles.eventStatus, lightMode && lightStyles.text]}>{eventLabel(event)}</Text>
+                <Text style={themedBodyStyle()}>{new Date(event.timestamp).toLocaleTimeString()}</Text>
               </View>
             ))}
           </View>
@@ -1237,6 +1560,7 @@ function SgGoAssistApp() {
               eyebrow="On board"
               title="Choose where to get off"
               highContrast={appPreferences.highContrast}
+              lightMode={lightMode}
             />
             {routeStops.slice(currentStopIndex + 1).map((stop) => (
               <AlightingStopRow
@@ -1244,9 +1568,11 @@ function SgGoAssistApp() {
                 stop={stop}
                 selected={selectedAlightingStop?.busStopCode === stop.busStopCode}
                 onPress={() => chooseAlightingStop(stop)}
+                lightMode={lightMode}
+                highContrast={appPreferences.highContrast}
               />
             ))}
-            <SecondaryButton label="Back to onboard journey" onPress={() => setScreen("ONBOARD")} />
+            <SecondaryButton label="Back to onboard journey" onPress={() => setScreen("ONBOARD")} lightMode={lightMode} highContrast={appPreferences.highContrast} />
           </View>
         )}
 
@@ -1256,13 +1582,14 @@ function SgGoAssistApp() {
               eyebrow="Journey"
               title="Journey completed"
               highContrast={appPreferences.highContrast}
+              lightMode={lightMode}
             />
-            <View style={styles.statusPanel}>
-              <Text style={styles.statusLabel}>You have arrived</Text>
-              <Text style={styles.statusValue}>
+            <View style={themedPanelStyle()}>
+              <Text style={themedLabelStyle()}>You have arrived</Text>
+              <Text style={themedValueStyle()}>
                 {selectedAlightingStop?.description ?? "Destination"}
               </Text>
-              <Text style={styles.bodyText}>Your journey has ended.</Text>
+              <Text style={themedBodyStyle()}>Your journey has ended.</Text>
             </View>
             <PrimaryButton
               label="Find another bus"
@@ -1278,11 +1605,19 @@ function SgGoAssistApp() {
                 setCurrentStopIndex(0);
                 setScreen("LOCATION");
               }}
+              lightMode={lightMode}
+              highContrast={appPreferences.highContrast}
             />
           </View>
         )}
 
-        {isLoading && <LoadingState message={loadingMessage ?? "Loading..."} />}
+        {isLoading && (
+          <LoadingState
+            message={loadingMessage ?? "Loading..."}
+            lightMode={lightMode}
+            highContrast={appPreferences.highContrast}
+          />
+        )}
         {error && (
           <ErrorState
             message={error}
@@ -1290,6 +1625,8 @@ function SgGoAssistApp() {
             onPrimaryAction={screen === "LOCATION" || screen === "STOP" ? findMyBusStop : undefined}
             secondaryActionLabel={screen === "LOCATION" || screen === "STOP" ? "Select stop manually" : undefined}
             onSecondaryAction={screen === "LOCATION" || screen === "STOP" ? loadManualStops : undefined}
+            lightMode={lightMode}
+            highContrast={appPreferences.highContrast}
           />
         )}
       </ScrollView>
@@ -1297,6 +1634,9 @@ function SgGoAssistApp() {
         activeTab={activeTab}
         hasSelectedBus={Boolean(selectedBus)}
         hasRequest={Boolean(requestId)}
+        lightMode={lightMode}
+        highContrast={appPreferences.highContrast}
+        compact={isCompactWidth}
         onSelect={openTab}
       />
     </SafeAreaView>
@@ -1309,9 +1649,11 @@ function ToggleRow({
   enabled,
   highContrast = false,
   largeText = false,
+  lightMode = false,
   variant = "default",
   iconSource,
   iconSize,
+  customIcon,
   onPress,
 }: {
   label: string;
@@ -1319,20 +1661,29 @@ function ToggleRow({
   enabled: boolean;
   highContrast?: boolean;
   largeText?: boolean;
+  lightMode?: boolean;
   variant?: "default" | "assistance" | "phone";
   iconSource?: ImageSourcePropType;
   iconSize?: number;
+  customIcon?: React.ReactNode;
   onPress: () => void;
 }) {
   const isAssistance = variant === "assistance";
   const isPhone = variant === "phone";
+  const stateLabel = enabled ? "Selected" : "Not selected";
+
+  function handlePress() {
+    onPress();
+    AccessibilityInfo.announceForAccessibility(`${label} turned ${enabled ? "off" : "on"}.`);
+  }
 
   return (
     <Pressable
-      accessibilityRole="checkbox"
+      accessibilityRole="switch"
       accessibilityState={{ checked: enabled }}
-      accessibilityLabel={`${label}. ${description}. ${enabled ? "Selected" : "Not selected"}.`}
-      onPress={onPress}
+      accessibilityLabel={label}
+      accessibilityHint={description}
+      onPress={handlePress}
       style={[
         styles.toggleRow,
         isAssistance && styles.assistanceOption,
@@ -1340,96 +1691,335 @@ function ToggleRow({
         enabled && styles.selectedToggleRow,
         enabled && isAssistance && styles.selectedAssistanceOption,
         enabled && isPhone && styles.selectedPhoneOption,
-        highContrast && styles.highContrastControl,
+        lightMode && lightStyles.toggleRow,
+        lightMode && enabled && lightStyles.selectedToggleRow,
+        highContrast && !lightMode && styles.highContrastControl,
+        highContrast && !lightMode && enabled && styles.highContrastSelectedControl,
+        highContrast && lightMode && lightStyles.highContrastControl,
+        highContrast && lightMode && enabled && lightStyles.highContrastSelectedControl,
       ]}
     >
-      <View style={styles.optionVisualGroup}>
-        <View
-          style={[
-            styles.optionIcon,
-            isAssistance && styles.assistanceIcon,
-            isPhone && styles.phoneIcon,
-            enabled && styles.selectedOptionIcon,
-            highContrast && styles.highContrastIndicator,
-          ]}
-        >
-          {iconSource ? (
-            <Image
-              source={iconSource}
-              style={[styles.optionIconImage, iconSize ? { height: iconSize, width: iconSize } : undefined]}
-              resizeMode="contain"
-              accessible={false}
-            />
-          ) : (
-            <Text
-              style={[
-                styles.optionIconText,
-                enabled && styles.selectedOptionIconText,
-                highContrast && styles.highContrastText,
-              ]}
-            >
-              OK
-            </Text>
-          )}
+      <View style={styles.toggleHeaderRow}>
+        <View style={styles.optionVisualGroup}>
+          <View
+            style={[
+              styles.optionIcon,
+              isAssistance && styles.assistanceIcon,
+              isPhone && styles.phoneIcon,
+              enabled && styles.selectedOptionIcon,
+              lightMode && lightStyles.optionIcon,
+              lightMode && enabled && lightStyles.selectedOptionIcon,
+              highContrast && styles.highContrastIndicator,
+              highContrast && enabled && styles.highContrastSelectedIndicator,
+            ]}
+          >
+            {customIcon ? (
+              customIcon
+            ) : iconSource ? (
+              <Image
+                source={iconSource}
+                style={[
+                  styles.optionIconImage,
+                  highContrast && styles.highContrastOptionIconImage,
+                  iconSize ? { height: iconSize, width: iconSize } : undefined,
+                ]}
+                resizeMode="contain"
+                accessible={false}
+              />
+            ) : (
+              <Text
+                style={[
+                  styles.optionIconText,
+                  enabled && styles.selectedOptionIconText,
+                  lightMode && lightStyles.text,
+                  lightMode && enabled && lightStyles.selectedOptionIconText,
+                  highContrast && !lightMode && styles.highContrastText,
+                  highContrast && lightMode && lightStyles.highContrastText,
+                ]}
+              >
+                Aa
+              </Text>
+            )}
+          </View>
         </View>
+        <View style={styles.toggleTextGroup}>
+          <Text
+            style={[
+              styles.toggleText,
+              largeText && styles.largeBody,
+              lightMode && lightStyles.text,
+              highContrast && !lightMode && styles.highContrastText,
+              highContrast && lightMode && lightStyles.highContrastText,
+              highContrast && enabled && styles.highContrastSelectedText,
+            ]}
+          >
+            {label}
+          </Text>
+          <Text
+            style={[
+              styles.bodyText,
+              largeText && styles.largeBody,
+              lightMode && lightStyles.bodyText,
+              highContrast && !lightMode && styles.highContrastMutedText,
+              highContrast && lightMode && lightStyles.highContrastMutedText,
+              highContrast && enabled && styles.highContrastSelectedText,
+            ]}
+          >
+            {description}
+          </Text>
+        </View>
+      </View>
+      <View style={styles.selectionRow}>
         <View
           style={[
             styles.selectionIndicator,
             enabled && styles.selectedSelectionIndicator,
+            lightMode && lightStyles.selectionIndicator,
+            lightMode && enabled && lightStyles.selectedSelectionIndicator,
             highContrast && styles.highContrastIndicator,
+            highContrast && enabled && styles.highContrastSelectedIndicator,
           ]}
         >
           <Text
             style={[
               styles.selectionIndicatorText,
               enabled && styles.selectedSelectionIndicatorText,
-              highContrast && styles.highContrastText,
+              lightMode && lightStyles.text,
+              lightMode && enabled && lightStyles.selectedSelectionIndicatorText,
+              highContrast && !lightMode && styles.highContrastText,
+              highContrast && lightMode && lightStyles.highContrastText,
             ]}
           >
             {enabled ? "✓" : ""}
           </Text>
         </View>
+        <Text
+          style={[
+            styles.selectionStatus,
+            enabled && styles.selectedSelectionStatus,
+            lightMode && lightStyles.mutedText,
+            lightMode && enabled && lightStyles.selectedSelectionStatus,
+            highContrast && !lightMode && styles.highContrastMutedText,
+            highContrast && lightMode && lightStyles.highContrastMutedText,
+            highContrast && enabled && styles.highContrastSelectedText,
+          ]}
+        >
+          {stateLabel}
+        </Text>
       </View>
-      <View style={styles.toggleTextGroup}>
+    </Pressable>
+  );
+}
+
+function BoardingTimeIcon({
+  selected,
+  highContrast,
+  lightMode,
+}: {
+  selected: boolean;
+  highContrast: boolean;
+  lightMode: boolean;
+}) {
+  const iconColor = highContrast
+    ? lightMode && !selected
+      ? "#000000"
+      : "#FFFFFF"
+    : lightMode && !selected
+      ? "#145A64"
+      : "#7DD7E5";
+
+  return (
+    <View style={styles.boardingTimeIcon} accessible={false}>
+      <View style={[styles.boardingTimeClock, { borderColor: iconColor }]}>
+        <View style={[styles.boardingTimeHourHand, { backgroundColor: iconColor }]} />
+        <View style={[styles.boardingTimeMinuteHand, { backgroundColor: iconColor }]} />
+      </View>
+      <View style={[styles.boardingTimePlusHorizontal, { backgroundColor: iconColor }]} />
+      <View style={[styles.boardingTimePlusVertical, { backgroundColor: iconColor }]} />
+    </View>
+  );
+}
+
+function AppearanceSwitch({
+  themeMode,
+  highContrast,
+  largeText,
+  onToggle,
+}: {
+  themeMode: AppAccessibilityPreferences["themeMode"];
+  highContrast: boolean;
+  largeText: boolean;
+  onToggle: () => void;
+}) {
+  const lightMode = themeMode === "light";
+  const nextMode = lightMode ? "dark" : "light";
+
+  return (
+    <Pressable
+      accessibilityRole="switch"
+      accessibilityState={{ checked: !lightMode }}
+      accessibilityLabel="Dark mode"
+      accessibilityHint="Switches appearance between light and dark mode."
+      onPress={() => {
+        onToggle();
+        AccessibilityInfo.announceForAccessibility(`${nextMode} mode selected.`);
+      }}
+      style={[
+        styles.themeSwitchCard,
+        lightMode && lightStyles.themeSwitchCard,
+        highContrast && !lightMode && styles.highContrastControl,
+        highContrast && lightMode && lightStyles.highContrastControl,
+      ]}
+    >
+      <View style={styles.appearanceHeader}>
         <Text
           style={[
             styles.toggleText,
             largeText && styles.largeBody,
-            highContrast && styles.highContrastText,
+            lightMode && lightStyles.text,
+            highContrast && !lightMode && styles.highContrastText,
+            highContrast && lightMode && lightStyles.highContrastText,
           ]}
         >
-          {label}
+          Appearance
         </Text>
         <Text
           style={[
             styles.bodyText,
             largeText && styles.largeBody,
-            highContrast && styles.highContrastMutedText,
+            lightMode && lightStyles.bodyText,
+            highContrast && !lightMode && styles.highContrastMutedText,
+            highContrast && lightMode && lightStyles.highContrastMutedText,
           ]}
         >
-          {description}
+          {lightMode ? "Light mode" : "Dark mode"}
         </Text>
       </View>
-      <Text
-        style={[
-          styles.selectionStatus,
-          enabled && styles.selectedSelectionStatus,
-          highContrast && styles.highContrastMutedText,
-        ]}
-      >
-        {enabled ? "Selected" : "Tap to select"}
-      </Text>
+      <View style={styles.appearanceSwitchRow}>
+        <View
+          style={[
+            styles.modeLabel,
+            lightMode && lightStyles.modeLabel,
+            lightMode && styles.selectedModeLabel,
+            lightMode && lightStyles.selectedModeLabel,
+          ]}
+        >
+          <SunIcon selected={lightMode} highContrast={highContrast} lightMode={lightMode} />
+          <Text
+            style={[
+              styles.modeLabelText,
+              lightMode && styles.selectedModeLabelText,
+              lightMode && lightStyles.text,
+              lightMode && lightStyles.selectedModeLabelText,
+              highContrast && !lightMode && styles.highContrastText,
+              highContrast && lightMode && lightStyles.highContrastText,
+            ]}
+          >
+            Light
+          </Text>
+        </View>
+        <View style={[styles.modeSwitchTrack, !lightMode && styles.modeSwitchTrackDark]}>
+          <View style={[styles.modeSwitchThumb, !lightMode && styles.modeSwitchThumbDark]} />
+        </View>
+        <View
+          style={[
+            styles.modeLabel,
+            lightMode && lightStyles.modeLabel,
+            !lightMode && styles.selectedModeLabel,
+          ]}
+        >
+          <MoonIcon selected={!lightMode} highContrast={highContrast} lightMode={lightMode} />
+          <Text
+            style={[
+              styles.modeLabelText,
+              !lightMode && styles.selectedModeLabelText,
+              lightMode && lightStyles.text,
+              highContrast && !lightMode && styles.highContrastText,
+              highContrast && lightMode && lightStyles.highContrastText,
+            ]}
+          >
+            Dark
+          </Text>
+        </View>
+      </View>
     </Pressable>
+  );
+}
+
+function SunIcon({
+  selected,
+  highContrast,
+  lightMode,
+}: {
+  selected: boolean;
+  highContrast: boolean;
+  lightMode: boolean;
+}) {
+  return (
+    <View
+      style={[
+        styles.sunIcon,
+        selected && styles.selectedModeIcon,
+        lightMode && lightStyles.modeIcon,
+        highContrast && styles.highContrastIndicator,
+        selected && styles.selectedSunIcon,
+      ]}
+      accessible={false}
+    >
+      <View style={[styles.sunRay, styles.sunRayTop, selected && styles.selectedSunRay]} />
+      <View style={[styles.sunRay, styles.sunRayBottom, selected && styles.selectedSunRay]} />
+      <View style={[styles.sunRay, styles.sunRayLeft, selected && styles.selectedSunRay]} />
+      <View style={[styles.sunRay, styles.sunRayRight, selected && styles.selectedSunRay]} />
+      <View style={[styles.sunRay, styles.sunRayTopLeft, selected && styles.selectedSunRay]} />
+      <View style={[styles.sunRay, styles.sunRayTopRight, selected && styles.selectedSunRay]} />
+      <View style={[styles.sunRay, styles.sunRayBottomLeft, selected && styles.selectedSunRay]} />
+      <View style={[styles.sunRay, styles.sunRayBottomRight, selected && styles.selectedSunRay]} />
+      <View style={[styles.sunCore, selected && styles.selectedSunCore]} />
+    </View>
+  );
+}
+
+function MoonIcon({
+  selected,
+  highContrast,
+  lightMode,
+}: {
+  selected: boolean;
+  highContrast: boolean;
+  lightMode: boolean;
+}) {
+  return (
+    <View
+      style={[
+        styles.moonIcon,
+        selected && styles.selectedModeIcon,
+        lightMode && lightStyles.modeIcon,
+        highContrast && styles.highContrastIndicator,
+        selected && styles.selectedMoonIcon,
+      ]}
+      accessible={false}
+    >
+      <View style={[styles.moonInner, selected && styles.selectedMoonInner]} />
+      <View
+        style={[
+          styles.moonCutout,
+          lightMode && lightStyles.moonCutout,
+          selected && styles.selectedMoonCutout,
+        ]}
+      />
+    </View>
   );
 }
 
 function AssistancePreferenceToggles({
   requirements,
   appPreferences,
+  resolvedThemeMode,
   setRequirements,
 }: {
   requirements: AccessibilityRequirements;
   appPreferences: AppAccessibilityPreferences;
+  resolvedThemeMode: "light" | "dark";
   setRequirements: React.Dispatch<React.SetStateAction<AccessibilityRequirements>>;
 }) {
   return (
@@ -1440,6 +2030,7 @@ function AssistancePreferenceToggles({
         enabled={requirements.wheelchairRamp}
         highContrast={appPreferences.highContrast}
         largeText={appPreferences.largeText}
+        lightMode={resolvedThemeMode === "light"}
         variant="assistance"
         iconSource={optionIcons.wheelchairAssistance}
         iconSize={38}
@@ -1456,9 +2047,15 @@ function AssistancePreferenceToggles({
         enabled={requirements.extendedDwellTime}
         highContrast={appPreferences.highContrast}
         largeText={appPreferences.largeText}
+        lightMode={resolvedThemeMode === "light"}
         variant="assistance"
-        iconSource={optionIcons.increasedDuration}
-        iconSize={36}
+        customIcon={
+          <BoardingTimeIcon
+            selected={requirements.extendedDwellTime}
+            highContrast={appPreferences.highContrast}
+            lightMode={resolvedThemeMode === "light"}
+          />
+        }
         onPress={() =>
           setRequirements((current) => ({
             ...current,
@@ -1472,6 +2069,7 @@ function AssistancePreferenceToggles({
         enabled={requirements.busAudioIdentification}
         highContrast={appPreferences.highContrast}
         largeText={appPreferences.largeText}
+        lightMode={resolvedThemeMode === "light"}
         variant="assistance"
         iconSource={optionIcons.busIdentification}
         iconSize={37}
@@ -1488,9 +2086,11 @@ function AssistancePreferenceToggles({
 
 function AppPreferenceToggles({
   appPreferences,
+  resolvedThemeMode,
   setAppPreferences,
 }: {
   appPreferences: AppAccessibilityPreferences;
+  resolvedThemeMode: "light" | "dark";
   setAppPreferences: React.Dispatch<React.SetStateAction<AppAccessibilityPreferences>>;
 }) {
   return (
@@ -1501,6 +2101,7 @@ function AppPreferenceToggles({
         enabled={appPreferences.screenReaderOptimised}
         highContrast={appPreferences.highContrast}
         largeText={appPreferences.largeText}
+        lightMode={resolvedThemeMode === "light"}
         variant="phone"
         iconSource={optionIcons.screenReader}
         iconSize={36}
@@ -1517,6 +2118,7 @@ function AppPreferenceToggles({
         enabled={appPreferences.repeatAudio}
         highContrast={appPreferences.highContrast}
         largeText={appPreferences.largeText}
+        lightMode={resolvedThemeMode === "light"}
         variant="phone"
         iconSource={optionIcons.repeatAnnouncements}
         iconSize={37}
@@ -1533,6 +2135,7 @@ function AppPreferenceToggles({
         enabled={appPreferences.hapticAlerts}
         highContrast={appPreferences.highContrast}
         largeText={appPreferences.largeText}
+        lightMode={resolvedThemeMode === "light"}
         variant="phone"
         iconSource={optionIcons.hapticAlerts}
         iconSize={36}
@@ -1549,6 +2152,7 @@ function AppPreferenceToggles({
         enabled={appPreferences.largeText}
         highContrast={appPreferences.highContrast}
         largeText={appPreferences.largeText}
+        lightMode={resolvedThemeMode === "light"}
         variant="phone"
         iconSource={optionIcons.largeText}
         iconSize={38}
@@ -1565,6 +2169,7 @@ function AppPreferenceToggles({
         enabled={appPreferences.highContrast}
         highContrast={appPreferences.highContrast}
         largeText={appPreferences.largeText}
+        lightMode={resolvedThemeMode === "light"}
         variant="phone"
         iconSource={optionIcons.highContrast}
         iconSize={36}
@@ -1585,23 +2190,42 @@ function LabeledInput({
   onChangeText,
   placeholder,
   keyboardType = "default",
+  lightMode = false,
+  highContrast = false,
 }: {
   label: string;
   value: string;
   onChangeText: (value: string) => void;
   placeholder: string;
   keyboardType?: "default" | "email-address";
+  lightMode?: boolean;
+  highContrast?: boolean;
 }) {
   return (
     <View style={styles.inputGroup}>
-      <Text style={styles.summaryLabel}>{label}</Text>
+      <Text
+        style={[
+          styles.summaryLabel,
+          lightMode && lightStyles.mutedText,
+          highContrast && !lightMode && styles.highContrastMutedText,
+          highContrast && lightMode && lightStyles.highContrastMutedText,
+        ]}
+      >
+        {label}
+      </Text>
       <TextInput
         accessibilityLabel={label}
         autoCapitalize={keyboardType === "email-address" ? "none" : "words"}
         keyboardType={keyboardType}
         onChangeText={onChangeText}
         placeholder={placeholder}
-        style={styles.textInput}
+        placeholderTextColor={lightMode ? "#536B70" : colors.metadata}
+        style={[
+          styles.textInput,
+          lightMode && lightStyles.textInput,
+          highContrast && !lightMode && styles.highContrastControl,
+          highContrast && lightMode && lightStyles.highContrastControl,
+        ]}
         value={value}
       />
     </View>
@@ -1612,40 +2236,82 @@ function SectionHeader({
   eyebrow,
   title,
   highContrast = false,
+  lightMode = false,
 }: {
   eyebrow: string;
   title: string;
   highContrast?: boolean;
+  lightMode?: boolean;
 }) {
   return (
     <View style={styles.sectionHeader}>
-      <Text style={[styles.eyebrow, highContrast && styles.highContrastMutedText]}>
+      <Text
+        style={[
+          styles.eyebrow,
+          lightMode && lightStyles.eyebrow,
+          highContrast && !lightMode && styles.highContrastMutedText,
+          highContrast && lightMode && lightStyles.highContrastMutedText,
+        ]}
+      >
         {eyebrow}
       </Text>
-      <Text style={[styles.heading, highContrast && styles.highContrastText]}>{title}</Text>
+      <Text
+        style={[
+          styles.heading,
+          lightMode && lightStyles.text,
+          highContrast && !lightMode && styles.highContrastText,
+          highContrast && lightMode && lightStyles.highContrastText,
+        ]}
+      >
+        {title}
+      </Text>
     </View>
   );
 }
 
-function BrandHeader({ highContrast = false }: { highContrast?: boolean }) {
+function BrandHeader({
+  highContrast = false,
+  lightMode = false,
+  compact = false,
+}: {
+  highContrast?: boolean;
+  lightMode?: boolean;
+  compact?: boolean;
+}) {
   return (
     <View
-      style={styles.brandHeader}
+      style={[styles.brandHeader, compact && styles.compactBrandHeader]}
       accessible
       accessibilityRole="header"
       accessibilityLabel="SG GoAssist"
     >
       <Image
         source={brandLogo}
-        style={styles.brandLogoImage}
+        style={[styles.brandLogoImage, compact && styles.compactBrandLogoImage]}
         resizeMode="contain"
         accessible={false}
       />
       <View style={styles.brandTextGroup}>
-        <Text style={[styles.brandTitle, highContrast && styles.highContrastText]}>
+        <Text
+          style={[
+            styles.brandTitle,
+            compact && styles.compactBrandTitle,
+            lightMode && lightStyles.text,
+            highContrast && !lightMode && styles.highContrastText,
+            highContrast && lightMode && lightStyles.highContrastText,
+          ]}
+        >
           SG GoAssist
         </Text>
-        <Text style={[styles.brandSubtitle, highContrast && styles.highContrastMutedText]}>
+        <Text
+          style={[
+            styles.brandSubtitle,
+            compact && styles.compactBrandSubtitle,
+            lightMode && lightStyles.eyebrow,
+            highContrast && !lightMode && styles.highContrastMutedText,
+            highContrast && lightMode && lightStyles.highContrastMutedText,
+          ]}
+        >
           Accessible journeys. Guided with care.
         </Text>
       </View>
@@ -1657,39 +2323,69 @@ function TabBar({
   activeTab,
   hasSelectedBus,
   hasRequest,
+  lightMode,
+  highContrast,
+  compact,
   onSelect,
 }: {
   activeTab: AppTab;
   hasSelectedBus: boolean;
   hasRequest: boolean;
+  lightMode: boolean;
+  highContrast: boolean;
+  compact: boolean;
   onSelect: (tab: AppTab) => void;
 }) {
   return (
-    <View style={styles.tabBar}>
+    <View
+      style={[
+        styles.tabBar,
+        compact && styles.compactTabBar,
+        lightMode && lightStyles.tabBar,
+        highContrast && !lightMode && styles.highContrastControl,
+        highContrast && lightMode && lightStyles.highContrastControl,
+      ]}
+    >
       <TabButton
         label="Home"
         icon="home"
+        index={1}
         selected={activeTab === "HOME"}
+        lightMode={lightMode}
+        highContrast={highContrast}
+        compact={compact}
         onPress={() => onSelect("HOME")}
       />
       <TabButton
         label="Journey"
         icon="bus"
+        index={2}
         selected={activeTab === "JOURNEY"}
         disabled={!hasSelectedBus}
+        lightMode={lightMode}
+        highContrast={highContrast}
+        compact={compact}
         onPress={() => onSelect("JOURNEY")}
       />
       <TabButton
         label="Assist"
         icon="assist"
+        index={3}
         selected={activeTab === "ASSISTANCE"}
         disabled={!hasSelectedBus}
+        lightMode={lightMode}
+        highContrast={highContrast}
+        compact={compact}
         onPress={() => onSelect("ASSISTANCE")}
       />
       <TabButton
         label="Profile"
         icon="profile"
+        index={4}
         selected={activeTab === "PROFILE"}
+        lightMode={lightMode}
+        highContrast={highContrast}
+        compact={compact}
         onPress={() => onSelect("PROFILE")}
       />
     </View>
@@ -1700,26 +2396,47 @@ function BusStopCard({
   stop,
   selected = false,
   onPress,
+  lightMode = false,
+  highContrast = false,
 }: {
   stop: NearbyBusStop;
   selected?: boolean;
   onPress?: () => void;
+  lightMode?: boolean;
+  highContrast?: boolean;
 }) {
   const content = (
     <>
-      <Text style={styles.statusLabel}>{selected ? "Your bus stop" : "Nearby stop"}</Text>
-      <Text style={styles.busTitle}>{stop.description}</Text>
-      <Text style={styles.bodyText}>{stop.roadName}</Text>
+      <Text style={[styles.statusLabel, lightMode && lightStyles.mutedText]}>
+        {selected ? "Your bus stop" : "Nearby stop"}
+      </Text>
+      <Text style={[styles.busTitle, lightMode && lightStyles.text]}>{stop.description}</Text>
+      <Text style={[styles.bodyText, lightMode && lightStyles.bodyText]}>{stop.roadName}</Text>
       <View style={styles.infoRow}>
-        <Text style={styles.infoPill}>Bus Stop {stop.busStopCode}</Text>
-        <Text style={styles.infoPill}>{stop.distanceMeters} m away</Text>
+        <Text style={[styles.infoPill, lightMode && lightStyles.infoPill]}>
+          Bus Stop {stop.busStopCode}
+        </Text>
+        <Text style={[styles.infoPill, lightMode && lightStyles.infoPill]}>
+          {stop.distanceMeters} m away
+        </Text>
       </View>
     </>
   );
 
   if (!onPress) {
     return (
-      <View style={[styles.busCard, selected && styles.selectedCard]} accessible accessibilityLabel={stopAccessibilityLabel(stop)}>
+      <View
+        style={[
+          styles.busCard,
+          lightMode && lightStyles.surface,
+          selected && styles.selectedCard,
+          lightMode && selected && lightStyles.selectedCard,
+          highContrast && !lightMode && styles.highContrastControl,
+          highContrast && lightMode && lightStyles.highContrastControl,
+        ]}
+        accessible
+        accessibilityLabel={stopAccessibilityLabel(stop)}
+      >
         {content}
       </View>
     );
@@ -1730,7 +2447,14 @@ function BusStopCard({
       accessibilityRole="button"
       accessibilityLabel={`${stop.description}, ${stop.roadName}, bus stop ${stop.busStopCode}, approximately ${stop.distanceMeters} metres away. Double tap to select this stop.`}
       onPress={onPress}
-      style={[styles.busCard, selected && styles.selectedCard]}
+      style={[
+        styles.busCard,
+        lightMode && lightStyles.surface,
+        selected && styles.selectedCard,
+        lightMode && selected && lightStyles.selectedCard,
+        highContrast && !lightMode && styles.highContrastControl,
+        highContrast && lightMode && lightStyles.highContrastControl,
+      ]}
     >
       {content}
     </Pressable>
@@ -1741,10 +2465,14 @@ function BusArrivalCard({
   bus,
   selected,
   onPress,
+  lightMode = false,
+  highContrast = false,
 }: {
   bus: ArrivalBus;
   selected: boolean;
   onPress: () => void;
+  lightMode?: boolean;
+  highContrast?: boolean;
 }) {
   const etaMinutes = Math.ceil(bus.etaSeconds / 60);
 
@@ -1755,7 +2483,14 @@ function BusArrivalCard({
         bus.wheelchairAccessible ? "wheelchair accessible" : "accessibility not indicated"
       }. Double tap to select bus.`}
       onPress={onPress}
-      style={[styles.arrivalCard, selected && styles.selectedCard]}
+      style={[
+        styles.arrivalCard,
+        lightMode && lightStyles.surface,
+        selected && styles.selectedCard,
+        lightMode && selected && lightStyles.selectedCard,
+        highContrast && !lightMode && styles.highContrastControl,
+        highContrast && lightMode && lightStyles.highContrastControl,
+      ]}
     >
       <View style={styles.arrivalTopRow}>
         <Text style={styles.serviceNumber}>{bus.serviceNo}</Text>
@@ -1764,9 +2499,9 @@ function BusArrivalCard({
           <Text style={styles.etaLabel}>MIN</Text>
         </View>
       </View>
-      <Text style={styles.destinationText}>{bus.destination}</Text>
+      <Text style={[styles.destinationText, lightMode && lightStyles.text]}>{bus.destination}</Text>
       <View style={styles.infoRow}>
-        <Text style={styles.infoPill}>
+        <Text style={[styles.infoPill, lightMode && lightStyles.infoPill]}>
           {bus.wheelchairAccessible ? "Accessible" : "Accessibility not indicated"}
         </Text>
       </View>
@@ -1808,6 +2543,33 @@ function OnboardJourneyScreen({
   onSimulateNextStop: () => void;
   onEndJourney: () => void;
 }) {
+  const lightMode = appPreferences.themeMode === "light";
+  const highContrast = appPreferences.highContrast;
+  const panelStyle = [
+    styles.statusPanel,
+    lightMode && lightStyles.surface,
+    highContrast && !lightMode && styles.highContrastControl,
+    highContrast && lightMode && lightStyles.highContrastControl,
+  ];
+  const labelStyle = [
+    styles.statusLabel,
+    lightMode && lightStyles.mutedText,
+    highContrast && !lightMode && styles.highContrastMutedText,
+    highContrast && lightMode && lightStyles.highContrastMutedText,
+  ];
+  const valueStyle = [
+    styles.summaryValue,
+    lightMode && lightStyles.text,
+    highContrast && !lightMode && styles.highContrastText,
+    highContrast && lightMode && lightStyles.highContrastText,
+  ];
+  const bodyStyle = [
+    styles.bodyText,
+    lightMode && lightStyles.bodyText,
+    highContrast && !lightMode && styles.highContrastMutedText,
+    highContrast && lightMode && lightStyles.highContrastMutedText,
+  ];
+
   return (
     <View style={styles.section}>
       <View
@@ -1837,24 +2599,24 @@ function OnboardJourneyScreen({
         </View>
       )}
 
-      <View style={styles.statusPanel}>
-        <Text style={styles.statusLabel}>Current stop</Text>
-        <Text style={styles.summaryValue}>{currentStop?.description ?? "Journey starting"}</Text>
-        <Text style={styles.statusLabel}>Next stop</Text>
-        <Text style={styles.summaryValue}>{nextStop?.description ?? "Final stop"}</Text>
+      <View style={panelStyle}>
+        <Text style={labelStyle}>Current stop</Text>
+        <Text style={valueStyle}>{currentStop?.description ?? "Journey starting"}</Text>
+        <Text style={labelStyle}>Next stop</Text>
+        <Text style={valueStyle}>{nextStop?.description ?? "Final stop"}</Text>
       </View>
 
-      <View style={styles.statusPanel}>
-        <Text style={styles.statusLabel}>Where would you like to get off?</Text>
-        <Text style={styles.statusValue}>
+      <View style={panelStyle}>
+        <Text style={labelStyle}>Where would you like to get off?</Text>
+        <Text style={[styles.statusValue, lightMode && lightStyles.text]}>
           {selectedAlightingStop?.description ?? "Choose alighting stop"}
         </Text>
         {alightingAssistanceTypes.length > 0 && (
-          <Text style={styles.bodyText}>
+          <Text style={bodyStyle}>
             {alightingAssistanceTypes.map(readableAssistanceType).join(", ")} will be requested for your selected stop.
           </Text>
         )}
-        <SecondaryButton label="Change alighting stop" onPress={onChangeStop} />
+        <SecondaryButton label="Change alighting stop" onPress={onChangeStop} lightMode={lightMode} highContrast={highContrast} />
       </View>
 
       <PrimaryButton
@@ -1862,20 +2624,312 @@ function OnboardJourneyScreen({
         accessibilityHint="Send passenger intent to alight. The bus remains responsible for safe operation."
         onPress={onRequestDisembarkation}
         variant="attention"
+        lightMode={lightMode}
+        highContrast={highContrast}
       />
       {selectedStopReached && (
-        <PrimaryButton label="End journey" onPress={onEndJourney} variant="attention" />
+        <PrimaryButton label="End journey" onPress={onEndJourney} variant="attention" lightMode={lightMode} highContrast={highContrast} />
       )}
       <SecondaryButton
         label="Repeat journey information"
         onPress={onRepeat}
         disabled={!appPreferences.repeatAudio}
+        lightMode={lightMode}
+        highContrast={highContrast}
       />
       <SecondaryButton
         label="Simulate next stop"
         accessibilityHint="Development control for onboard stop progress."
         onPress={onSimulateNextStop}
         disabled={!nextStop || journeyPhase === "COMPLETED"}
+        lightMode={lightMode}
+        highContrast={highContrast}
+      />
+    </View>
+  );
+}
+
+function StopSearch({
+  query,
+  onChangeQuery,
+  lightMode,
+  highContrast,
+}: {
+  query: string;
+  onChangeQuery: (query: string) => void;
+  lightMode: boolean;
+  highContrast: boolean;
+}) {
+  return (
+    <TextInput
+      accessibilityLabel="Search bus stop or location"
+      placeholder="Search bus stop or location"
+      placeholderTextColor={lightMode ? "#536B70" : colors.metadata}
+      value={query}
+      onChangeText={onChangeQuery}
+      style={[
+        styles.stopSearchInput,
+        lightMode && lightStyles.textInput,
+        highContrast && !lightMode && styles.highContrastControl,
+        highContrast && lightMode && lightStyles.highContrastControl,
+      ]}
+    />
+  );
+}
+
+function MapListToggle({
+  value,
+  onChange,
+  lightMode,
+  highContrast,
+}: {
+  value: "MAP" | "LIST";
+  onChange: (value: "MAP" | "LIST") => void;
+  lightMode: boolean;
+  highContrast: boolean;
+}) {
+  return (
+    <View
+      style={[
+        styles.mapListToggle,
+        lightMode && lightStyles.mapListToggle,
+        highContrast && !lightMode && styles.highContrastControl,
+        highContrast && lightMode && lightStyles.highContrastControl,
+      ]}
+    >
+      {(["MAP", "LIST"] as const).map((mode) => (
+        <Pressable
+          key={mode}
+          accessibilityRole="button"
+          accessibilityLabel={`${mode === "MAP" ? "Map" : "List"} view`}
+          accessibilityState={{ selected: value === mode }}
+          onPress={() => onChange(mode)}
+          style={[
+            styles.mapListToggleButton,
+            value === mode && styles.selectedMapListToggleButton,
+            lightMode && lightStyles.mapListToggleButton,
+            lightMode && value === mode && lightStyles.selectedMapListToggleButton,
+          ]}
+        >
+          <Text
+            style={[
+              styles.mapListToggleText,
+              value === mode && styles.selectedMapListToggleText,
+              lightMode && lightStyles.text,
+              lightMode && value === mode && lightStyles.selectedMapListToggleText,
+              highContrast && !lightMode && styles.highContrastText,
+              highContrast && lightMode && lightStyles.highContrastText,
+            ]}
+          >
+            {mode === "MAP" ? "Map" : "List"}
+          </Text>
+        </Pressable>
+      ))}
+    </View>
+  );
+}
+
+function NearbyStopsMap({
+  stops,
+  selectedStop,
+  currentLocation,
+  mapManuallyMoved,
+  largeText,
+  lightMode,
+  highContrast,
+  onSelectStop,
+  onMoveMap,
+  onRecenter,
+}: {
+  stops: NearbyBusStop[];
+  selectedStop: NearbyBusStop | null;
+  currentLocation: { latitude: number; longitude: number; accuracyMeters?: number } | null;
+  mapManuallyMoved: boolean;
+  largeText: boolean;
+  lightMode: boolean;
+  highContrast: boolean;
+  onSelectStop: (stop: NearbyBusStop) => void;
+  onMoveMap: () => void;
+  onRecenter: () => void;
+}) {
+  const positionedStops = stops.slice(0, 8).map((stop, index) => {
+    const angle = (index / Math.max(stops.length, 1)) * Math.PI * 2 - Math.PI / 2;
+    const radius = Math.min(38, 16 + stop.distanceMeters / 10);
+    return {
+      stop,
+      left: `${50 + Math.cos(angle) * radius}%` as const,
+      top: `${50 + Math.sin(angle) * radius}%` as const,
+    };
+  });
+
+  return (
+    <View
+      style={[
+        styles.stopMapPanel,
+        lightMode && lightStyles.stopMapPanel,
+        highContrast && !lightMode && styles.highContrastControl,
+        highContrast && lightMode && lightStyles.highContrastControl,
+      ]}
+      accessible
+      accessibilityLabel={`Nearby bus stop map. ${stops.length} stops shown.`}
+    >
+      <View style={styles.mapMetaRow}>
+        <Text
+          style={[
+            styles.mapMetaText,
+            largeText && styles.largeBody,
+            lightMode && lightStyles.mutedText,
+            highContrast && !lightMode && styles.highContrastMutedText,
+            highContrast && lightMode && lightStyles.highContrastMutedText,
+          ]}
+        >
+          {currentLocation
+            ? `Centred near you · ${currentLocation.accuracyMeters ?? 0} m accuracy`
+            : "Manual browsing"}
+        </Text>
+        <Text style={[styles.mapMetaText, lightMode && lightStyles.mutedText]}>
+          {mapManuallyMoved ? "Map moved" : "Auto-centred"}
+        </Text>
+      </View>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Move map manually"
+        accessibilityHint="Simulates manually panning the nearby bus stop map."
+        onPress={onMoveMap}
+        style={styles.mapCanvas}
+      >
+        <View style={styles.mapRoadHorizontal} />
+        <View style={styles.mapRoadVertical} />
+        <View
+          style={[
+            styles.currentLocationMarker,
+            highContrast && styles.highContrastCurrentLocationMarker,
+          ]}
+          accessible={false}
+        >
+          <Text style={styles.currentLocationText}>Me</Text>
+        </View>
+        {positionedStops.map(({ stop, left, top }, index) => {
+          const selected = selectedStop?.busStopCode === stop.busStopCode;
+          const clustered = index > 0 && stop.distanceMeters < 80;
+          return (
+            <Pressable
+              key={stop.busStopCode}
+              accessibilityRole="button"
+              accessibilityLabel={`Bus stop ${stop.busStopCode}, ${stop.description}, ${stop.distanceMeters} metres away.`}
+              accessibilityState={{ selected }}
+              onPress={() => onSelectStop(stop)}
+              style={[
+                styles.mapStopMarker,
+                { left, top },
+                clustered && styles.clusteredMapStopMarker,
+                selected && styles.selectedMapStopMarker,
+                highContrast && styles.highContrastMapStopMarker,
+                selected && highContrast && styles.highContrastSelectedMapStopMarker,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.mapStopMarkerText,
+                  selected && styles.selectedMapStopMarkerText,
+                ]}
+              >
+                {clustered ? `${index + 1}` : "Bus"}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </Pressable>
+      <SecondaryButton
+        label="Re-centre on Me"
+        accessibilityHint="Centres the nearby bus stop map around your current location."
+        onPress={onRecenter}
+        lightMode={lightMode}
+        highContrast={highContrast}
+      />
+    </View>
+  );
+}
+
+function NearbyStopsList({
+  stops,
+  selectedStop,
+  lightMode,
+  highContrast,
+  onSelectStop,
+}: {
+  stops: NearbyBusStop[];
+  selectedStop: NearbyBusStop | null;
+  lightMode: boolean;
+  highContrast: boolean;
+  onSelectStop: (stop: NearbyBusStop) => void;
+}) {
+  return (
+    <View style={styles.nearbyStopsList}>
+      {stops.map((stop) => (
+        <BusStopCard
+          key={stop.busStopCode}
+          stop={stop}
+          selected={selectedStop?.busStopCode === stop.busStopCode}
+          onPress={() => onSelectStop(stop)}
+          lightMode={lightMode}
+          highContrast={highContrast}
+        />
+      ))}
+    </View>
+  );
+}
+
+function SelectedStopCard({
+  stop,
+  lightMode,
+  highContrast,
+  largeText,
+  onSelect,
+  onDirections,
+}: {
+  stop: NearbyBusStop;
+  lightMode: boolean;
+  highContrast: boolean;
+  largeText: boolean;
+  onSelect: () => void;
+  onDirections: () => void;
+}) {
+  const walkingMinutes = Math.max(1, Math.round(stop.distanceMeters / 70));
+  return (
+    <View
+      style={[
+        styles.selectedStopSheet,
+        lightMode && lightStyles.selectedStopSheet,
+        highContrast && !lightMode && styles.highContrastControl,
+        highContrast && lightMode && lightStyles.highContrastControl,
+      ]}
+      accessible
+      accessibilityLabel={`Selected bus stop, ${stop.description}, bus stop ${stop.busStopCode}, approximately ${stop.distanceMeters} metres away.`}
+    >
+      <Text style={[styles.busTitle, largeText && styles.largeBody, lightMode && lightStyles.text]}>
+        {stop.description} - Bus Stop {stop.busStopCode}
+      </Text>
+      <Text style={[styles.bodyText, largeText && styles.largeBody, lightMode && lightStyles.bodyText]}>
+        Approx. {stop.distanceMeters} m away · {walkingMinutes} min walk
+      </Text>
+      <View style={styles.infoRow}>
+        <Text style={[styles.infoPill, lightMode && lightStyles.infoPill]}>Services load after selection</Text>
+        <Text style={[styles.infoPill, lightMode && lightStyles.infoPill]}>Accessible boarding available</Text>
+      </View>
+      <PrimaryButton
+        label="Select This Stop"
+        accessibilityHint="Stores this as your boarding stop and loads available buses."
+        onPress={onSelect}
+        lightMode={lightMode}
+        highContrast={highContrast}
+      />
+      <SecondaryButton
+        label="Directions to Stop"
+        accessibilityHint="Announces simple walking guidance to the selected stop."
+        onPress={onDirections}
+        lightMode={lightMode}
+        highContrast={highContrast}
       />
     </View>
   );
@@ -1885,10 +2939,14 @@ function AlightingStopRow({
   stop,
   selected,
   onPress,
+  lightMode = false,
+  highContrast = false,
 }: {
   stop: RouteStop;
   selected: boolean;
   onPress: () => void;
+  lightMode?: boolean;
+  highContrast?: boolean;
 }) {
   return (
     <Pressable
@@ -1896,10 +2954,17 @@ function AlightingStopRow({
       accessibilityState={{ checked: selected }}
       accessibilityLabel={`${stop.description}. ${selected ? "Selected" : "Not selected"}. Double tap to choose this alighting stop.`}
       onPress={onPress}
-      style={[styles.busCard, selected && styles.selectedCard]}
+      style={[
+        styles.busCard,
+        lightMode && lightStyles.surface,
+        selected && styles.selectedCard,
+        lightMode && selected && lightStyles.selectedCard,
+        highContrast && !lightMode && styles.highContrastControl,
+        highContrast && lightMode && lightStyles.highContrastControl,
+      ]}
     >
-      <Text style={styles.busTitle}>{stop.description}</Text>
-      <Text style={styles.bodyText}>Bus Stop {stop.busStopCode}</Text>
+      <Text style={[styles.busTitle, lightMode && lightStyles.text]}>{stop.description}</Text>
+      <Text style={[styles.bodyText, lightMode && lightStyles.bodyText]}>Bus Stop {stop.busStopCode}</Text>
       <Text style={styles.selectHint}>{selected ? "Selected stop" : "Select stop"}</Text>
     </Pressable>
   );
@@ -1908,32 +2973,92 @@ function AlightingStopRow({
 function TabButton({
   label,
   icon,
+  index,
   selected,
   disabled = false,
+  lightMode,
+  highContrast,
+  compact,
   onPress,
 }: {
   label: string;
   icon: TabIconName;
+  index: number;
   selected: boolean;
   disabled?: boolean;
+  lightMode: boolean;
+  highContrast: boolean;
+  compact: boolean;
   onPress: () => void;
 }) {
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={label}
+      accessibilityLabel={`${label}, tab, ${selected ? "selected, " : ""}${index} of 4`}
       accessibilityState={{ selected, disabled }}
       disabled={disabled}
       onPress={onPress}
-      style={[styles.tabButton, selected && styles.selectedTabButton, disabled && styles.disabledButton]}
+      style={[
+        styles.tabButton,
+        compact && styles.compactTabButton,
+        lightMode && lightStyles.tabButton,
+        selected && styles.selectedTabButton,
+        lightMode && selected && lightStyles.selectedTabButton,
+        highContrast && !lightMode && styles.highContrastControl,
+        highContrast && lightMode && lightStyles.highContrastControl,
+        disabled && styles.disabledTabButton,
+        lightMode && disabled && lightStyles.disabledTabButton,
+      ]}
     >
-      <View style={[styles.tabIconBadge, selected && styles.selectedTabIconBadge]}>
-        {selected ? <SelectedIcon /> : <TabIcon name={icon} />}
+      <View
+        style={[
+          styles.tabIconBadge,
+          compact && styles.compactTabIconBadge,
+          lightMode && lightStyles.tabIconBadge,
+          selected && styles.selectedTabIconBadge,
+          lightMode && selected && lightStyles.selectedTabIconBadge,
+          disabled && styles.disabledTabIconBadge,
+          lightMode && disabled && lightStyles.disabledTabIconBadge,
+        ]}
+      >
+        <Image
+          source={tabIcons[icon]}
+          style={[
+            styles.tabLogoImage,
+            compact && styles.compactTabLogoImage,
+            selected && styles.selectedTabLogoImage,
+            compact && selected && styles.compactSelectedTabLogoImage,
+            disabled && styles.disabledTabLogoImage,
+          ]}
+          resizeMode="contain"
+          accessible={false}
+        />
       </View>
-      <Text style={[styles.tabButtonText, selected && styles.selectedTabButtonText]}>
+      <Text
+        style={[
+          styles.tabButtonText,
+          compact && styles.compactTabButtonText,
+          lightMode && lightStyles.tabButtonText,
+          selected && styles.selectedTabButtonText,
+          lightMode && selected && lightStyles.selectedTabButtonText,
+          highContrast && !lightMode && styles.highContrastText,
+          highContrast && lightMode && lightStyles.highContrastText,
+          disabled && styles.disabledTabButtonText,
+          lightMode && disabled && lightStyles.disabledTabButtonText,
+        ]}
+      >
         {label}
       </Text>
-      {selected && <Text style={styles.tabSelectedText}>Selected</Text>}
+      {selected && (
+        <Text style={[styles.tabSelectedText, lightMode && lightStyles.tabSelectedText]}>
+          Selected
+        </Text>
+      )}
+      {disabled && (
+        <Text style={[styles.tabUnavailableText, lightMode && lightStyles.tabUnavailableText]}>
+          Unavailable
+        </Text>
+      )}
     </Pressable>
   );
 }
@@ -2029,23 +3154,44 @@ function StatusBanner({
   message,
   detail,
   highContrast = false,
+  lightMode = false,
 }: {
   message: string;
   detail?: string;
   highContrast?: boolean;
+  lightMode?: boolean;
 }) {
   return (
     <View
-      style={[styles.visualAlert, highContrast && styles.highContrastAlert]}
+      style={[
+        styles.visualAlert,
+        lightMode && lightStyles.visualAlert,
+        highContrast && !lightMode && styles.highContrastAlert,
+        highContrast && lightMode && lightStyles.highContrastControl,
+      ]}
       accessible
       accessibilityRole="alert"
       accessibilityLabel={detail ? `${message}. ${detail}` : message}
     >
-      <Text style={[styles.visualAlertTitle, highContrast && styles.highContrastText]}>
+      <Text
+        style={[
+          styles.visualAlertTitle,
+          lightMode && lightStyles.highContrastText,
+          highContrast && !lightMode && styles.highContrastText,
+          highContrast && lightMode && lightStyles.highContrastText,
+        ]}
+      >
         {message.toUpperCase()}
       </Text>
       {detail && (
-        <Text style={[styles.bodyText, highContrast && styles.highContrastMutedText]}>
+        <Text
+          style={[
+            styles.bodyText,
+            lightMode && lightStyles.bodyText,
+            highContrast && !lightMode && styles.highContrastMutedText,
+            highContrast && lightMode && lightStyles.highContrastMutedText,
+          ]}
+        >
           {detail}
         </Text>
       )}
@@ -2053,17 +3199,30 @@ function StatusBanner({
   );
 }
 
-function LoadingState({ message }: { message: string }) {
+function LoadingState({
+  message,
+  lightMode = false,
+  highContrast = false,
+}: {
+  message: string;
+  lightMode?: boolean;
+  highContrast?: boolean;
+}) {
   return (
     <View
-      style={styles.feedbackPanel}
+      style={[
+        styles.feedbackPanel,
+        lightMode && lightStyles.surface,
+        highContrast && !lightMode && styles.highContrastControl,
+        highContrast && lightMode && lightStyles.highContrastControl,
+      ]}
       accessible
       accessibilityRole="progressbar"
       accessibilityLabel={message}
       accessibilityState={{ busy: true }}
     >
       <ActivityIndicator size="large" accessibilityLabel={message} />
-      <Text style={styles.bodyText}>{message}</Text>
+      <Text style={[styles.bodyText, lightMode && lightStyles.bodyText]}>{message}</Text>
     </View>
   );
 }
@@ -2074,22 +3233,36 @@ function ErrorState({
   onPrimaryAction,
   secondaryActionLabel,
   onSecondaryAction,
+  lightMode = false,
+  highContrast = false,
 }: {
   message: string;
   primaryActionLabel?: string;
   onPrimaryAction?: () => void;
   secondaryActionLabel?: string;
   onSecondaryAction?: () => void;
+  lightMode?: boolean;
+  highContrast?: boolean;
 }) {
   return (
     <View style={styles.errorPanel} accessible accessibilityRole="alert" accessibilityLabel={message}>
       <Text style={styles.errorTitle}>Something went wrong</Text>
       <Text style={styles.errorText}>{message}</Text>
       {primaryActionLabel && onPrimaryAction && (
-        <PrimaryButton label={primaryActionLabel} onPress={onPrimaryAction} />
+        <PrimaryButton
+          label={primaryActionLabel}
+          onPress={onPrimaryAction}
+          lightMode={lightMode}
+          highContrast={highContrast}
+        />
       )}
       {secondaryActionLabel && onSecondaryAction && (
-        <SecondaryButton label={secondaryActionLabel} onPress={onSecondaryAction} />
+        <SecondaryButton
+          label={secondaryActionLabel}
+          onPress={onSecondaryAction}
+          lightMode={lightMode}
+          highContrast={highContrast}
+        />
       )}
     </View>
   );
@@ -2101,12 +3274,16 @@ function PrimaryButton({
   onPress,
   disabled = false,
   variant = "default",
+  lightMode = false,
+  highContrast = false,
 }: {
   label: string;
   accessibilityHint?: string;
   onPress: () => void;
   disabled?: boolean;
   variant?: "default" | "attention";
+  lightMode?: boolean;
+  highContrast?: boolean;
 }) {
   return (
     <Pressable
@@ -2118,6 +3295,9 @@ function PrimaryButton({
       onPress={onPress}
       style={[
         styles.primaryButton,
+        lightMode && lightStyles.primaryButton,
+        highContrast && !lightMode && styles.highContrastSelectedControl,
+        highContrast && lightMode && lightStyles.highContrastSelectedControl,
         variant === "attention" && styles.attentionButton,
         disabled && styles.disabledButton,
       ]}
@@ -2125,6 +3305,9 @@ function PrimaryButton({
       <Text
         style={[
           styles.primaryButtonText,
+          lightMode && lightStyles.primaryButtonText,
+          highContrast && !lightMode && styles.highContrastSelectedText,
+          highContrast && lightMode && styles.highContrastSelectedText,
           variant === "attention" && styles.attentionButtonText,
           disabled && styles.disabledButtonText,
         ]}
@@ -2140,11 +3323,15 @@ function SecondaryButton({
   accessibilityHint,
   onPress,
   disabled = false,
+  lightMode = false,
+  highContrast = false,
 }: {
   label: string;
   accessibilityHint?: string;
   onPress: () => void;
   disabled?: boolean;
+  lightMode?: boolean;
+  highContrast?: boolean;
 }) {
   return (
     <Pressable
@@ -2154,20 +3341,51 @@ function SecondaryButton({
       accessibilityState={{ disabled }}
       disabled={disabled}
       onPress={onPress}
-      style={[styles.secondaryButton, disabled && styles.disabledButton]}
+      style={[
+        styles.secondaryButton,
+        lightMode && lightStyles.secondaryButton,
+        highContrast && !lightMode && styles.highContrastControl,
+        highContrast && lightMode && lightStyles.highContrastControl,
+        disabled && styles.disabledButton,
+      ]}
     >
-      <Text style={[styles.secondaryButtonText, disabled && styles.disabledButtonText]}>
+      <Text
+        style={[
+          styles.secondaryButtonText,
+          lightMode && lightStyles.secondaryButtonText,
+          highContrast && !lightMode && styles.highContrastText,
+          highContrast && lightMode && lightStyles.highContrastText,
+          disabled && styles.disabledButtonText,
+        ]}
+      >
         {label}
       </Text>
     </Pressable>
   );
 }
 
-function SummaryRow({ label, value }: { label: string; value: string }) {
+function SummaryRow({
+  label,
+  value,
+  lightMode = false,
+  highContrast = false,
+}: {
+  label: string;
+  value: string;
+  lightMode?: boolean;
+  highContrast?: boolean;
+}) {
   return (
-    <View style={styles.summaryRow}>
-      <Text style={styles.summaryLabel}>{label}</Text>
-      <Text style={styles.summaryValue}>{value}</Text>
+    <View
+      style={[
+        styles.summaryRow,
+        lightMode && lightStyles.surface,
+        highContrast && !lightMode && styles.highContrastControl,
+        highContrast && lightMode && lightStyles.highContrastControl,
+      ]}
+    >
+      <Text style={[styles.summaryLabel, lightMode && lightStyles.mutedText]}>{label}</Text>
+      <Text style={[styles.summaryValue, lightMode && lightStyles.text]}>{value}</Text>
     </View>
   );
 }
@@ -2296,6 +3514,7 @@ function appPreferencesLabel(preferences: AppAccessibilityPreferences) {
     preferences.largeText ? "large text" : undefined,
     preferences.highContrast ? "high contrast" : undefined,
     preferences.repeatAudio ? "repeat announcements" : undefined,
+    `${preferences.themeMode} mode`,
   ].filter(Boolean);
 
   return labels.length > 0 ? labels.join(", ") : "standard display and alerts";
@@ -2397,8 +3616,14 @@ const styles = StyleSheet.create({
   },
   container: {
     padding: 20,
-    paddingBottom: 110,
+    paddingBottom: 150,
     gap: 18,
+  },
+  compactContainer: {
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 132,
+    gap: 16,
   },
   appTitle: {
     color: colors.text,
@@ -2410,10 +3635,16 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 14,
   },
+  compactBrandHeader: {
+    gap: 10,
+  },
   brandLogoImage: {
-    borderRadius: 18,
     height: 84,
     width: 84,
+  },
+  compactBrandLogoImage: {
+    height: 64,
+    width: 64,
   },
   brandMark: {
     alignItems: "center",
@@ -2558,11 +3789,19 @@ const styles = StyleSheet.create({
     fontSize: 32,
     fontWeight: "900",
   },
+  compactBrandTitle: {
+    fontSize: 27,
+    lineHeight: 32,
+  },
   brandSubtitle: {
     color: colors.primary,
     fontSize: 15,
     fontWeight: "700",
     letterSpacing: 0,
+  },
+  compactBrandSubtitle: {
+    fontSize: 13,
+    lineHeight: 18,
   },
   subtitle: {
     color: colors.muted,
@@ -2585,6 +3824,208 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: "800",
   },
+  createProfilePanel: {
+    backgroundColor: "#102529",
+    borderColor: "#69C8D8",
+    borderRadius: 8,
+    borderWidth: 2,
+    gap: 12,
+    padding: 16,
+  },
+  themeSwitchCard: {
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderRadius: 8,
+    borderWidth: 2,
+    gap: 12,
+    padding: 14,
+  },
+  themeSwitchTextGroup: {
+    flex: 1,
+    gap: 2,
+    minWidth: 0,
+  },
+  appearanceHeader: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 6,
+    justifyContent: "space-between",
+  },
+  appearanceSwitchRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 8,
+    justifyContent: "center",
+  },
+  modeLabel: {
+    alignItems: "center",
+    borderColor: colors.border,
+    borderRadius: 8,
+    borderWidth: 2,
+    flex: 1,
+    gap: 8,
+    minHeight: 92,
+    justifyContent: "center",
+    paddingHorizontal: 8,
+    paddingVertical: 10,
+  },
+  selectedModeLabel: {
+    backgroundColor: colors.highlight,
+    borderColor: colors.highlight,
+  },
+  modeLabelText: {
+    color: colors.text,
+    fontSize: 16,
+    fontWeight: "900",
+  },
+  selectedModeLabelText: {
+    color: colors.primaryDark,
+  },
+  highContrastSelectedText: {
+    color: "#000000",
+  },
+  modeSwitchTrack: {
+    backgroundColor: colors.highlight,
+    borderColor: colors.border,
+    borderRadius: 17,
+    borderWidth: 2,
+    height: 34,
+    justifyContent: "center",
+    paddingHorizontal: 3,
+    width: 58,
+  },
+  modeSwitchTrackDark: {
+    alignItems: "flex-end",
+    backgroundColor: colors.lightSurface,
+  },
+  modeSwitchThumb: {
+    backgroundColor: colors.primaryDark,
+    borderRadius: 12,
+    height: 24,
+    width: 24,
+  },
+  modeSwitchThumbDark: {
+    backgroundColor: colors.highlight,
+  },
+  sunIcon: {
+    alignItems: "center",
+    backgroundColor: colors.lightSurface,
+    borderColor: colors.border,
+    borderRadius: 22,
+    borderWidth: 2,
+    height: 44,
+    justifyContent: "center",
+    width: 44,
+  },
+  sunCore: {
+    backgroundColor: colors.highlight,
+    borderRadius: 9,
+    height: 18,
+    width: 18,
+  },
+  selectedSunCore: {
+    backgroundColor: "#FFD766",
+  },
+  selectedSunIcon: {
+    backgroundColor: "#FFF9E6",
+    borderColor: "#145A64",
+  },
+  selectedSunRay: {
+    backgroundColor: "#FFD766",
+  },
+  sunRay: {
+    backgroundColor: colors.highlight,
+    borderRadius: 2,
+    position: "absolute",
+  },
+  sunRayTop: {
+    height: 7,
+    top: 5,
+    width: 3,
+  },
+  sunRayBottom: {
+    bottom: 5,
+    height: 7,
+    width: 3,
+  },
+  sunRayLeft: {
+    height: 3,
+    left: 5,
+    width: 7,
+  },
+  sunRayRight: {
+    height: 3,
+    right: 5,
+    width: 7,
+  },
+  sunRayTopLeft: {
+    height: 3,
+    left: 9,
+    top: 9,
+    transform: [{ rotate: "45deg" }],
+    width: 7,
+  },
+  sunRayTopRight: {
+    height: 3,
+    right: 9,
+    top: 9,
+    transform: [{ rotate: "-45deg" }],
+    width: 7,
+  },
+  sunRayBottomLeft: {
+    bottom: 9,
+    height: 3,
+    left: 9,
+    transform: [{ rotate: "-45deg" }],
+    width: 7,
+  },
+  sunRayBottomRight: {
+    bottom: 9,
+    height: 3,
+    right: 9,
+    transform: [{ rotate: "45deg" }],
+    width: 7,
+  },
+  moonIcon: {
+    backgroundColor: colors.lightSurface,
+    borderColor: colors.border,
+    borderRadius: 22,
+    borderWidth: 2,
+    height: 44,
+    overflow: "hidden",
+    width: 44,
+  },
+  moonInner: {
+    backgroundColor: colors.highlight,
+    borderRadius: 14,
+    height: 28,
+    left: 8,
+    position: "absolute",
+    top: 7,
+    width: 28,
+  },
+  selectedMoonInner: {
+    backgroundColor: colors.highlight,
+  },
+  selectedMoonIcon: {
+    backgroundColor: colors.primaryDark,
+    borderColor: colors.highlight,
+  },
+  selectedMoonCutout: {
+    backgroundColor: colors.primaryDark,
+  },
+  moonCutout: {
+    backgroundColor: colors.surface,
+    borderRadius: 13,
+    height: 26,
+    left: 19,
+    position: "absolute",
+    top: 4,
+    width: 24,
+  },
+  selectedModeIcon: {
+    borderColor: colors.primaryDark,
+  },
   tabBar: {
     backgroundColor: colors.surface,
     borderColor: colors.border,
@@ -2599,19 +4040,34 @@ const styles = StyleSheet.create({
     position: "absolute",
     right: 0,
   },
+  compactTabBar: {
+    gap: 4,
+    padding: 4,
+  },
   tabButton: {
     alignItems: "center",
     backgroundColor: colors.lightSurface,
     borderRadius: 6,
     flex: 1,
-    gap: 3,
+    gap: 4,
     justifyContent: "center",
-    minHeight: 58,
-    paddingHorizontal: 8,
-    paddingVertical: 10,
+    minHeight: 72,
+    paddingHorizontal: 6,
+    paddingVertical: 8,
+  },
+  compactTabButton: {
+    gap: 2,
+    minHeight: 62,
+    paddingHorizontal: 3,
+    paddingVertical: 6,
   },
   selectedTabButton: {
     backgroundColor: colors.highlight,
+  },
+  disabledTabButton: {
+    backgroundColor: "#162225",
+    borderColor: "#33474C",
+    borderWidth: 1,
   },
   tabButtonText: {
     color: colors.text,
@@ -2619,20 +4075,46 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     textAlign: "center",
   },
+  compactTabButtonText: {
+    fontSize: 12,
+    lineHeight: 15,
+  },
   tabIconBadge: {
     alignItems: "center",
-    backgroundColor: colors.surface,
-    borderColor: colors.primarySoft,
-    borderRadius: 14,
-    borderWidth: 2,
-    height: 28,
+    backgroundColor: "transparent",
+    borderRadius: 0,
+    height: 50,
     justifyContent: "center",
-    minWidth: 34,
-    paddingHorizontal: 6,
+    width: 56,
+  },
+  compactTabIconBadge: {
+    height: 40,
+    width: 46,
+  },
+  tabLogoImage: {
+    height: 46,
+    width: 54,
+  },
+  compactTabLogoImage: {
+    height: 38,
+    width: 44,
+  },
+  selectedTabLogoImage: {
+    height: 50,
+    width: 58,
+  },
+  compactSelectedTabLogoImage: {
+    height: 40,
+    width: 46,
+  },
+  disabledTabLogoImage: {
+    opacity: 0.72,
   },
   selectedTabIconBadge: {
-    backgroundColor: colors.primaryDark,
-    borderColor: colors.primaryDark,
+    backgroundColor: "transparent",
+  },
+  disabledTabIconBadge: {
+    backgroundColor: "transparent",
   },
   tabIconText: {
     color: colors.text,
@@ -2762,8 +4244,17 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: "800",
   },
+  tabUnavailableText: {
+    color: "#95A9AE",
+    fontSize: 10,
+    fontWeight: "800",
+    textAlign: "center",
+  },
   selectedTabButtonText: {
     color: colors.primaryDark,
+  },
+  disabledTabButtonText: {
+    color: "#AFC1C5",
   },
   sectionHeader: {
     gap: 4,
@@ -2780,15 +4271,13 @@ const styles = StyleSheet.create({
     fontWeight: "800",
   },
   toggleRow: {
-    alignItems: "center",
     backgroundColor: colors.surface,
     borderColor: colors.border,
     borderRadius: 8,
     borderWidth: 2,
-    flexDirection: "row",
-    gap: 14,
+    gap: 12,
     minHeight: 92,
-    paddingHorizontal: 18,
+    paddingHorizontal: 16,
     paddingVertical: 16,
   },
   assistanceOption: {
@@ -2807,6 +4296,11 @@ const styles = StyleSheet.create({
   selectedPhoneOption: {
     backgroundColor: colors.primaryDark,
     borderColor: colors.highlight,
+  },
+  toggleHeaderRow: {
+    alignItems: "flex-start",
+    flexDirection: "row",
+    gap: 14,
   },
   optionVisualGroup: {
     alignItems: "center",
@@ -2831,7 +4325,7 @@ const styles = StyleSheet.create({
     borderColor: colors.primaryDark,
   },
   selectedOptionIcon: {
-    backgroundColor: colors.primaryDark,
+    backgroundColor: "#00181D",
     borderColor: colors.primaryDark,
   },
   optionIconText: {
@@ -2842,7 +4336,54 @@ const styles = StyleSheet.create({
   },
   optionIconImage: {
     height: 36,
+    tintColor: "#7DD7E5",
     width: 36,
+  },
+  boardingTimeIcon: {
+    height: 38,
+    position: "relative",
+    width: 38,
+  },
+  boardingTimeClock: {
+    borderRadius: 13,
+    borderWidth: 4,
+    height: 27,
+    left: 1,
+    position: "absolute",
+    top: 2,
+    width: 27,
+  },
+  boardingTimeHourHand: {
+    borderRadius: 2,
+    height: 10,
+    left: 10,
+    position: "absolute",
+    top: 4,
+    width: 4,
+  },
+  boardingTimeMinuteHand: {
+    borderRadius: 2,
+    height: 4,
+    left: 11,
+    position: "absolute",
+    top: 12,
+    width: 9,
+  },
+  boardingTimePlusHorizontal: {
+    borderRadius: 2,
+    height: 5,
+    position: "absolute",
+    right: 1,
+    top: 27,
+    width: 17,
+  },
+  boardingTimePlusVertical: {
+    borderRadius: 2,
+    height: 17,
+    position: "absolute",
+    right: 7,
+    top: 21,
+    width: 5,
   },
   selectedOptionIconText: {
     color: "#ffffff",
@@ -2862,6 +4403,25 @@ const styles = StyleSheet.create({
   },
   highContrastIndicator: {
     borderColor: "#ffffff",
+    borderWidth: 3,
+  },
+  highContrastSelectedIndicator: {
+    backgroundColor: "#000000",
+    borderColor: colors.focusIndicator,
+    borderWidth: 4,
+  },
+  highContrastControl: {
+    backgroundColor: "#000000",
+    borderColor: "#ffffff",
+    borderWidth: 3,
+  },
+  highContrastSelectedControl: {
+    backgroundColor: "#7BE8FF",
+    borderColor: colors.focusIndicator,
+    borderWidth: 4,
+  },
+  highContrastOptionIconImage: {
+    tintColor: "#B8F7FF",
   },
   selectionIndicatorText: {
     color: colors.text,
@@ -2875,6 +4435,7 @@ const styles = StyleSheet.create({
   toggleTextGroup: {
     flex: 1,
     gap: 2,
+    minWidth: 0,
   },
   toggleText: {
     color: colors.text,
@@ -2883,13 +4444,17 @@ const styles = StyleSheet.create({
   },
   selectionStatus: {
     color: colors.metadata,
-    fontSize: 14,
-    fontWeight: "800",
-    textAlign: "right",
-    width: 78,
+    fontSize: 18,
+    fontWeight: "900",
   },
   selectedSelectionStatus: {
     color: colors.highlight,
+  },
+  selectionRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 10,
+    paddingLeft: 70,
   },
   primaryButton: {
     alignItems: "center",
@@ -2939,6 +4504,172 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     borderWidth: 2,
     gap: 4,
+    padding: 16,
+  },
+  stopSearchInput: {
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderRadius: 8,
+    borderWidth: 2,
+    color: colors.text,
+    fontSize: 18,
+    fontWeight: "700",
+    minHeight: 56,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  mapListToggle: {
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderRadius: 8,
+    borderWidth: 2,
+    flexDirection: "row",
+    gap: 6,
+    padding: 6,
+  },
+  mapListToggleButton: {
+    alignItems: "center",
+    borderRadius: 6,
+    flex: 1,
+    justifyContent: "center",
+    minHeight: 48,
+  },
+  selectedMapListToggleButton: {
+    backgroundColor: colors.highlight,
+  },
+  mapListToggleText: {
+    color: colors.text,
+    fontSize: 18,
+    fontWeight: "900",
+  },
+  selectedMapListToggleText: {
+    color: colors.primaryDark,
+  },
+  stopMapPanel: {
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderRadius: 8,
+    borderWidth: 2,
+    gap: 10,
+    padding: 12,
+  },
+  mapMetaRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    justifyContent: "space-between",
+  },
+  mapMetaText: {
+    color: colors.metadata,
+    fontSize: 13,
+    fontWeight: "800",
+  },
+  mapCanvas: {
+    backgroundColor: "#0A252B",
+    borderColor: colors.border,
+    borderRadius: 8,
+    borderWidth: 2,
+    height: 330,
+    overflow: "hidden",
+    position: "relative",
+  },
+  mapRoadHorizontal: {
+    backgroundColor: "#24525B",
+    height: 28,
+    left: "-10%",
+    position: "absolute",
+    top: "45%",
+    transform: [{ rotate: "-10deg" }],
+    width: "120%",
+  },
+  mapRoadVertical: {
+    backgroundColor: "#1D464E",
+    height: "120%",
+    left: "46%",
+    position: "absolute",
+    top: "-10%",
+    transform: [{ rotate: "18deg" }],
+    width: 32,
+  },
+  currentLocationMarker: {
+    alignItems: "center",
+    backgroundColor: "#FFFFFF",
+    borderColor: colors.highlight,
+    borderRadius: 26,
+    borderWidth: 4,
+    height: 52,
+    justifyContent: "center",
+    left: "50%",
+    marginLeft: -26,
+    marginTop: -26,
+    position: "absolute",
+    top: "50%",
+    width: 52,
+  },
+  highContrastCurrentLocationMarker: {
+    borderColor: "#000000",
+    borderWidth: 5,
+  },
+  currentLocationText: {
+    color: colors.primaryDark,
+    fontSize: 13,
+    fontWeight: "900",
+  },
+  mapStopMarker: {
+    alignItems: "center",
+    backgroundColor: colors.highlight,
+    borderColor: "#FFFFFF",
+    borderRadius: 24,
+    borderWidth: 3,
+    height: 48,
+    justifyContent: "center",
+    marginLeft: -24,
+    marginTop: -24,
+    minHeight: 48,
+    minWidth: 48,
+    position: "absolute",
+    width: 48,
+  },
+  clusteredMapStopMarker: {
+    borderRadius: 18,
+    height: 44,
+    width: 44,
+  },
+  selectedMapStopMarker: {
+    backgroundColor: "#FFFFFF",
+    borderColor: colors.highlight,
+    borderWidth: 5,
+    height: 58,
+    marginLeft: -29,
+    marginTop: -29,
+    width: 58,
+    zIndex: 2,
+  },
+  highContrastMapStopMarker: {
+    backgroundColor: "#FFFFFF",
+    borderColor: "#000000",
+  },
+  highContrastSelectedMapStopMarker: {
+    backgroundColor: "#FFFF00",
+    borderColor: "#000000",
+  },
+  mapStopMarkerText: {
+    color: colors.primaryDark,
+    fontSize: 11,
+    fontWeight: "900",
+  },
+  selectedMapStopMarkerText: {
+    fontSize: 12,
+  },
+  nearbyStopsList: {
+    gap: 10,
+  },
+  selectedStopSheet: {
+    backgroundColor: colors.primaryDark,
+    borderColor: colors.highlight,
+    borderRadius: 8,
+    borderWidth: 3,
+    gap: 12,
     padding: 16,
   },
   arrivalCard: {
@@ -3167,10 +4898,6 @@ const styles = StyleSheet.create({
     backgroundColor: "#000000",
     borderColor: "#ffffff",
   },
-  highContrastControl: {
-    backgroundColor: "#000000",
-    borderColor: "#ffffff",
-  },
   highContrastText: {
     color: "#ffffff",
   },
@@ -3214,6 +4941,207 @@ const styles = StyleSheet.create({
     borderWidth: 3,
     gap: 8,
     padding: 18,
+  },
+});
+
+const lightStyles = StyleSheet.create({
+  safeArea: {
+    backgroundColor: "#F6FBFC",
+  },
+  highContrastSafeArea: {
+    backgroundColor: "#FFFFFF",
+  },
+  surface: {
+    backgroundColor: "#FFFFFF",
+    borderColor: "#8AB8C0",
+  },
+  selectedCard: {
+    backgroundColor: "#D7F4F7",
+    borderColor: "#145A64",
+  },
+  infoPill: {
+    backgroundColor: "#EDF4F5",
+    borderColor: "#9DB9BE",
+    color: "#0A2A30",
+  },
+  themeSwitchCard: {
+    backgroundColor: "#FFFFFF",
+    borderColor: "#9DB9BE",
+  },
+  createProfilePanel: {
+    backgroundColor: "#EEF7F8",
+    borderColor: "#8EB4BA",
+  },
+  modeLabel: {
+    backgroundColor: "#FFFFFF",
+    borderColor: "#9DB9BE",
+  },
+  selectedModeLabel: {
+    backgroundColor: "#A8E4EC",
+    borderColor: "#145A64",
+  },
+  selectedModeLabelText: {
+    color: "#082E35",
+  },
+  modeIcon: {
+    backgroundColor: "#EDF4F5",
+    borderColor: "#145A64",
+  },
+  moonCutout: {
+    backgroundColor: "#FFFFFF",
+  },
+  highContrastIndicator: {
+    backgroundColor: "#FFFFFF",
+    borderColor: "#000000",
+    borderWidth: 3,
+  },
+  highContrastControl: {
+    backgroundColor: "#FFFFFF",
+    borderColor: "#000000",
+    borderWidth: 4,
+  },
+  highContrastSelectedControl: {
+    backgroundColor: "#BFF4FF",
+    borderColor: "#000000",
+    borderWidth: 4,
+  },
+  highContrastSwitchTrack: {
+    backgroundColor: "#FFFFFF",
+    borderColor: "#000000",
+    borderWidth: 4,
+  },
+  visualAlert: {
+    backgroundColor: "#E5F8FA",
+    borderColor: "#006E7A",
+  },
+  textInput: {
+    backgroundColor: "#FFFFFF",
+    borderColor: "#9DB9BE",
+    color: "#0A2A30",
+  },
+  mapListToggle: {
+    backgroundColor: "#FFFFFF",
+    borderColor: "#9DB9BE",
+  },
+  mapListToggleButton: {
+    backgroundColor: "#FFFFFF",
+  },
+  selectedMapListToggleButton: {
+    backgroundColor: "#A8E4EC",
+  },
+  selectedMapListToggleText: {
+    color: "#082E35",
+  },
+  stopMapPanel: {
+    backgroundColor: "#FFFFFF",
+    borderColor: "#9DB9BE",
+  },
+  selectedStopSheet: {
+    backgroundColor: "#EEF7F8",
+    borderColor: "#145A64",
+  },
+  primaryButton: {
+    backgroundColor: "#145A64",
+    borderColor: "#145A64",
+  },
+  primaryButtonText: {
+    color: "#FFFFFF",
+  },
+  secondaryButton: {
+    backgroundColor: "#FFFFFF",
+    borderColor: "#145A64",
+  },
+  secondaryButtonText: {
+    color: "#145A64",
+  },
+  tabBar: {
+    backgroundColor: "#FFFFFF",
+    borderColor: "#9DB9BE",
+  },
+  tabButton: {
+    backgroundColor: "#EDF4F5",
+  },
+  selectedTabButton: {
+    backgroundColor: "#A8E4EC",
+  },
+  disabledTabButton: {
+    backgroundColor: "#E7EEF0",
+    borderColor: "#C4D4D8",
+    borderWidth: 1,
+  },
+  tabIconBadge: {
+    backgroundColor: "transparent",
+  },
+  selectedTabIconBadge: {
+    backgroundColor: "transparent",
+  },
+  disabledTabIconBadge: {
+    backgroundColor: "transparent",
+  },
+  tabButtonText: {
+    color: "#183B41",
+  },
+  selectedTabButtonText: {
+    color: "#082E35",
+  },
+  disabledTabButtonText: {
+    color: "#5E777D",
+  },
+  tabSelectedText: {
+    color: "#082E35",
+  },
+  tabUnavailableText: {
+    color: "#6F858A",
+  },
+  toggleRow: {
+    backgroundColor: "#FFFFFF",
+    borderColor: "#8AB8C0",
+  },
+  selectedToggleRow: {
+    backgroundColor: "#D7F4F7",
+    borderColor: "#145A64",
+  },
+  optionIcon: {
+    backgroundColor: "#EEF7F8",
+    borderColor: "#8AB8C0",
+  },
+  selectedOptionIcon: {
+    backgroundColor: "#006E7A",
+    borderColor: "#006E7A",
+  },
+  selectionIndicator: {
+    borderColor: "#5F929B",
+  },
+  selectedSelectionIndicator: {
+    backgroundColor: "#006E7A",
+    borderColor: "#006E7A",
+  },
+  text: {
+    color: "#0A2A30",
+  },
+  highContrastText: {
+    color: "#000000",
+  },
+  bodyText: {
+    color: "#0A2A30",
+  },
+  highContrastMutedText: {
+    color: "#111111",
+  },
+  mutedText: {
+    color: "#536B70",
+  },
+  eyebrow: {
+    color: "#145A64",
+  },
+  selectedOptionIconText: {
+    color: "#FFFFFF",
+  },
+  selectedSelectionIndicatorText: {
+    color: "#FFFFFF",
+  },
+  selectedSelectionStatus: {
+    color: "#006E7A",
   },
 });
 
