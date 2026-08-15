@@ -39,8 +39,15 @@ export enum VehicleStatus {
 
 export type JourneyPhase =
   | "DISCOVERY"
+  | "PLANNING"
+  | "WALKING_TO_STOP"
   | "WAITING_FOR_BUS"
+  | "BUS_ARRIVING"
+  | "BOARDING"
   | "ONBOARD"
+  | "DESTINATION_APPROACHING"
+  | "DESTINATION_NEXT"
+  | "DISEMBARKING"
   | "ALIGHTING"
   | "COMPLETED";
 

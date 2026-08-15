@@ -5,5 +5,6 @@ module.exports = {
   moduleNameMapper: {
     "\\.(png|jpg|jpeg)$": "<rootDir>/__mocks__/fileMock.js",
     "^@buspass/shared$": "<rootDir>/../shared/src",
+    "^lucide-react-native$": "<rootDir>/__mocks__/lucideReactNative.js",
   },
 };
