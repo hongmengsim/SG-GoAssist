@@ -236,6 +236,7 @@ export interface ArrivalBus {
 
 export interface BusArrivalService {
   serviceNo: string;
+  destination?: string;
   buses: ArrivalBus[];
 }
 

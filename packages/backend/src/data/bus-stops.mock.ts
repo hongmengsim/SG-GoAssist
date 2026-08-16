@@ -207,7 +207,28 @@ const mockArrivalsByStop: Record<string, BusArrivalService[]> = {
   "18349": [
     {
       serviceNo: "95",
+      destination: "Kent Ridge Terminal",
       buses: [arrival("AV-095-01", "95", "NEXT_BUS", 300, true, "Kent Ridge Terminal")],
+    },
+  ],
+  "18139": [
+    {
+      serviceNo: "151",
+      destination: "Hougang Central",
+      buses: [
+        arrival("AV-151-02", "151", "NEXT_BUS", 180, true, "Hougang Central"),
+        arrival("AV-151-03", "151", "NEXT_BUS_2", 660, true, "Hougang Central"),
+      ],
+    },
+    {
+      serviceNo: "183",
+      destination: "Kent Ridge",
+      buses: [arrival("AV-183-01", "183", "NEXT_BUS", 360, true, "Kent Ridge")],
+    },
+    {
+      serviceNo: "188",
+      destination: "Clementi",
+      buses: [],
     },
   ],
   "19011": [

@@ -14,6 +14,8 @@
   "dependencies": {
     "@buspass/shared": "0.1.0",
     "@expo/metro-runtime": "~3.2.3",
+    "@googlemaps/js-api-loader": "^2.1.1",
+    "@googlemaps/markerclusterer": "^2.6.2",
     "expo": "~51.0.0",
     "expo-haptics": "~13.0.1",
     "expo-location": "~17.0.1",
