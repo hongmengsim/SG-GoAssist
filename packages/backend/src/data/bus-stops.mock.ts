@@ -1,6 +1,6 @@
 import { ArrivalBus, BusArrivalService, BusStop, NearbyBusStop } from "@buspass/shared";
 
-export const mockBusStops: BusStop[] = [
+const legacyMockBusStops: Array<Omit<BusStop, "services">> = [
   {
     busStopCode: "18301",
     roadName: "Kent Ridge Cres",
@@ -170,6 +170,11 @@ export const mockBusStops: BusStop[] = [
     longitude: 103.98912,
   },
 ];
+
+export const mockBusStops: BusStop[] = legacyMockBusStops.map((stop) => ({
+  ...stop,
+  services: [],
+}));
 
 const mockArrivalsByStop: Record<string, BusArrivalService[]> = {
   "18301": [

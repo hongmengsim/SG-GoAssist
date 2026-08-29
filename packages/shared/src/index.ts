@@ -202,6 +202,7 @@ export interface BusStop {
   description: string;
   latitude: number;
   longitude: number;
+  services: string[];
 }
 
 export interface NearbyBusStop extends BusStop {
@@ -245,8 +246,44 @@ export interface BusStopArrivalsResponse {
   services: BusArrivalService[];
 }
 
-export interface RouteStop extends BusStop {
+export interface BusStopSearchResponse {
+  stops: BusStop[];
+  query: string;
+  total: number;
+}
+
+export interface BusStopBoundsResponse {
+  stops: BusStop[];
+  total: number;
+  truncated: boolean;
+}
+
+export interface BusStopDetailResponse {
+  stop: BusStop;
+}
+
+export interface BusRoutePattern {
+  serviceNo: string;
+  direction: number;
+  stopCodes: string[];
+}
+
+export interface BusServiceRouteOption {
+  serviceNo: string;
+  direction: number;
+  destination: BusStop;
+  stops: RouteStop[];
+}
+
+export interface BusStopServiceRoutesResponse {
+  busStop: BusStop;
+  serviceNo: string;
+  routes: BusServiceRouteOption[];
+}
+
+export interface RouteStop extends Omit<BusStop, "services"> {
   sequence: number;
+  services?: string[];
 }
 
 export function remainingRouteStops(routeStops: RouteStop[], currentStopIndex: number): RouteStop[] {

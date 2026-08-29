@@ -3,3 +3,7 @@ dist/
 backend-smoke.*.log
 .expo/
 npm-debug.log*
+.env
+.env.local
+.env.*.local
+!.env.example

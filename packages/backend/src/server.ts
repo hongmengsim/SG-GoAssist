@@ -16,6 +16,7 @@ import {
 } from "./services/websocket";
 import { logger } from "./services/logger";
 import { createApp } from "./app";
+import { busStopRepository } from "./bus-stops/repository";
 
 // Load environment variables
 dotenv.config();
@@ -24,6 +25,12 @@ const PORT = process.env.PORT || 3000;
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || "http://localhost:8081,http://localhost:3000").split(",");
 
 const app = createApp();
+
+logger.info("[BusStops] Regional dataset initialized", undefined, {
+  available: busStopRepository.available,
+  stopCount: busStopRepository.size,
+  stopsWithServices: busStopRepository.metadata?.stopsWithServices ?? 0,
+});
 
 // Create HTTP server (for WebSocket support)
 const httpServer = http.createServer(app);

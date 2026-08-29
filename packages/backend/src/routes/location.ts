@@ -1,10 +1,7 @@
 import { Router, Request, Response } from "express";
 import { NearbyBusStopsRequest } from "@buspass/shared";
-import {
-  findNearestBusStops,
-  getArrivalsForStop,
-  getBusStopByCode,
-} from "../data/bus-stops.mock";
+import { getArrivalsForStop } from "../data/bus-stops.mock";
+import { busStopRepository } from "../bus-stops/repository";
 import { logger } from "../services/logger";
 
 export const router = Router();
@@ -21,11 +18,11 @@ router.post("/nearby-bus-stops", (req: Request, res: Response) => {
     });
   }
 
-  const stops = findNearestBusStops(
+  const stops = busStopRepository.nearby(
     payload.latitude,
     payload.longitude,
+    maxDistanceMeters,
     nearbyStopLimit,
-    maxDistanceMeters
   );
 
   logger.info("Nearby bus stop lookup", undefined, {
@@ -48,7 +45,7 @@ router.post("/nearby-bus-stops", (req: Request, res: Response) => {
 });
 
 router.get("/bus-stops/:busStopCode/arrivals", (req: Request, res: Response) => {
-  const busStop = getBusStopByCode(req.params.busStopCode);
+  const busStop = busStopRepository.get(req.params.busStopCode);
   if (!busStop) {
     return res.status(404).json({
       error: "Bus stop not found",

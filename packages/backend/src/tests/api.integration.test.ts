@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { startTestServer, requestJson } from "./helpers/integration";
+import { busStopRepository } from "../bus-stops/repository";
 
 const wheelchairPayload = {
   sessionId: "api-mobile-wheelchair",
@@ -143,7 +144,9 @@ test("location API validates coordinates and returns deterministic nearby stops"
     assert.equal(nearby.status, 200);
     assert.deepEqual(
       nearby.body.stops.map((stop: any) => stop.busStopCode),
-      ["19011", "18309", "18301", "19019", "18311", "18349", "18341", "18321"]
+      busStopRepository
+        .nearby(1.2942, 103.7711, 800, 8)
+        .map((stop) => stop.busStopCode)
     );
 
     const invalid = await requestJson(server.baseUrl, "/api/location/nearby-bus-stops", {

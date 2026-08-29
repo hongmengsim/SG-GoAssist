@@ -2,6 +2,7 @@ import express from "express";
 import cors from "cors";
 import { router as assistanceRouter } from "./routes/assistance";
 import { router as locationRouter } from "./routes/location";
+import { router as busStopsRouter } from "./routes/busStops";
 import { getConnectedClientCount } from "./services/websocket";
 import { logger } from "./services/logger";
 import { clearAllRequests, getAllRequests } from "./services/aviator";
@@ -10,20 +11,31 @@ export function createApp() {
   const NODE_ENV = process.env.NODE_ENV || "development";
   const ALLOWED_ORIGINS = (
     process.env.ALLOWED_ORIGINS || "http://localhost:8081,http://localhost:3000"
-  ).split(",");
+  )
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
 
   const app = express();
 
   app.use(express.json());
   app.use(
     cors({
-      origin: ALLOWED_ORIGINS,
+      origin(origin, callback) {
+        callback(
+          null,
+          !origin ||
+            ALLOWED_ORIGINS.includes(origin) ||
+            (NODE_ENV !== "production" && isLoopbackDevelopmentOrigin(origin))
+        );
+      },
       credentials: true,
     })
   );
 
   app.use("/api/assistance", assistanceRouter);
   app.use("/api/location", locationRouter);
+  app.use("/api/bus-stops", busStopsRouter);
 
   app.get("/health", (req, res) => {
     res.json({
@@ -76,4 +88,17 @@ export function createApp() {
   );
 
   return app;
+}
+
+export function isLoopbackDevelopmentOrigin(origin: string): boolean {
+  try {
+    const url = new URL(origin);
+    return (
+      url.protocol === "http:" &&
+      (url.hostname === "localhost" || url.hostname === "127.0.0.1") &&
+      Boolean(url.port)
+    );
+  } catch {
+    return false;
+  }
 }
