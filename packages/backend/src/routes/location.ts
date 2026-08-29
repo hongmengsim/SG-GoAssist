@@ -12,7 +12,10 @@ const maxDistanceMeters = 800;
 router.post("/nearby-bus-stops", (req: Request, res: Response) => {
   const payload: NearbyBusStopsRequest = req.body;
 
-  if (typeof payload.latitude !== "number" || typeof payload.longitude !== "number") {
+  if (
+    typeof payload.latitude !== "number" ||
+    typeof payload.longitude !== "number"
+  ) {
     return res.status(400).json({
       error: "latitude and longitude are required numbers",
     });
@@ -44,17 +47,20 @@ router.post("/nearby-bus-stops", (req: Request, res: Response) => {
   });
 });
 
-router.get("/bus-stops/:busStopCode/arrivals", (req: Request, res: Response) => {
-  const busStop = busStopRepository.get(req.params.busStopCode);
-  if (!busStop) {
-    return res.status(404).json({
-      error: "Bus stop not found",
-      busStopCode: req.params.busStopCode,
-    });
-  }
+router.get(
+  "/bus-stops/:busStopCode/arrivals",
+  (req: Request, res: Response) => {
+    const busStop = busStopRepository.get(req.params.busStopCode);
+    if (!busStop) {
+      return res.status(404).json({
+        error: "Bus stop not found",
+        busStopCode: req.params.busStopCode,
+      });
+    }
 
-  res.json({
-    busStop,
-    services: getArrivalsForStop(busStop.busStopCode),
-  });
-});
+    res.json({
+      busStop,
+      services: getArrivalsForStop(busStop.busStopCode),
+    });
+  },
+);

@@ -26,7 +26,7 @@ export function createApp() {
           null,
           !origin ||
             ALLOWED_ORIGINS.includes(origin) ||
-            (NODE_ENV !== "production" && isLoopbackDevelopmentOrigin(origin))
+            (NODE_ENV !== "production" && isLoopbackDevelopmentOrigin(origin)),
         );
       },
       credentials: true,

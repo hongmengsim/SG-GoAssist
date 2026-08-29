@@ -27,7 +27,9 @@ export class BusStopRequestError extends Error {
 }
 
 export async function fetchMockBuses(service = "191"): Promise<Bus[]> {
-  const response = await fetch(`${API_BASE_URL}/api/assistance/buses/mock?service=${service}`);
+  const response = await fetch(
+    `${API_BASE_URL}/api/assistance/buses/mock?service=${service}`,
+  );
   if (!response.ok) {
     throw new Error("Unable to load nearby buses.");
   }
@@ -37,7 +39,7 @@ export async function fetchMockBuses(service = "191"): Promise<Bus[]> {
 }
 
 export async function createAssistanceRequest(
-  payload: CreateAssistanceRequestPayload
+  payload: CreateAssistanceRequestPayload,
 ): Promise<AssistanceRequestResponse> {
   const response = await fetch(`${API_BASE_URL}/api/assistance/request`, {
     method: "POST",
@@ -58,29 +60,38 @@ export async function cancelAssistanceRequest(
   requestId: string,
   signal?: AbortSignal,
 ): Promise<void> {
-  const response = await fetch(`${API_BASE_URL}/api/assistance/${requestId}/cancel`, {
-    method: "POST",
-    signal,
-  });
+  const response = await fetch(
+    `${API_BASE_URL}/api/assistance/${requestId}/cancel`,
+    {
+      method: "POST",
+      signal,
+    },
+  );
 
   if (!response.ok) {
     throw new Error("Unable to cancel assistance request.");
   }
 }
 
-export async function findNearbyBusStops(payload: {
-  latitude: number;
-  longitude: number;
-  accuracyMeters?: number;
-}, signal?: AbortSignal): Promise<NearbyBusStopsResponse> {
-  const response = await fetch(`${API_BASE_URL}/api/location/nearby-bus-stops`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
+export async function findNearbyBusStops(
+  payload: {
+    latitude: number;
+    longitude: number;
+    accuracyMeters?: number;
+  },
+  signal?: AbortSignal,
+): Promise<NearbyBusStopsResponse> {
+  const response = await fetch(
+    `${API_BASE_URL}/api/location/nearby-bus-stops`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+      signal,
     },
-    body: JSON.stringify(payload),
-    signal,
-  });
+  );
 
   if (!response.ok) {
     throw new Error("Unable to find nearby bus stops.");
@@ -194,11 +205,14 @@ export async function fetchBusStopServiceRoutes(
 
 export async function fetchBusStopArrivals(
   busStopCode: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
 ): Promise<BusStopArrivalsResponse> {
-  const response = await fetch(`${API_BASE_URL}/api/location/bus-stops/${busStopCode}/arrivals`, {
-    signal,
-  });
+  const response = await fetch(
+    `${API_BASE_URL}/api/location/bus-stops/${busStopCode}/arrivals`,
+    {
+      signal,
+    },
+  );
 
   if (!response.ok) {
     throw new Error("Unable to load buses for this stop.");

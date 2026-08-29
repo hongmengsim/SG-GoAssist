@@ -17,17 +17,21 @@ const wheelchairPayload = {
 test("API creates a mobile assistance request with the expected standardized data", async () => {
   const server = await startTestServer();
   try {
-    const created = await requestJson(server.baseUrl, "/api/assistance/request", {
-      method: "POST",
-      body: JSON.stringify(wheelchairPayload),
-    });
+    const created = await requestJson(
+      server.baseUrl,
+      "/api/assistance/request",
+      {
+        method: "POST",
+        body: JSON.stringify(wheelchairPayload),
+      },
+    );
 
     assert.equal(created.status, 201);
     assert.equal(created.body.status, "SENDING");
 
     const requests = await requestJson(server.baseUrl, "/api/assistance");
     const request = requests.body.requests.find(
-      (item: any) => item.requestId === created.body.requestId
+      (item: any) => item.requestId === created.body.requestId,
     );
 
     assert.equal(request.busId, "AV-095-01");
@@ -76,30 +80,42 @@ test("API keeps multiple selected assistance needs on one request ID", async () 
 test("API returns useful validation errors for malformed assistance requests", async () => {
   const server = await startTestServer();
   try {
-    const missing = await requestJson(server.baseUrl, "/api/assistance/request", {
-      method: "POST",
-      body: JSON.stringify({ busId: "AV-095-01" }),
-    });
+    const missing = await requestJson(
+      server.baseUrl,
+      "/api/assistance/request",
+      {
+        method: "POST",
+        body: JSON.stringify({ busId: "AV-095-01" }),
+      },
+    );
     assert.equal(missing.status, 400);
     assert.equal(missing.body.error, "Missing required fields");
 
-    const invalidType = await requestJson(server.baseUrl, "/api/assistance/request", {
-      method: "POST",
-      body: JSON.stringify({
-        ...wheelchairPayload,
-        assistanceTypes: ["RAMP_DEPLOYMENT"],
-      }),
-    });
+    const invalidType = await requestJson(
+      server.baseUrl,
+      "/api/assistance/request",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          ...wheelchairPayload,
+          assistanceTypes: ["RAMP_DEPLOYMENT"],
+        }),
+      },
+    );
     assert.equal(invalidType.status, 400);
     assert.equal(invalidType.body.error, "Unsupported assistance type");
 
-    const invalidPhase = await requestJson(server.baseUrl, "/api/assistance/request", {
-      method: "POST",
-      body: JSON.stringify({
-        ...wheelchairPayload,
-        boardingOrAlighting: "ARRIVED",
-      }),
-    });
+    const invalidPhase = await requestJson(
+      server.baseUrl,
+      "/api/assistance/request",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          ...wheelchairPayload,
+          boardingOrAlighting: "ARRIVED",
+        }),
+      },
+    );
     assert.equal(invalidPhase.status, 400);
     assert.equal(invalidPhase.body.error, "Unsupported assistance phase");
   } finally {
@@ -120,7 +136,7 @@ test("physical button endpoint uses the standardized wheelchair request contract
           busService: "191",
           boardingStop: "Changi Airport Terminal 1",
         }),
-      }
+      },
     );
 
     assert.equal(response.status, 201);
@@ -130,7 +146,7 @@ test("physical button endpoint uses the standardized wheelchair request contract
 
     const requests = await requestJson(server.baseUrl, "/api/assistance");
     const request = requests.body.requests.find(
-      (item: any) => item.requestId === response.body.requestId
+      (item: any) => item.requestId === response.body.requestId,
     );
     assert.equal(request.source, "PHYSICAL_BUTTON");
     assert.deepEqual(request.assistanceTypes, ["WHEELCHAIR_RAMP"]);
@@ -142,22 +158,30 @@ test("physical button endpoint uses the standardized wheelchair request contract
 test("cancelling a request updates state and unknown cancellations return 404", async () => {
   const server = await startTestServer();
   try {
-    const created = await requestJson(server.baseUrl, "/api/assistance/request", {
-      method: "POST",
-      body: JSON.stringify(wheelchairPayload),
-    });
+    const created = await requestJson(
+      server.baseUrl,
+      "/api/assistance/request",
+      {
+        method: "POST",
+        body: JSON.stringify(wheelchairPayload),
+      },
+    );
     const cancelled = await requestJson(
       server.baseUrl,
       `/api/assistance/${created.body.requestId}/cancel`,
-      { method: "POST" }
+      { method: "POST" },
     );
 
     assert.equal(cancelled.status, 200);
     assert.equal(cancelled.body.request.status, "CANCELLED");
 
-    const unknown = await requestJson(server.baseUrl, "/api/assistance/REQ-NOT-FOUND/cancel", {
-      method: "POST",
-    });
+    const unknown = await requestJson(
+      server.baseUrl,
+      "/api/assistance/REQ-NOT-FOUND/cancel",
+      {
+        method: "POST",
+      },
+    );
     assert.equal(unknown.status, 404);
   } finally {
     await server.close();
@@ -167,28 +191,39 @@ test("cancelling a request updates state and unknown cancellations return 404", 
 test("location API validates coordinates and returns deterministic nearby stops", async () => {
   const server = await startTestServer();
   try {
-    const nearby = await requestJson(server.baseUrl, "/api/location/nearby-bus-stops", {
-      method: "POST",
-      body: JSON.stringify({
-        latitude: 1.2942,
-        longitude: 103.7711,
-        accuracyMeters: 12,
-      }),
-    });
+    const nearby = await requestJson(
+      server.baseUrl,
+      "/api/location/nearby-bus-stops",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          latitude: 1.2942,
+          longitude: 103.7711,
+          accuracyMeters: 12,
+        }),
+      },
+    );
     assert.equal(nearby.status, 200);
     assert.deepEqual(
       nearby.body.stops.map((stop: any) => stop.busStopCode),
       busStopRepository
         .nearby(1.2942, 103.7711, 800, 8)
-        .map((stop) => stop.busStopCode)
+        .map((stop) => stop.busStopCode),
     );
 
-    const invalid = await requestJson(server.baseUrl, "/api/location/nearby-bus-stops", {
-      method: "POST",
-      body: JSON.stringify({ latitude: "1.2942" }),
-    });
+    const invalid = await requestJson(
+      server.baseUrl,
+      "/api/location/nearby-bus-stops",
+      {
+        method: "POST",
+        body: JSON.stringify({ latitude: "1.2942" }),
+      },
+    );
     assert.equal(invalid.status, 400);
-    assert.equal(invalid.body.error, "latitude and longitude are required numbers");
+    assert.equal(
+      invalid.body.error,
+      "latitude and longitude are required numbers",
+    );
   } finally {
     await server.close();
   }

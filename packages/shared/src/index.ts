@@ -7,22 +7,16 @@
  */
 
 export type AssistanceType =
-  | "WHEELCHAIR_RAMP"
-  | "BUS_AUDIO_IDENTIFICATION"
-  | "EXTENDED_DWELL_TIME";
+  "WHEELCHAIR_RAMP" | "BUS_AUDIO_IDENTIFICATION" | "EXTENDED_DWELL_TIME";
 
 export type AssistanceSource =
-  | "MOBILE_APP"
-  | "PHYSICAL_BUTTON"
-  | "RFID"
-  | "AUTOMATIC_DETECTION";
+  "MOBILE_APP" | "PHYSICAL_BUTTON" | "RFID" | "AUTOMATIC_DETECTION";
 
-export type AccessibilityVerificationStatus = "UNVERIFIED" | "PENDING" | "VERIFIED";
+export type AccessibilityVerificationStatus =
+  "UNVERIFIED" | "PENDING" | "VERIFIED";
 
 export type VerificationMethod =
-  | "PWD_CONCESSION_CARD"
-  | "SENIOR_CONCESSION_CARD"
-  | "DEMO_CREDENTIAL";
+  "PWD_CONCESSION_CARD" | "SENIOR_CONCESSION_CARD" | "DEMO_CREDENTIAL";
 
 export enum AssistanceRequestStatus {
   SENDING = "SENDING",
@@ -318,11 +312,6 @@ export interface BusArrivalService {
   buses: ArrivalBus[];
 }
 
-export interface BusStopArrivalsResponse {
-  busStop: BusStop;
-  services: BusArrivalService[];
-}
-
 export interface BusStopSearchResponse {
   stops: BusStop[];
   query: string;
@@ -358,19 +347,27 @@ export interface BusStopServiceRoutesResponse {
   routes: BusServiceRouteOption[];
 }
 
+export interface BusStopArrivalsResponse {
+  busStop: BusStop;
+  services: BusArrivalService[];
+}
+
 export interface RouteStop extends Omit<BusStop, "services"> {
   sequence: number;
   services?: string[];
 }
 
-export function remainingRouteStops(routeStops: RouteStop[], currentStopIndex: number): RouteStop[] {
+export function remainingRouteStops(
+  routeStops: RouteStop[],
+  currentStopIndex: number,
+): RouteStop[] {
   return routeStops.filter((stop) => stop.sequence > currentStopIndex);
 }
 
 export function isSelectedStopNext(
   routeStops: RouteStop[],
   currentStopIndex: number,
-  selectedStopCode?: string
+  selectedStopCode?: string,
 ): boolean {
   if (!selectedStopCode) {
     return false;
@@ -382,7 +379,7 @@ export function isSelectedStopNext(
 export function isSelectedStopReached(
   routeStops: RouteStop[],
   currentStopIndex: number,
-  selectedStopCode?: string
+  selectedStopCode?: string,
 ): boolean {
   if (!selectedStopCode) {
     return false;
@@ -393,7 +390,7 @@ export function isSelectedStopReached(
 
 export function assistanceTypesForPhase(
   preferences: AssistancePreferences,
-  phase: AssistancePhase
+  phase: AssistancePhase,
 ): AssistanceType[] {
   const types: AssistanceType[] = [];
 
