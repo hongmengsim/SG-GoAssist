@@ -69,6 +69,42 @@ export interface AssistancePreferences {
   extendedDwellTime: boolean;
 }
 
+export type AccessibilityTextSize = "STANDARD" | "LARGE" | "EXTRA_LARGE";
+
+export type VibrationAlertMode = "OFF" | "IMPORTANT" | "ALL";
+
+export interface AccessibilityPreferences {
+  wheelchairAssistance: boolean;
+  wheelchairRouting: boolean;
+  avoidSteepSlopes: boolean;
+  preferSmoothSurfaces: boolean;
+  extraBoardingTime: boolean;
+  alightingAssistance: boolean;
+  preferAccessibleStops: boolean;
+  textSize: AccessibilityTextSize;
+  highContrast: boolean;
+  spokenGuidance: boolean;
+  audioBusIdentification: boolean;
+  reduceMapDependence: boolean;
+  screenReaderOptimised: boolean;
+  visualJourneyAlerts: boolean;
+  vibrationAlerts: VibrationAlertMode;
+  textAnnouncementEquivalent: boolean;
+  simplifiedJourney: boolean;
+  alwaysShowNextAction: boolean;
+  plainLanguage: boolean;
+  confirmImportantActions: boolean;
+  largerControls: boolean;
+  longerMessageDuration: boolean;
+  reducedMotion: boolean;
+  warnBusApproaching: boolean;
+  warnBusArrives: boolean;
+  warnTwoStopsBeforeDestination: boolean;
+  warnDestinationNext: boolean;
+  repeatAudio: boolean;
+  themeMode: "light" | "dark";
+}
+
 export interface AppAccessibilityPreferences {
   screenReaderOptimised: boolean;
   hapticAlerts: boolean;
