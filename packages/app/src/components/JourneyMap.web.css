@@ -1,0 +1,241 @@
+.goassist-leaflet-map {
+  background: #dce9e7;
+  height: 100%;
+  isolation: isolate;
+  width: 100%;
+  z-index: 0;
+}
+
+.goassist-leaflet-map .leaflet-control-attribution {
+  background: rgba(247, 255, 254, 0.96);
+  border: 1px solid rgba(16, 72, 77, 0.45);
+  border-radius: 4px;
+  box-shadow: 0 1px 4px rgba(7, 35, 39, 0.22);
+  color: #163f43;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 15px;
+  margin-right: 12px !important;
+  margin-top: 78px !important;
+  max-width: min(240px, calc(100% - 24px));
+  padding: 3px 6px;
+  pointer-events: auto;
+  position: relative;
+  white-space: normal;
+  z-index: 850;
+}
+
+.goassist-leaflet-map .leaflet-control-attribution a {
+  color: #075e68;
+  text-decoration: underline;
+}
+
+.goassist-leaflet-map.goassist-leaflet-dark .leaflet-control-attribution {
+  background: rgba(9, 33, 37, 0.94);
+  border-color: #7cdce4;
+  color: #f2ffff;
+}
+
+.goassist-leaflet-map.goassist-leaflet-dark .leaflet-control-attribution a {
+  color: #baf8ff;
+}
+
+.goassist-leaflet-map.goassist-leaflet-high-contrast
+  .leaflet-control-attribution {
+  border-width: 2px;
+  font-weight: 900;
+}
+
+.goassist-leaflet-marker {
+  background: transparent;
+  border: 0;
+  cursor: default;
+}
+
+.goassist-user-location-marker {
+  height: 44px !important;
+  width: 44px !important;
+}
+
+.goassist-user-puck {
+  display: block;
+  height: 44px;
+  position: relative;
+  width: 44px;
+}
+
+.goassist-user-heading {
+  height: 44px;
+  left: 0;
+  position: absolute;
+  top: 0;
+  transform-origin: 22px 22px;
+  width: 44px;
+  z-index: 1;
+}
+
+.goassist-user-puck-shadow {
+  background: rgba(4, 30, 34, 0.38);
+  border-radius: 50%;
+  filter: blur(3px);
+  height: 27px;
+  left: 9px;
+  position: absolute;
+  top: 11px;
+  width: 27px;
+  z-index: 2;
+}
+
+.goassist-user-puck-outer {
+  align-items: center;
+  border-radius: 50%;
+  box-sizing: border-box;
+  display: flex;
+  height: 28px;
+  justify-content: center;
+  left: 8px;
+  position: absolute;
+  top: 8px;
+  width: 28px;
+  z-index: 3;
+}
+
+.goassist-user-puck-halo {
+  align-items: center;
+  background: #fff;
+  border-radius: 50%;
+  display: flex;
+  height: 21px;
+  justify-content: center;
+  width: 21px;
+}
+
+.goassist-user-puck-core {
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.34);
+  height: 13px;
+  width: 13px;
+}
+
+.goassist-user-puck-pulse {
+  border: 2px solid;
+  border-radius: 50%;
+  box-sizing: border-box;
+  height: 28px;
+  left: 8px;
+  opacity: 0;
+  pointer-events: none;
+  position: absolute;
+  top: 8px;
+  width: 28px;
+  z-index: 0;
+}
+
+.goassist-user-puck-pulsed .goassist-user-puck-pulse {
+  animation: goassist-location-pulse 700ms ease-out 1;
+}
+
+.goassist-destination-marker {
+  height: 36px !important;
+  width: 36px !important;
+}
+
+.goassist-destination-pin {
+  align-items: center;
+  border-radius: 50% 50% 50% 10%;
+  border-style: solid;
+  box-shadow:
+    0 0 0 2px rgba(255, 255, 255, 0.9),
+    0 3px 9px rgba(6, 37, 41, 0.48);
+  box-sizing: border-box;
+  display: flex;
+  height: 34px;
+  justify-content: center;
+  transform: rotate(-45deg);
+  width: 34px;
+}
+
+.goassist-destination-pin svg {
+  height: 23px;
+  transform: rotate(45deg);
+  width: 23px;
+}
+
+@keyframes goassist-location-pulse {
+  0% {
+    opacity: 0.55;
+    transform: scale(0.9);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(2.05);
+  }
+}
+
+.goassist-stop-marker,
+.goassist-leaflet-cluster {
+  cursor: pointer;
+}
+
+.goassist-stop-marker > span,
+.goassist-leaflet-cluster > span {
+  transition:
+    box-shadow 160ms ease,
+    filter 160ms ease;
+}
+
+.goassist-stop-marker:hover > span,
+.goassist-leaflet-cluster:hover > span {
+  box-shadow: 0 4px 11px rgba(6, 37, 41, 0.5) !important;
+  filter: brightness(1.06);
+}
+
+.goassist-stop-marker-selected > span {
+  box-shadow:
+    0 0 0 3px rgba(255, 255, 255, 0.92),
+    0 3px 10px rgba(6, 37, 41, 0.5) !important;
+}
+
+.goassist-stop-marker-recommended > span {
+  box-shadow:
+    0 0 0 2px rgba(255, 255, 255, 0.82),
+    0 2px 8px rgba(6, 37, 41, 0.42) !important;
+}
+
+.goassist-accessibility-warning-icon span {
+  align-items: center;
+  border: 3px solid #ffffff;
+  border-radius: 50%;
+  box-shadow: 0 2px 8px rgba(6, 37, 41, 0.5);
+  box-sizing: border-box;
+  display: flex;
+  font-size: 16px;
+  font-weight: 900;
+  height: 26px;
+  justify-content: center;
+  width: 26px;
+}
+
+.goassist-accessibility-warning-icon:focus {
+  outline: 3px solid #ffdf66;
+  outline-offset: 3px;
+}
+
+.goassist-leaflet-marker:focus,
+.goassist-leaflet-cluster:focus {
+  outline: 3px solid #ffdf66;
+  outline-offset: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .goassist-user-puck-pulsed .goassist-user-puck-pulse {
+    animation: none;
+  }
+
+  .goassist-stop-marker > span,
+  .goassist-leaflet-cluster > span,
+  .leaflet-cluster-anim .leaflet-marker-icon,
+  .leaflet-cluster-anim .leaflet-marker-shadow {
+    transition: none;
+  }
+}
