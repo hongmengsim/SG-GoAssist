@@ -147,6 +147,71 @@ test("state machines remain separate", () => {
   assert.equal(VehicleStatus.APPROACHING, "APPROACHING");
 });
 
+test("stale vehicle updates cannot move an arrived vehicle backwards", () => {
+  clearAllRequests();
+  const messages: StatusUpdateMessage[] = [];
+  const unsubscribe = onAssistanceEvent((message) => messages.push(message));
+  const request = createRequest(baseRequest("REQ-VEHICLE-ORDER"));
+
+  const approaching = processVehicleCommand({
+    busId: request.busId,
+    status: VehicleStatus.APPROACHING,
+  });
+  const duplicateApproaching = processVehicleCommand({
+    busId: request.busId,
+    status: VehicleStatus.APPROACHING,
+  });
+  const arrived = processVehicleCommand({
+    busId: request.busId,
+    status: VehicleStatus.ARRIVED,
+  });
+  const staleApproaching = processVehicleCommand({
+    busId: request.busId,
+    status: VehicleStatus.APPROACHING,
+  });
+  unsubscribe();
+
+  assert.equal(approaching.success, true);
+  assert.equal(duplicateApproaching.success, true);
+  assert.equal(arrived.success, true);
+  assert.equal(staleApproaching.success, false);
+  assert.equal(staleApproaching.vehicleEvent.status, VehicleStatus.ARRIVED);
+  assert.equal(
+    messages.filter(
+      (message) =>
+        message.type === "VEHICLE_STATUS" &&
+        message.status === VehicleStatus.APPROACHING,
+    ).length,
+    1,
+  );
+});
+
+test("acknowledged requests can only remain acknowledged or be cancelled", () => {
+  clearAllRequests();
+  const messages: StatusUpdateMessage[] = [];
+  const unsubscribe = onAssistanceEvent((message) => messages.push(message));
+  const request = createRequest(baseRequest("REQ-ACK-TERMINAL"));
+
+  processSimulatorCommand({ requestId: request.requestId, command: "ACKNOWLEDGE" });
+  const invalidFailure = processSimulatorCommand({
+    requestId: request.requestId,
+    command: "FAIL",
+  });
+  unsubscribe();
+
+  assert.equal(invalidFailure.success, false);
+  assert.equal(invalidFailure.request?.status, AssistanceRequestStatus.ACKNOWLEDGED);
+  assert.equal(
+    messages.filter(
+      (message) =>
+        message.type === "REQUEST_STATUS" &&
+        message.requestId === request.requestId &&
+        message.status === AssistanceRequestStatus.FAILED
+    ).length,
+    0
+  );
+});
+
 test("audio identification triggers only for matching acknowledged active requests", () => {
   clearAllRequests();
 

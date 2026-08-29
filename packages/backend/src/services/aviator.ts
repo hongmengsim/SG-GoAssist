@@ -8,6 +8,8 @@ import {
   VehicleSimulatorCommand,
   VehicleStatus,
   VehicleStatusUpdateMessage,
+  canTransitionAssistanceRequestStatus,
+  canTransitionVehicleStatus,
 } from "@buspass/shared";
 import { logger } from "./logger";
 
@@ -121,7 +123,7 @@ export function findDuplicateActiveRequest(
       (!phase || request.boardingOrAlighting === phase) &&
       request.status !== AssistanceRequestStatus.CANCELLED &&
       request.status !== AssistanceRequestStatus.FAILED &&
-      request.assistanceTypes.some((type) => assistanceTypes.includes(type))
+      assistanceTypes.every((type) => request.assistanceTypes.includes(type))
   );
 }
 
@@ -147,10 +149,15 @@ function updateRequestStatus(
     return null;
   }
 
-  if (
-    request.status === AssistanceRequestStatus.CANCELLED ||
-    request.status === AssistanceRequestStatus.FAILED
-  ) {
+  if (request.status === newStatus) {
+    return request;
+  }
+
+  if (!canTransitionAssistanceRequestStatus(request.status, newStatus)) {
+    logger.warn(
+      `Ignored invalid request status transition: ${request.status} -> ${newStatus}`,
+      requestId
+    );
     return request;
   }
 
@@ -188,18 +195,41 @@ export function processSimulatorCommand(command: SimulatorCommand): {
     CANCEL: AssistanceRequestStatus.CANCELLED,
   };
 
-  const request = updateRequestStatus(command.requestId, commandToStatus[command.command]);
-  if (!request) {
+  const currentRequest = getRequest(command.requestId);
+  if (!currentRequest) {
     return {
       success: false,
       message: `Request ${command.requestId} not found`,
     };
   }
 
+  const nextStatus = commandToStatus[command.command];
+  if (currentRequest.status === nextStatus) {
+    return {
+      success: true,
+      message: `Request is already ${nextStatus}`,
+      request: currentRequest,
+    };
+  }
+
+  if (!canTransitionAssistanceRequestStatus(currentRequest.status, nextStatus)) {
+    logger.warn(
+      `Ignored invalid request status transition: ${currentRequest.status} -> ${nextStatus}`,
+      command.requestId,
+    );
+    return {
+      success: false,
+      message: `Request remains ${currentRequest.status}`,
+      request: currentRequest,
+    };
+  }
+
+  const request = updateRequestStatus(command.requestId, nextStatus);
+
   return {
     success: true,
-    message: `Request status updated to ${request.status}`,
-    request,
+    message: `Request status updated to ${request?.status ?? currentRequest.status}`,
+    request: request ?? currentRequest,
   };
 }
 
@@ -213,6 +243,49 @@ export function processVehicleCommand(command: VehicleSimulatorCommand): {
   vehicleEvent: VehicleStatusUpdateMessage;
   announcement?: ExternalAnnouncementMessage;
 } {
+  const previousStatus = vehicleStatuses.get(command.busId);
+  if (previousStatus === command.status) {
+    return {
+      success: true,
+      message: `Vehicle ${command.busId} is already ${previousStatus}`,
+      vehicleEvent: {
+        type: "VEHICLE_STATUS",
+        busId: command.busId,
+        busService:
+          Array.from(activeRequests.values()).find(
+            (request) => request.busId === command.busId,
+          )?.busService ?? "UNKNOWN",
+        status: previousStatus,
+        timestamp: new Date().toISOString(),
+        message: `Vehicle status remains ${previousStatus}`,
+      },
+    };
+  }
+  if (
+    previousStatus &&
+    !canTransitionVehicleStatus(previousStatus, command.status)
+  ) {
+    logger.warn(
+      `Ignored invalid vehicle status transition: ${previousStatus} -> ${command.status}`,
+      command.busId,
+    );
+    return {
+      success: false,
+      message: `Vehicle ${command.busId} remains ${previousStatus}`,
+      vehicleEvent: {
+        type: "VEHICLE_STATUS",
+        busId: command.busId,
+        busService:
+          Array.from(activeRequests.values()).find(
+            (request) => request.busId === command.busId,
+          )?.busService ?? "UNKNOWN",
+        status: previousStatus,
+        timestamp: new Date().toISOString(),
+        message: `Vehicle status remains ${previousStatus}`,
+      },
+    };
+  }
+
   vehicleStatuses.set(command.busId, command.status);
 
   const busRequest = Array.from(activeRequests.values()).find(

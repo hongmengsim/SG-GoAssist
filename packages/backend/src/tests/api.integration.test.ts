@@ -39,6 +39,40 @@ test("API creates a mobile assistance request with the expected standardized dat
   }
 });
 
+test("API keeps multiple selected assistance needs on one request ID", async () => {
+  const server = await startTestServer();
+  try {
+    const assistanceTypes = [
+      "WHEELCHAIR_RAMP",
+      "BUS_AUDIO_IDENTIFICATION",
+      "EXTENDED_DWELL_TIME",
+    ];
+    const created = await requestJson(
+      server.baseUrl,
+      "/api/assistance/request",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          ...wheelchairPayload,
+          sessionId: "api-multi-need",
+          assistanceTypes,
+        }),
+      },
+    );
+    const requests = await requestJson(server.baseUrl, "/api/assistance");
+    const matching = requests.body.requests.filter(
+      (item: any) => item.sessionId === "api-multi-need",
+    );
+
+    assert.equal(created.status, 201);
+    assert.equal(matching.length, 1);
+    assert.equal(matching[0].requestId, created.body.requestId);
+    assert.deepEqual(matching[0].assistanceTypes, assistanceTypes);
+  } finally {
+    await server.close();
+  }
+});
+
 test("API returns useful validation errors for malformed assistance requests", async () => {
   const server = await startTestServer();
   try {

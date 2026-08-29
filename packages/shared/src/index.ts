@@ -37,6 +37,51 @@ export enum VehicleStatus {
   DEPARTED = "DEPARTED",
 }
 
+const assistanceRequestStatusTransitions: Record<
+  AssistanceRequestStatus,
+  readonly AssistanceRequestStatus[]
+> = {
+  [AssistanceRequestStatus.SENDING]: [
+    AssistanceRequestStatus.ACKNOWLEDGED,
+    AssistanceRequestStatus.CANCELLED,
+    AssistanceRequestStatus.FAILED,
+  ],
+  [AssistanceRequestStatus.ACKNOWLEDGED]: [AssistanceRequestStatus.CANCELLED],
+  [AssistanceRequestStatus.CANCELLED]: [],
+  [AssistanceRequestStatus.FAILED]: [],
+};
+
+const vehicleStatusTransitions: Record<
+  VehicleStatus,
+  readonly VehicleStatus[]
+> = {
+  [VehicleStatus.APPROACHING]: [VehicleStatus.ARRIVED],
+  [VehicleStatus.ARRIVED]: [VehicleStatus.DEPARTED],
+  [VehicleStatus.DEPARTED]: [],
+};
+
+export function canTransitionAssistanceRequestStatus(
+  current: AssistanceRequestStatus | null | undefined,
+  next: AssistanceRequestStatus,
+): boolean {
+  return (
+    current == null ||
+    current === next ||
+    assistanceRequestStatusTransitions[current].includes(next)
+  );
+}
+
+export function canTransitionVehicleStatus(
+  current: VehicleStatus | null | undefined,
+  next: VehicleStatus,
+): boolean {
+  return (
+    current == null ||
+    current === next ||
+    vehicleStatusTransitions[current].includes(next)
+  );
+}
+
 export type JourneyPhase =
   | "DISCOVERY"
   | "PLANNING"

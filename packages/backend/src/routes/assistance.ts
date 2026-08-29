@@ -18,6 +18,7 @@ import {
   waitForRequestStatus,
 } from "../services/aviator";
 import {
+  createStandardizedAssistanceRequestBundle,
   createStandardizedAssistanceRequest,
   isAssistanceType,
   supportedAssistanceTypes,
@@ -60,7 +61,8 @@ router.post("/simulator/vehicle", (req: Request, res: Response) => {
     });
   }
 
-  res.json(processVehicleCommand({ busId, status }));
+  const result = processVehicleCommand({ busId, status });
+  res.status(result.success ? 200 : 409).json(result);
 });
 
 router.post("/request", (req: Request, res: Response) => {
@@ -107,25 +109,20 @@ router.post("/request", (req: Request, res: Response) => {
       });
     }
 
-    const created = payload.assistanceTypes.map((assistanceType) =>
-      createStandardizedAssistanceRequest({
+    const { request: savedRequest, duplicateOfRequestId } =
+      createStandardizedAssistanceRequestBundle({
         sessionId: payload.sessionId ?? "demo-session",
         busService: payload.busService,
         busId: payload.busId,
         boardingStop: payload.boardingStop,
         destination: payload.destination,
         stopCode: payload.stopCode,
-        assistanceType,
+        assistanceTypes: payload.assistanceTypes,
         boardingOrAlighting: payload.boardingOrAlighting,
         source: payload.source ?? "MOBILE_APP",
         accessibilityVerificationStatus: payload.accessibilityVerificationStatus,
         verificationMethod: payload.verificationMethod,
-      })
-    );
-
-    const primary = created[0];
-    const savedRequest = primary.request;
-    const duplicateOfRequestId = primary.duplicateOfRequestId;
+      });
 
     const response: AssistanceRequestResponse = {
       requestId: savedRequest.requestId,
@@ -148,7 +145,6 @@ router.post("/request", (req: Request, res: Response) => {
     });
     res.status(500).json({
       error: "Internal server error",
-      message: String(error),
     });
   }
 });
@@ -203,7 +199,7 @@ router.post("/hardware/physical-button/wheelchair-ramp", async (req: Request, re
   } catch (error) {
     logger.error("Physical button request failed", undefined, { error: String(error) });
     res.status(400).json({
-      error: String(error),
+      error: "Unable to create physical assistance request",
       feedback: {
         led: "ERROR_BLINK",
         message: "Unable to send wheelchair ramp request.",

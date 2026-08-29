@@ -1,8 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { AssistanceRequestStatus, assistanceTypesForPhase } from "@buspass/shared";
-import { clearAllRequests, processSimulatorCommand } from "../services/aviator";
+import { clearAllRequests, getAllRequests, processSimulatorCommand } from "../services/aviator";
 import {
+  createStandardizedAssistanceRequestBundle,
   createStandardizedAssistanceRequest,
   isAssistanceType,
   supportedAssistanceTypes,
@@ -126,6 +127,66 @@ test("verification status is stored separately from selected assistance needs", 
   assert.deepEqual(result.request.assistanceTypes, ["BUS_AUDIO_IDENTIFICATION"]);
   assert.equal(result.request.accessibilityVerificationStatus, "VERIFIED");
   assert.equal(result.request.verificationMethod, "DEMO_CREDENTIAL");
+});
+
+test("multiple selected needs share one request lifecycle", () => {
+  clearAllRequests();
+
+  const result = createStandardizedAssistanceRequestBundle(
+    {
+      sessionId: "multi-need-app-flow",
+      busId: "AV-191-03",
+      busService: "191",
+      boardingStop: "19011",
+      destination: "Kent Ridge Terminal",
+      assistanceTypes: [
+        "WHEELCHAIR_RAMP",
+        "BUS_AUDIO_IDENTIFICATION",
+        "EXTENDED_DWELL_TIME",
+      ],
+      source: "MOBILE_APP",
+      boardingOrAlighting: "BOARDING",
+    },
+    { autoAcknowledge: false }
+  );
+
+  assert.equal(getAllRequests().length, 1);
+  assert.deepEqual(result.request.assistanceTypes, [
+    "WHEELCHAIR_RAMP",
+    "BUS_AUDIO_IDENTIFICATION",
+    "EXTENDED_DWELL_TIME",
+  ]);
+});
+
+test("an existing partial request does not swallow a newly added need", () => {
+  clearAllRequests();
+
+  const rampOnly = createStandardizedAssistanceRequest(
+    {
+      sessionId: "ramp-only",
+      busId: "AV-191-03",
+      busService: "191",
+      assistanceType: "WHEELCHAIR_RAMP",
+      source: "MOBILE_APP",
+    },
+    { autoAcknowledge: false }
+  );
+  const rampAndAudio = createStandardizedAssistanceRequestBundle(
+    {
+      sessionId: "ramp-and-audio",
+      busId: "AV-191-03",
+      busService: "191",
+      assistanceTypes: ["WHEELCHAIR_RAMP", "BUS_AUDIO_IDENTIFICATION"],
+      source: "MOBILE_APP",
+    },
+    { autoAcknowledge: false }
+  );
+
+  assert.notEqual(rampAndAudio.request.requestId, rampOnly.request.requestId);
+  assert.deepEqual(rampAndAudio.request.assistanceTypes, [
+    "WHEELCHAIR_RAMP",
+    "BUS_AUDIO_IDENTIFICATION",
+  ]);
 });
 
 test("assistance preferences map differently for boarding and alighting", () => {

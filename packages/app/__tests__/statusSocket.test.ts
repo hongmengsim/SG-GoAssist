@@ -1,0 +1,138 @@
+import { subscribeToRequestStatus } from "../src/api/statusSocket";
+
+type SocketHandler = ((event?: any) => void) | null;
+
+class MockWebSocket {
+  static instances: MockWebSocket[] = [];
+
+  onopen: SocketHandler = null;
+  onmessage: SocketHandler = null;
+  onerror: SocketHandler = null;
+  onclose: SocketHandler = null;
+  sent: string[] = [];
+  closed = false;
+
+  constructor(public readonly url: string) {
+    MockWebSocket.instances.push(this);
+  }
+
+  send(message: string) {
+    this.sent.push(message);
+  }
+
+  close() {
+    this.closed = true;
+  }
+
+  open() {
+    this.onopen?.();
+  }
+
+  message(value: unknown) {
+    this.onmessage?.({ data: JSON.stringify(value) });
+  }
+
+  disconnect() {
+    this.onclose?.();
+  }
+}
+
+describe("request status socket", () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+    MockWebSocket.instances = [];
+    Object.defineProperty(global, "WebSocket", {
+      configurable: true,
+      writable: true,
+      value: MockWebSocket,
+    });
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  it("filters malformed and stale request messages", () => {
+    const onUpdate = jest.fn();
+    const stop = subscribeToRequestStatus("REQ-CURRENT", onUpdate, jest.fn());
+    const socket = MockWebSocket.instances[0];
+    socket.open();
+
+    expect(JSON.parse(socket.sent[0])).toEqual({
+      type: "SUBSCRIBE",
+      requestId: "REQ-CURRENT",
+    });
+
+    socket.message({
+      type: "REQUEST_STATUS",
+      requestId: "REQ-STALE",
+      status: "ACKNOWLEDGED",
+      timestamp: "2026-08-28T01:00:00.000Z",
+      assistanceTypes: ["WHEELCHAIR_RAMP"],
+      source: "MOBILE_APP",
+      busId: "BUS-1",
+      busService: "191",
+    });
+    socket.onmessage?.({ data: "not json" });
+    expect(onUpdate).not.toHaveBeenCalled();
+
+    socket.message({
+      type: "REQUEST_STATUS",
+      requestId: "REQ-CURRENT",
+      status: "ACKNOWLEDGED",
+      timestamp: "2026-08-28T01:00:00.000Z",
+      assistanceTypes: ["WHEELCHAIR_RAMP"],
+      source: "MOBILE_APP",
+      busId: "BUS-1",
+      busService: "191",
+    });
+    expect(onUpdate).toHaveBeenCalledTimes(1);
+
+    socket.message({
+      type: "VEHICLE_STATUS",
+      status: "APPROACHING",
+      timestamp: "2026-08-28T01:01:00.000Z",
+      busId: "BUS-OTHER",
+      busService: "191",
+    });
+    expect(onUpdate).toHaveBeenCalledTimes(1);
+
+    socket.message({
+      type: "VEHICLE_STATUS",
+      status: "APPROACHING",
+      timestamp: "2026-08-28T01:01:01.000Z",
+      busId: "BUS-1",
+      busService: "191",
+    });
+    expect(onUpdate).toHaveBeenCalledTimes(2);
+    stop();
+  });
+
+  it("reconnects with one scoped subscription and stops cleanly", () => {
+    const onError = jest.fn();
+    const onConnected = jest.fn();
+    const stop = subscribeToRequestStatus("REQ-RECONNECT", jest.fn(), onError, {
+      initialReconnectDelayMs: 25,
+      maxReconnectDelayMs: 100,
+      onConnected,
+    });
+    const first = MockWebSocket.instances[0];
+    first.open();
+    first.disconnect();
+
+    expect(onError).toHaveBeenCalledTimes(1);
+    jest.advanceTimersByTime(25);
+    const second = MockWebSocket.instances[1];
+    second.open();
+    expect(onConnected).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(second.sent[0])).toEqual({
+      type: "SUBSCRIBE",
+      requestId: "REQ-RECONNECT",
+    });
+
+    stop();
+    second.disconnect();
+    jest.runOnlyPendingTimers();
+    expect(MockWebSocket.instances).toHaveLength(2);
+  });
+});

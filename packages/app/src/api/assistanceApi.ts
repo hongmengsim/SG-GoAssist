@@ -54,9 +54,13 @@ export async function createAssistanceRequest(
   return (await response.json()) as AssistanceRequestResponse;
 }
 
-export async function cancelAssistanceRequest(requestId: string): Promise<void> {
+export async function cancelAssistanceRequest(
+  requestId: string,
+  signal?: AbortSignal,
+): Promise<void> {
   const response = await fetch(`${API_BASE_URL}/api/assistance/${requestId}/cancel`, {
     method: "POST",
+    signal,
   });
 
   if (!response.ok) {

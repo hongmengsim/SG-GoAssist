@@ -40,12 +40,35 @@ export function createStandardizedAssistanceRequest(
   request: PassengerAssistanceRequest;
   duplicateOfRequestId?: string;
 } {
+  return createStandardizedAssistanceRequestBundle(
+    {
+      ...input,
+      assistanceTypes: [input.assistanceType],
+    },
+    options
+  );
+}
+
+export function createStandardizedAssistanceRequestBundle(
+  input: Omit<AssistanceRequestInput, "assistanceType"> & {
+    assistanceTypes: AssistanceType[];
+  },
+  options: { autoAcknowledge?: boolean } = { autoAcknowledge: true }
+): {
+  request: PassengerAssistanceRequest;
+  duplicateOfRequestId?: string;
+} {
   const bus = getBusById(input.busId);
   if (!bus) {
     throw new Error(`Bus not found: ${input.busId}`);
   }
 
-  if (!bus.isAccessible && input.assistanceType === "WHEELCHAIR_RAMP") {
+  const assistanceTypes = Array.from(new Set(input.assistanceTypes));
+  if (assistanceTypes.length === 0) {
+    throw new Error("At least one assistance type is required");
+  }
+
+  if (!bus.isAccessible && assistanceTypes.includes("WHEELCHAIR_RAMP")) {
     throw new Error(`Bus is not accessible for wheelchair ramp requests: ${input.busId}`);
   }
 
@@ -57,7 +80,7 @@ export function createStandardizedAssistanceRequest(
     boardingStop: input.boardingStop ?? defaultBoardingStop,
     destination: input.destination ?? defaultDestination,
     stopCode: input.stopCode,
-    assistanceTypes: [input.assistanceType],
+    assistanceTypes,
     source: input.source,
     boardingOrAlighting: input.boardingOrAlighting ?? "BOARDING",
     accessibilityVerificationStatus: input.accessibilityVerificationStatus,
@@ -71,7 +94,7 @@ export function createStandardizedAssistanceRequest(
     savedRequest.requestId !== candidate.requestId ? savedRequest.requestId : undefined;
 
   logger.info("Standardized assistance input accepted", savedRequest.requestId, {
-    assistanceType: input.assistanceType,
+    assistanceTypes,
     source: input.source,
     busId: input.busId,
     duplicateOfRequestId,
