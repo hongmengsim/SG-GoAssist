@@ -4,8 +4,10 @@
   "description": "Backend for BusTech Passenger Assistance System",
   "main": "dist/server.js",
   "scripts": {
-    "dev": "ts-node-dev --respawn src/server.ts",
+    "dev": "node ../../scripts/dev.mjs --backend",
+    "dev:server": "ts-node-dev --respawn --ignore-watch ../shared/dist src/server.ts",
     "build": "npm run build --workspace @buspass/shared && tsc",
+    "typecheck": "tsc --noEmit",
     "start": "node dist/server.js",
     "simulator": "ts-node src/cli/simulator.ts",
     "sync:lta": "ts-node src/cli/sync-lta-bus-data.ts",

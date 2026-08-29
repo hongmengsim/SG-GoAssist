@@ -46,7 +46,11 @@ function subscribe(requestId, expectedMessages) {
 
   const done = new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
-      reject(new Error(`Timed out waiting for ${expectedMessages.join(", ")}. Saw: ${JSON.stringify(seen)}`));
+      reject(
+        new Error(
+          `Timed out waiting for ${expectedMessages.join(", ")}. Saw: ${JSON.stringify(seen)}`,
+        ),
+      );
     }, 5000);
 
     socket.on("open", () => {
@@ -56,8 +60,12 @@ function subscribe(requestId, expectedMessages) {
     socket.on("message", (data) => {
       const message = JSON.parse(String(data));
       seen.push(message);
-      const labels = seen.map((item) => `${item.type}:${item.status ?? item.announcement}`);
-      const complete = expectedMessages.every((expected) => labels.includes(expected));
+      const labels = seen.map(
+        (item) => `${item.type}:${item.status ?? item.announcement}`,
+      );
+      const complete = expectedMessages.every((expected) =>
+        labels.includes(expected),
+      );
       if (complete) {
         clearTimeout(timer);
         resolve(seen);
@@ -81,8 +89,11 @@ async function main() {
       accuracyMeters: 12,
     }),
   });
-  if (!nearbyStops.stops.length || nearbyStops.stops[0].busStopCode !== "19011") {
-    throw new Error("Expected nearest mocked bus stop 19011");
+  if (
+    !nearbyStops.stops.length ||
+    nearbyStops.stops[0].busStopCode !== "16009"
+  ) {
+    throw new Error("Expected nearest normalized bus stop 16009");
   }
 
   const arrivals = await request("/api/location/bus-stops/19011/arrivals");
@@ -97,26 +108,35 @@ async function main() {
     method: "POST",
     body: JSON.stringify(wheelchairPayload),
   });
-  const wheelchairSubscription = subscribe(wheelchair.requestId, ["REQUEST_STATUS:ACKNOWLEDGED"]);
+  const wheelchairSubscription = subscribe(wheelchair.requestId, [
+    "REQUEST_STATUS:ACKNOWLEDGED",
+  ]);
   await wheelchairSubscription.done;
   wheelchairSubscription.socket.close();
 
   const mobileRequests = await request("/api/assistance");
-  const mobileWheelchair = mobileRequests.requests.find((item) => item.requestId === wheelchair.requestId);
+  const mobileWheelchair = mobileRequests.requests.find(
+    (item) => item.requestId === wheelchair.requestId,
+  );
   if (!mobileWheelchair || mobileWheelchair.source !== "MOBILE_APP") {
-    throw new Error("Expected mobile wheelchair request source to be MOBILE_APP");
+    throw new Error(
+      "Expected mobile wheelchair request source to be MOBILE_APP",
+    );
   }
 
   await request("/admin/reset", { method: "POST" });
 
-  const button = await request("/api/assistance/hardware/physical-button/wheelchair-ramp", {
-    method: "POST",
-    body: JSON.stringify({
-      busService: "191",
-      busId: "SBS-191-001",
-      boardingStop: "Changi Airport Terminal 1",
-    }),
-  });
+  const button = await request(
+    "/api/assistance/hardware/physical-button/wheelchair-ramp",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        busService: "191",
+        busId: "SBS-191-001",
+        boardingStop: "Changi Airport Terminal 1",
+      }),
+    },
+  );
 
   if (
     button.source !== "PHYSICAL_BUTTON" ||
@@ -127,17 +147,29 @@ async function main() {
   }
 
   const buttonRequests = await request("/api/assistance");
-  const buttonWheelchair = buttonRequests.requests.find((item) => item.requestId === button.requestId);
+  const buttonWheelchair = buttonRequests.requests.find(
+    (item) => item.requestId === button.requestId,
+  );
   if (!buttonWheelchair || buttonWheelchair.source !== "PHYSICAL_BUTTON") {
-    throw new Error("Expected physical button wheelchair request source to be PHYSICAL_BUTTON");
+    throw new Error(
+      "Expected physical button wheelchair request source to be PHYSICAL_BUTTON",
+    );
   }
 
   const duplicate = await request("/api/assistance/request", {
     method: "POST",
-    body: JSON.stringify({ ...wheelchairPayload, sessionId: "smoke-wheelchair-mobile-again" }),
+    body: JSON.stringify({
+      ...wheelchairPayload,
+      sessionId: "smoke-wheelchair-mobile-again",
+    }),
   });
-  if (duplicate.requestId !== button.requestId || duplicate.duplicateOfRequestId !== button.requestId) {
-    throw new Error("Expected active mobile/button duplicate wheelchair need to be consolidated");
+  if (
+    duplicate.requestId !== button.requestId ||
+    duplicate.duplicateOfRequestId !== button.requestId
+  ) {
+    throw new Error(
+      "Expected active mobile/button duplicate wheelchair need to be consolidated",
+    );
   }
 
   await request("/admin/reset", { method: "POST" });
@@ -167,7 +199,9 @@ async function main() {
   await first.done;
   first.socket.close();
 
-  const announcements = await request("/api/assistance/simulator/announcements");
+  const announcements = await request(
+    "/api/assistance/simulator/announcements",
+  );
   if (announcements.count !== 1) {
     throw new Error(`Expected one announcement, got ${announcements.count}`);
   }
@@ -175,18 +209,27 @@ async function main() {
   await request("/admin/reset", { method: "POST" });
   const cancelCreated = await request("/api/assistance/request", {
     method: "POST",
-    body: JSON.stringify({ ...audioPayload, sessionId: "smoke-cancel-session" }),
+    body: JSON.stringify({
+      ...audioPayload,
+      sessionId: "smoke-cancel-session",
+    }),
   });
   await new Promise((resolve) => setTimeout(resolve, 600));
-  await request(`/api/assistance/${cancelCreated.requestId}/cancel`, { method: "POST" });
+  await request(`/api/assistance/${cancelCreated.requestId}/cancel`, {
+    method: "POST",
+  });
   await request("/api/assistance/simulator/vehicle", {
     method: "POST",
     body: JSON.stringify({ busId: audioPayload.busId, status: "APPROACHING" }),
   });
 
-  const cancelledAnnouncements = await request("/api/assistance/simulator/announcements");
+  const cancelledAnnouncements = await request(
+    "/api/assistance/simulator/announcements",
+  );
   if (cancelledAnnouncements.count !== 0) {
-    throw new Error(`Expected no announcement after cancellation, got ${cancelledAnnouncements.count}`);
+    throw new Error(
+      `Expected no announcement after cancellation, got ${cancelledAnnouncements.count}`,
+    );
   }
 
   console.log("SG GoAssist E2E smoke test passed.");

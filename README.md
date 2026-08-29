@@ -2,6 +2,43 @@
 
 Accessible journeys. Guided with care.
 
+## Local development
+
+From the repository root, start the complete development environment once:
+
+```powershell
+npm.cmd run dev
+```
+
+This command uses the canonical URLs below and does not open a browser:
+
+- Frontend: `http://localhost:8081`
+- Backend: `http://localhost:3000`
+
+Open the frontend URL manually once. Expo Fast Refresh applies ordinary changes
+to `App.tsx`, map components, styles, and API clients in that same tab. Running
+`npm.cmd run dev` again reuses healthy SG GoAssist servers; it does not choose a
+new port. If either port belongs to another application, the command fails with
+a clear message.
+
+Useful explicit commands:
+
+```powershell
+npm.cmd run dev:app
+npm.cmd run dev:backend
+npm.cmd run dev:health
+npm.cmd run typecheck
+npm.cmd test
+npm.cmd run build
+npm.cmd run format:check
+```
+
+Tests, builds, typechecks, and formatting checks never start Expo or open a
+browser. Runtime smoke checks reuse `http://localhost:8081`; E2E checks reuse the
+backend already running on port 3000. Restart Expo only for environment,
+configuration, dependency, or bundler-health changes: stop the current `dev`
+command first, then run it again so the same ports are reused.
+
 ## Regional bus-stop data
 
 The backend serves a normalized, indexed bus-stop snapshot through:

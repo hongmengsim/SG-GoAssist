@@ -4,11 +4,13 @@
   "private": true,
   "main": "index.js",
   "scripts": {
-    "start": "expo start",
-    "android": "expo start --android",
-    "ios": "expo start --ios",
-    "web": "expo start --web",
+    "start": "node ../../scripts/dev.mjs --app",
+    "dev:server": "expo start --web --port 8081 --localhost",
+    "android": "expo start --android --port 8081 --localhost",
+    "ios": "expo start --ios --port 8081 --localhost",
+    "web": "node ../../scripts/dev.mjs --app",
     "build": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
     "test": "jest --runInBand"
   },
   "dependencies": {

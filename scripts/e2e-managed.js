@@ -1,25 +1,8 @@
 const { spawn } = require("node:child_process");
-const net = require("node:net");
 const path = require("node:path");
 
 const rootDir = path.resolve(__dirname, "..");
-
-async function getFreePort() {
-  return new Promise((resolve, reject) => {
-    const server = net.createServer();
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address();
-      server.close(() => {
-        if (!address || typeof address === "string") {
-          reject(new Error("Unable to allocate test port"));
-          return;
-        }
-        resolve(address.port);
-      });
-    });
-    server.on("error", reject);
-  });
-}
+const baseUrl = process.env.API_BASE_URL ?? "http://127.0.0.1:3000";
 
 async function waitForHealth(baseUrl, timeoutMs = 10000) {
   const startedAt = Date.now();
@@ -42,7 +25,6 @@ function run(command, args, options = {}) {
     const child = spawn(command, args, {
       cwd: rootDir,
       stdio: "inherit",
-      shell: process.platform === "win32",
       ...options,
     });
 
@@ -57,33 +39,21 @@ function run(command, args, options = {}) {
 }
 
 async function main() {
-  const port = await getFreePort();
-  const baseUrl = `http://127.0.0.1:${port}`;
-  const backend = spawn("node", ["packages/backend/dist/server.js"], {
-    cwd: rootDir,
+  await waitForHealth(baseUrl);
+  await run("node", ["scripts/e2e-smoke.js"], {
     env: {
       ...process.env,
-      PORT: String(port),
-      ALLOWED_ORIGINS: `http://localhost:8081,${baseUrl}`,
+      API_BASE_URL: baseUrl,
     },
-    stdio: "inherit",
-    shell: process.platform === "win32",
   });
-
-  try {
-    await waitForHealth(baseUrl);
-    await run("node", ["scripts/e2e-smoke.js"], {
-      env: {
-        ...process.env,
-        API_BASE_URL: baseUrl,
-      },
-    });
-  } finally {
-    backend.kill();
-  }
 }
 
 main().catch((error) => {
+  if (String(error?.message).includes("Timed out waiting")) {
+    console.error(
+      `The SG GoAssist backend is not available at ${baseUrl}. Run npm run dev once, then retry the E2E check.`,
+    );
+  }
   console.error(error);
   process.exit(1);
 });

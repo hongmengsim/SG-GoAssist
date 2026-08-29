@@ -1,0 +1,38 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "SG GoAssist: Dev (fixed ports)",
+      "type": "npm",
+      "script": "dev",
+      "isBackground": true,
+      "problemMatcher": [],
+      "presentation": {
+        "panel": "dedicated",
+        "reveal": "always"
+      }
+    },
+    {
+      "label": "SG GoAssist: Health",
+      "type": "npm",
+      "script": "dev:health",
+      "problemMatcher": []
+    },
+    {
+      "label": "SG GoAssist: Validate",
+      "type": "shell",
+      "command": "npm.cmd run typecheck; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; npm.cmd test; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; npm.cmd run format:check",
+      "options": {
+        "shell": {
+          "executable": "powershell.exe",
+          "args": ["-NoProfile", "-Command"]
+        }
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "panel": "dedicated",
+        "reveal": "always"
+      }
+    }
+  ]
+}
