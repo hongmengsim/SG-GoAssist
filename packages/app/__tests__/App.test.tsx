@@ -4,6 +4,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react-native";
 import * as Location from "expo-location";
 import fs from "fs";
@@ -2110,7 +2111,6 @@ it("lets passengers select a destination before boarding and preserves it onboar
   ).toBeTruthy();
   expect(screen.getByText("Journey map")).toBeTruthy();
   expect(screen.getByText("Bus 95")).toBeTruthy();
-  expect(screen.getByText("0 passed, 3 remaining")).toBeTruthy();
   expect(screen.getByText("NEXT STOP")).toBeTruthy();
   expect(screen.getAllByText("Opp Science Drive").length).toBeGreaterThan(0);
   expect(screen.getByText("3 stops remaining")).toBeTruthy();
@@ -2144,7 +2144,7 @@ it("previews onboard route stops before explicitly changing the destination", as
   expect(screen.getAllByText(/YOUR STOP/).length).toBeGreaterThan(0);
 });
 
-it("lets passengers leave map follow mode and return to the onboard journey", async () => {
+it("separates remaining stops from the geographic full-route action", async () => {
   await startOnboardJourney();
 
   fireEvent.press(screen.getByLabelText(/Opp Science Drive.*alighting stop/i));
@@ -2161,7 +2161,8 @@ it("lets passengers leave map follow mode and return to the onboard journey", as
   expect(screen.queryByLabelText("Zoom map out")).toBeNull();
 
   fireEvent.press(screen.getByLabelText("More"));
-  expect(screen.getByText("View journey")).toBeTruthy();
+  expect(screen.queryByLabelText("View journey")).toBeNull();
+  expect(screen.getByText("Map options")).toBeTruthy();
   expect(screen.getByText("View full route")).toBeTruthy();
   fireEvent.press(screen.getByText("Rotate map"));
   expect(screen.getByLabelText("Reset map to north")).toBeTruthy();
@@ -2173,8 +2174,46 @@ it("lets passengers leave map follow mode and return to the onboard journey", as
   expect(screen.getByText("Journey position")).toBeTruthy();
   expect(screen.getAllByText("Journey").length).toBeGreaterThan(0);
 
-  fireEvent.press(screen.getByText("View stops"));
-  expect(screen.getByText("Route progress")).toBeTruthy();
+  fireEvent.press(screen.getByLabelText("View remaining stops"));
+  const remainingStops = within(screen.getByTestId("remaining-stops-list"));
+  expect(remainingStops.getByText("Opp Heng Mui Keng Terrace")).toBeTruthy();
+  expect(remainingStops.getByText("Science Drive")).toBeTruthy();
+  expect(remainingStops.getByText("Opp Science Drive")).toBeTruthy();
+  expect(remainingStops.queryByText("Kent Ridge Crescent")).toBeNull();
+  expect(remainingStops.queryByText("PASSED")).toBeNull();
+
+  fireEvent.press(screen.getByLabelText("View full route"));
+  expect(screen.queryByTestId("remaining-stops-list")).toBeNull();
+  expect(screen.getAllByText("Return to journey").length).toBeGreaterThan(0);
+});
+
+it("hides remaining stops at arrival and prioritizes safe alighting", async () => {
+  await startOnboardJourney();
+
+  fireEvent.press(screen.getByLabelText(/Opp Science Drive.*alighting stop/i));
+  fireEvent.press(screen.getByText("Review journey"));
+  await screen.findByText("Your journey");
+  fireEvent.press(screen.getByLabelText("Request assistance"));
+  expect(
+    (await screen.findAllByText("Waiting for bus")).length,
+  ).toBeGreaterThan(0);
+  fireEvent.press(screen.getByText("I'm onboard"));
+
+  fireEvent.press(screen.getByLabelText("View remaining stops"));
+  expect(screen.getByTestId("remaining-stops-list")).toBeTruthy();
+  fireEvent.press(screen.getByText("Simulate next stop"));
+  fireEvent.press(screen.getByText("Simulate next stop"));
+  fireEvent.press(screen.getByText("Simulate next stop"));
+
+  expect(screen.getByText("FINAL STOP")).toBeTruthy();
+  expect(screen.getByText("You have arrived.")).toBeTruthy();
+  expect(screen.getAllByText("Alighting assistance").length).toBeGreaterThan(0);
+  expect(screen.getByLabelText("I've safely alighted")).toBeTruthy();
+  expect(screen.queryByLabelText("View remaining stops")).toBeNull();
+  expect(screen.queryByLabelText("Hide remaining stops")).toBeNull();
+  expect(screen.queryByTestId("remaining-stops-list")).toBeNull();
+  expect(screen.queryByText(/0 .*remaining/i)).toBeNull();
+  expect(screen.queryByLabelText("View journey")).toBeNull();
 });
 
 it("updates onboard progress and highlights when the destination is next", async () => {

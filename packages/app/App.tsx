@@ -6712,6 +6712,7 @@ function OnboardJourneyScreen({
   ];
   const destinationName =
     selectedAlightingStop?.description ?? "Choose destination";
+  const hasRemainingStops = stopsRemaining !== null && stopsRemaining > 0;
   const stopsRemainingLabel =
     stopsRemaining === null
       ? "Choose a destination for stop countdown"
@@ -6786,18 +6787,9 @@ function OnboardJourneyScreen({
     setOnboardViewport((current) => ({ ...current, bearing: 0, pitch: 0 }));
   }
 
-  function viewOnboardJourney() {
-    setFollowJourney(false);
-    setOnboardViewport((current) => ({
-      ...current,
-      center:
-        selectedAlightingStop ?? nextStop ?? currentStop ?? current.center,
-      zoom: clampMapZoom(14, "ACTIVE_JOURNEY"),
-      mode: "ACTIVE_JOURNEY",
-    }));
-  }
-
   function viewOnboardFullRoute() {
+    setShowRouteStops(false);
+    setShowOnboardMore(false);
     setFollowJourney(false);
     setOnboardViewport((current) => ({
       ...current,
@@ -6827,65 +6819,36 @@ function OnboardJourneyScreen({
         style={styles.onboardHero}
         accessible
         accessibilityRole="header"
-        accessibilityLabel={`On Service ${selectedBus.busService}. Next stop ${nextStop?.description ?? "final stop"}. Destination ${destinationName}. ${stopsRemainingLabel}.`}
+        accessibilityLabel={
+          selectedStopReached
+            ? `Final stop. ${destinationName}. You have arrived.`
+            : `On Service ${selectedBus.busService}. Next stop ${nextStop?.description ?? "final stop"}. Destination ${destinationName}. ${stopsRemainingLabel}.`
+        }
       >
-        <Text style={styles.onboardEyebrow}>{onboardStatus}</Text>
-        <ServiceNumberWithAccessibility
-          serviceNo={selectedBus.busService}
-          accessible={selectedBus.isAccessible}
-          textStyle={styles.onboardBus}
-          onDark
-          highContrast={highContrast}
-          symbolSize="large"
-        />
-        <Text style={styles.onboardDestination}>
-          Next: {nextStop?.description ?? "Final stop"}
+        <Text style={styles.onboardEyebrow}>
+          {selectedStopReached ? "FINAL STOP" : onboardStatus}
         </Text>
+        {selectedStopReached ? (
+          <>
+            <Text style={styles.onboardDestination}>{destinationName}</Text>
+            <Text style={styles.onboardArrivalText}>You have arrived.</Text>
+          </>
+        ) : (
+          <>
+            <ServiceNumberWithAccessibility
+              serviceNo={selectedBus.busService}
+              accessible={selectedBus.isAccessible}
+              textStyle={styles.onboardBus}
+              onDark
+              highContrast={highContrast}
+              symbolSize="large"
+            />
+            <Text style={styles.onboardDestination}>
+              Next: {nextStop?.description ?? "Final stop"}
+            </Text>
+          </>
+        )}
       </View>
-
-      <OnboardJourneyMap
-        selectedBus={selectedBus}
-        currentStop={currentStop}
-        nextStop={nextStop}
-        routeStops={routeStops}
-        currentStopIndex={currentStopIndex}
-        destinationStop={selectedAlightingStop}
-        destinationStopIndex={selectedAlightingStopIndex}
-        selectedPreviewStop={selectedPreviewStop}
-        followJourney={followJourney}
-        viewport={onboardViewport}
-        moreOpen={showOnboardMore}
-        stopsRemaining={stopsRemaining}
-        lightMode={lightMode}
-        highContrast={highContrast}
-        onPreviewBus={previewBusPosition}
-        onPreviewStop={previewRouteStop}
-        onMoveMap={moveMapManually}
-        onReturnToJourney={returnToJourney}
-        onViewStops={() => setShowRouteStops((visible) => !visible)}
-        onMore={() => setShowOnboardMore((open) => !open)}
-        onRotateMap={rotateOnboardMap}
-        onResetNorth={resetOnboardNorth}
-        onViewJourney={viewOnboardJourney}
-        onViewFullRoute={viewOnboardFullRoute}
-        onResetMap={resetOnboardMap}
-      />
-
-      <JourneyMapPreview
-        previewKind={previewKind}
-        selectedBus={selectedBus}
-        selectedPreviewStop={selectedPreviewStop}
-        currentStop={currentStop}
-        nextStop={nextStop}
-        destinationStop={selectedAlightingStop}
-        previewStopIndex={previewStopIndex}
-        currentStopIndex={currentStopIndex}
-        previewStopsAhead={previewStopsAhead}
-        stopsRemaining={stopsRemaining}
-        lightMode={lightMode}
-        highContrast={highContrast}
-        onSetDestination={setPreviewAsDestination}
-      />
 
       {(selectedStopIsNext || journeyPhase === "DESTINATION_NEXT") &&
         !selectedStopReached && (
@@ -6919,10 +6882,11 @@ function OnboardJourneyScreen({
               accessibilityElementsHidden
               importantForAccessibility="no"
             />
-            <Text style={styles.statusLabel}>THIS IS YOUR STOP</Text>
+            <Text style={styles.statusLabel}>Alighting assistance</Text>
           </View>
-          <Text style={styles.statusValue}>{destinationName}</Text>
-          <Text style={styles.bodyText}>Disembark when it is safe.</Text>
+          <Text style={styles.bodyText}>
+            Please wait until the bus has stopped and assistance is ready.
+          </Text>
         </View>
       )}
 
@@ -6973,10 +6937,10 @@ function OnboardJourneyScreen({
         <Text style={bodyStyle}>{stopsRemainingLabel}</Text>
       </View>
 
-      {showRouteStops && (
+      {showRouteStops && hasRemainingStops && (
         <View style={panelStyle}>
-          <Text style={labelStyle}>Route progress</Text>
-          <RouteProgressList
+          <Text style={labelStyle}>Remaining stops</Text>
+          <RemainingStopsList
             routeStops={routeStops}
             currentStopIndex={currentStopIndex}
             destinationStopIndex={selectedAlightingStopIndex}
@@ -6987,7 +6951,7 @@ function OnboardJourneyScreen({
       )}
 
       <View style={panelStyle}>
-        <Text style={labelStyle}>Disembarking assistance</Text>
+        <Text style={labelStyle}>Alighting assistance</Text>
         {alightingAssistanceTypes.length > 0 && (
           <Text style={bodyStyle}>
             {alightingAssistanceTypes.map(readableAssistanceType).join(", ")}{" "}
@@ -7013,7 +6977,7 @@ function OnboardJourneyScreen({
       <PrimaryButton
         label={
           selectedStopReached
-            ? "I've left the bus"
+            ? "I've safely alighted"
             : "Request help to disembark"
         }
         icon={selectedStopReached ? DoorOpen : CircleCheck}
@@ -7029,6 +6993,49 @@ function OnboardJourneyScreen({
         onPress={onRepeat}
         lightMode={lightMode}
         highContrast={highContrast}
+      />
+      <OnboardJourneyMap
+        selectedBus={selectedBus}
+        currentStop={currentStop}
+        nextStop={nextStop}
+        routeStops={routeStops}
+        currentStopIndex={currentStopIndex}
+        destinationStop={selectedAlightingStop}
+        destinationStopIndex={selectedAlightingStopIndex}
+        selectedPreviewStop={selectedPreviewStop}
+        followJourney={followJourney}
+        viewport={onboardViewport}
+        moreOpen={showOnboardMore}
+        routeStopsExpanded={showRouteStops}
+        stopsRemaining={stopsRemaining}
+        lightMode={lightMode}
+        highContrast={highContrast}
+        onPreviewBus={previewBusPosition}
+        onPreviewStop={previewRouteStop}
+        onMoveMap={moveMapManually}
+        onReturnToJourney={returnToJourney}
+        onViewStops={() => setShowRouteStops((visible) => !visible)}
+        onMore={() => setShowOnboardMore((open) => !open)}
+        onRotateMap={rotateOnboardMap}
+        onResetNorth={resetOnboardNorth}
+        onViewFullRoute={viewOnboardFullRoute}
+        onResetMap={resetOnboardMap}
+      />
+
+      <JourneyMapPreview
+        previewKind={previewKind}
+        selectedBus={selectedBus}
+        selectedPreviewStop={selectedPreviewStop}
+        currentStop={currentStop}
+        nextStop={nextStop}
+        destinationStop={selectedAlightingStop}
+        previewStopIndex={previewStopIndex}
+        currentStopIndex={currentStopIndex}
+        previewStopsAhead={previewStopsAhead}
+        stopsRemaining={stopsRemaining}
+        lightMode={lightMode}
+        highContrast={highContrast}
+        onSetDestination={setPreviewAsDestination}
       />
       {__DEV__ ? (
         <SecondaryButton
@@ -7057,6 +7064,7 @@ function OnboardJourneyMap({
   followJourney,
   viewport,
   moreOpen,
+  routeStopsExpanded,
   stopsRemaining,
   lightMode,
   highContrast,
@@ -7068,7 +7076,6 @@ function OnboardJourneyMap({
   onMore,
   onRotateMap,
   onResetNorth,
-  onViewJourney,
   onViewFullRoute,
   onResetMap,
 }: {
@@ -7083,6 +7090,7 @@ function OnboardJourneyMap({
   followJourney: boolean;
   viewport: MapViewport;
   moreOpen: boolean;
+  routeStopsExpanded: boolean;
   stopsRemaining: number | null;
   lightMode: boolean;
   highContrast: boolean;
@@ -7094,14 +7102,12 @@ function OnboardJourneyMap({
   onMore: () => void;
   onRotateMap: () => void;
   onResetNorth: () => void;
-  onViewJourney: () => void;
   onViewFullRoute: () => void;
   onResetMap: () => void;
 }) {
   const routeEndIndex =
     destinationStopIndex >= 0 ? destinationStopIndex : routeStops.length - 1;
-  const passedCount = Math.min(currentStopIndex, Math.max(routeEndIndex, 0));
-  const progressLabel = `${passedCount} passed, ${stopsRemaining ?? "destination unset"} remaining`;
+  const hasRemainingStops = stopsRemaining !== null && stopsRemaining > 0;
   const iconColor = controlIconColor({ lightMode, highContrast });
   const destinationName =
     destinationStop?.description ?? "destination not selected";
@@ -7132,9 +7138,6 @@ function OnboardJourneyMap({
             Journey map
           </Text>
         </View>
-        <Text style={[styles.bodyText, lightMode && lightStyles.bodyText]}>
-          {progressLabel}
-        </Text>
       </View>
 
       <View style={styles.onboardMapControls}>
@@ -7145,13 +7148,19 @@ function OnboardJourneyMap({
           lightMode={lightMode}
           highContrast={highContrast}
         />
-        <SecondaryButton
-          label="View stops"
-          icon={List}
-          onPress={onViewStops}
-          lightMode={lightMode}
-          highContrast={highContrast}
-        />
+        {hasRemainingStops ? (
+          <SecondaryButton
+            label={
+              routeStopsExpanded
+                ? "Hide remaining stops"
+                : "View remaining stops"
+            }
+            icon={List}
+            onPress={onViewStops}
+            lightMode={lightMode}
+            highContrast={highContrast}
+          />
+        ) : null}
         <SecondaryButton
           label="More"
           icon={SlidersHorizontal}
@@ -7188,13 +7197,11 @@ function OnboardJourneyMap({
         <View
           style={[styles.onboardMorePanel, lightMode && lightStyles.surface]}
         >
-          <SecondaryButton
-            label="View journey"
-            icon={Route}
-            onPress={onViewJourney}
-            lightMode={lightMode}
-            highContrast={highContrast}
-          />
+          <Text
+            style={[styles.statusLabel, lightMode && lightStyles.mutedText]}
+          >
+            Map options
+          </Text>
           <SecondaryButton
             label="View full route"
             icon={MapIcon}
@@ -7522,6 +7529,87 @@ function JourneyMapPreview({
           highContrast={highContrast}
         />
       ) : null}
+    </View>
+  );
+}
+
+function RemainingStopsList({
+  routeStops,
+  currentStopIndex,
+  destinationStopIndex,
+  lightMode,
+  highContrast,
+}: {
+  routeStops: RouteStop[];
+  currentStopIndex: number;
+  destinationStopIndex: number;
+  lightMode: boolean;
+  highContrast: boolean;
+}) {
+  const routeEndIndex =
+    destinationStopIndex >= 0 ? destinationStopIndex : routeStops.length - 1;
+  const remainingStops = routeStops.slice(
+    Math.max(0, currentStopIndex + 1),
+    Math.max(currentStopIndex + 1, routeEndIndex + 1),
+  );
+  const textStyle = [
+    styles.bodyText,
+    lightMode && lightStyles.bodyText,
+    highContrast && !lightMode && styles.highContrastMutedText,
+    highContrast && lightMode && lightStyles.highContrastMutedText,
+  ];
+  return (
+    <View
+      testID="remaining-stops-list"
+      accessibilityLabel={`Remaining stops. ${remainingStops
+        .map((stop, index) =>
+          index === 0
+            ? `Next, ${stop.description}`
+            : stop.sequence === routeStops[routeEndIndex]?.sequence
+              ? `Destination, ${stop.description}`
+              : stop.description,
+        )
+        .join(". ")}`}
+    >
+      {remainingStops.map((stop, remainingIndex) => {
+        const next = remainingIndex === 0;
+        const destinationStop =
+          stop.sequence === routeStops[routeEndIndex]?.sequence;
+        const marker = destinationStop ? "◎" : "○";
+        const label = next
+          ? "NEXT"
+          : destinationStop
+            ? "DESTINATION"
+            : `${remainingIndex + 1}. UPCOMING`;
+        return (
+          <View
+            key={`${stop.sequence}-${stop.busStopCode}`}
+            style={[
+              styles.routeProgressRow,
+              next && styles.currentRouteProgressRow,
+              destinationStop && styles.destinationRouteProgressRow,
+              lightMode && lightStyles.surface,
+            ]}
+          >
+            <Text
+              style={[
+                styles.routeProgressMarker,
+                lightMode && lightStyles.text,
+              ]}
+            >
+              {marker}
+            </Text>
+            <View style={styles.routeProgressTextGroup}>
+              <Text style={[styles.statusValue, lightMode && lightStyles.text]}>
+                {stop.description}
+              </Text>
+              <Text style={textStyle}>
+                {label} · Stop {stop.busStopCode}
+              </Text>
+            </View>
+          </View>
+        );
+      })}
     </View>
   );
 }
@@ -18643,6 +18731,12 @@ const styles = StyleSheet.create({
     fontSize: 22,
     fontWeight: "800",
     lineHeight: 28,
+  },
+  onboardArrivalText: {
+    color: "#FFFFFF",
+    fontSize: 18,
+    fontWeight: "700",
+    lineHeight: 25,
   },
   priorityPanel: {
     backgroundColor: colors.accessible,
