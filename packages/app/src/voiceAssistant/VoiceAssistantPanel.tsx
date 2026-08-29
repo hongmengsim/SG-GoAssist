@@ -9,7 +9,10 @@ import {
 } from "react-native";
 import { Keyboard, Mic, Send, Square } from "lucide-react-native";
 import type { VoiceAssistantController } from "./VoiceAssistantController";
-import type { SpeechRecognitionProvider } from "./SpeechRecognitionProvider";
+import {
+  speechListeningWindowMs,
+  type SpeechRecognitionProvider,
+} from "./SpeechRecognitionProvider";
 import type { AssistantInteractionState, AssistantTurnResult } from "./types";
 
 export function VoiceAssistantPanel({
@@ -95,7 +98,7 @@ export function VoiceAssistantPanel({
 
   const stateLabel =
     interactionState === "LISTENING"
-      ? "Listening…"
+      ? "Listening — speak now"
       : interactionState === "PROCESSING"
         ? "Thinking…"
         : interactionState === "SPEAKING"
@@ -103,6 +106,12 @@ export function VoiceAssistantPanel({
           : interactionState === "ERROR"
             ? "Try Talk to GoAssist again"
             : "Talk to GoAssist";
+  const helpText =
+    interactionState === "LISTENING"
+      ? `Speak now. Listening for up to ${speechListeningWindowMs / 1000} seconds.`
+      : interactionState === "ERROR"
+        ? "Press Talk, then speak when Listening appears."
+        : "Ask what bus is here, request assistance, or check your journey.";
   const textColor = highContrast && !lightMode ? "#FFFFFF" : "#102A2E";
   const mutedColor = highContrast && !lightMode ? "#FFFFFF" : "#52666A";
   const borderColor = highContrast
@@ -163,9 +172,7 @@ export function VoiceAssistantPanel({
         <Text style={styles.talkButtonLabel}>{stateLabel}</Text>
       </Pressable>
 
-      <Text style={[styles.helpText, { color: mutedColor }]}>
-        Ask what bus is here, request assistance, or check your journey.
-      </Text>
+      <Text style={[styles.helpText, { color: mutedColor }]}>{helpText}</Text>
 
       {latestTurn ? (
         <View

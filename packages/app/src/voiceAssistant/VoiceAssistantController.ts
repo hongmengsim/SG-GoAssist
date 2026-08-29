@@ -218,9 +218,10 @@ export class VoiceAssistantController {
     provider: AssistantTurnResult["provider"],
   ): Promise<AssistantTurnResult> {
     switch (intent.type) {
-      case "GET_CURRENT_STOP":
+      case "GET_CURRENT_STOP": {
+        let refreshResult: AssistantActionResult | null = null;
         if (!context.currentStop) {
-          await this.actions.refreshLocationContext();
+          refreshResult = await this.actions.refreshLocationContext();
           context = this.actions.getContext();
         }
         return this.respond(
@@ -228,9 +229,11 @@ export class VoiceAssistantController {
           intent,
           context.currentStop
             ? `You’re near ${context.currentStop.description} bus stop, Stop ${context.currentStop.busStopCode}.`
-            : "You’re not currently close enough to a known bus stop for me to identify one confidently.",
+            : (refreshResult?.reason ??
+                "You’re not currently close enough to a known bus stop for me to identify one confidently."),
           provider,
         );
+      }
       case "GET_BUS_AT_STOP":
         if (!context.currentStop) {
           await this.actions.refreshLocationContext();

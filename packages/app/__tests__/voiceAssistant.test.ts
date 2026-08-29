@@ -103,6 +103,9 @@ describe("deterministic journey intents", () => {
   it.each<[string, AssistantIntent["type"]]>([
     ["What bus is here?", "GET_BUS_AT_STOP"],
     ["Where am I?", "GET_CURRENT_STOP"],
+    ["Find my nearest bus stop", "GET_CURRENT_STOP"],
+    ["Where is the closest bus stop?", "GET_CURRENT_STOP"],
+    ["Which nearby stop should I use?", "GET_CURRENT_STOP"],
     ["What bus am I waiting for?", "GET_ACTIVE_BUS"],
     ["When is my bus coming?", "GET_ARRIVAL"],
     ["What's my next stop?", "GET_NEXT_STOP"],
@@ -180,6 +183,29 @@ describe("deterministic journey intents", () => {
       response: "Service 151 is currently at your stop.",
     });
     expect(harness.actions.refreshLocationContext).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns an actionable nearest-stop fallback when location is unavailable", async () => {
+    const harness = createHarness({
+      context: assistantContext({
+        currentStop: null,
+        busesAtStop: [],
+        selectedBusAtStop: null,
+      }),
+    });
+    (harness.actions.refreshLocationContext as jest.Mock).mockResolvedValue({
+      ok: false,
+      reason:
+        "I couldn’t identify your nearest bus stop. Use my location or choose a bus stop manually.",
+    });
+
+    await expect(
+      harness.controller.processTranscript("Find my nearest bus stop"),
+    ).resolves.toMatchObject({
+      intent: { type: "GET_CURRENT_STOP" },
+      response:
+        "I couldn’t identify your nearest bus stop. Use my location or choose a bus stop manually.",
+    });
   });
 
   it("uses shorter arrival wording in simplified mode", async () => {

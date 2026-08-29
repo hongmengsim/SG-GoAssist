@@ -167,6 +167,14 @@ export function resolveRuleBasedIntent(transcript: string): AssistantIntent {
     return { type: "END_JOURNEY" };
   }
   if (
+    /\b(find|locate|show|which|where is)\b.*\b(nearest|nearby|closest)\b.*\b(bus )?stop\b/.test(
+      normalized,
+    ) ||
+    /\b(nearest|nearby|closest)\b.*\b(bus )?stop\b/.test(normalized)
+  ) {
+    return { type: "GET_CURRENT_STOP" };
+  }
+  if (
     /\b(guide|directions|navigate|take me)\b.*\b(bus )?stop\b/.test(normalized)
   ) {
     return { type: "START_DIRECTIONS" };

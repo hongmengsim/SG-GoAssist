@@ -1079,6 +1079,10 @@ it("plans a searched origin-to-destination route and starts with the walking leg
   expect(screen.getByText("Walking to your stop")).toBeTruthy();
   expect(screen.getByText(/Walk to .* Stop/i)).toBeTruthy();
   expect(
+    screen.queryByText("Every spoken update is also displayed on this screen."),
+  ).toBeNull();
+  expect(screen.queryByText(/Vibration alerts:/i)).toBeNull();
+  expect(
     screen.getByLabelText(/Journey, tab, selected, active journey, 1 of 3/),
   ).toBeTruthy();
 });

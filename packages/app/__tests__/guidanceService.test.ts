@@ -270,3 +270,42 @@ it("uses the browser Web Speech API without a cloud TTS dependency", () => {
     (globalThis as any).SpeechSynthesisUtterance = originalUtterance;
   }
 });
+
+it("recovers when browser speech never reports completion", () => {
+  jest.useFakeTimers();
+  const originalSpeechSynthesis = (globalThis as any).speechSynthesis;
+  const originalUtterance = (globalThis as any).SpeechSynthesisUtterance;
+  class MockSpeechSynthesisUtterance {
+    lang = "";
+    rate = 1;
+    onend: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+
+    constructor(readonly text: string) {}
+  }
+  const cancel = jest.fn();
+  (globalThis as any).SpeechSynthesisUtterance = MockSpeechSynthesisUtterance;
+  (globalThis as any).speechSynthesis = {
+    cancel,
+    speak: jest.fn(),
+  };
+
+  try {
+    const service = new GuidanceService({
+      speech: createBrowserSpeechAdapter(),
+    });
+    expect(service.speakAssistantResponse("Your nearest stop is nearby.")).toBe(
+      true,
+    );
+    expect(service.snapshot().speaking).toBe(true);
+
+    jest.advanceTimersByTime(4_000);
+
+    expect(cancel).toHaveBeenCalledTimes(2);
+    expect(service.snapshot().speaking).toBe(false);
+  } finally {
+    jest.useRealTimers();
+    (globalThis as any).speechSynthesis = originalSpeechSynthesis;
+    (globalThis as any).SpeechSynthesisUtterance = originalUtterance;
+  }
+});

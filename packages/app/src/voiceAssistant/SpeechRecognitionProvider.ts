@@ -22,6 +22,9 @@ export interface SpeechRecognitionProvider {
   stop(): void;
 }
 
+export const speechListeningWindowMs = 10_000;
+const speechRecognitionRestartDelayMs = 150;
+
 export function shouldSuppressAssistantTts({
   platform,
   screenReaderDetected,
@@ -63,6 +66,7 @@ type SpeechRecognitionEnvironment = typeof globalThis & {
 export class WebSpeechRecognitionProvider implements SpeechRecognitionProvider {
   readonly id = "web-speech-recognition";
   private activeRecognition: RecognitionInstance | null = null;
+  private stopActiveRecognition: (() => void) | null = null;
 
   constructor(
     private readonly environment: SpeechRecognitionEnvironment = globalThis as SpeechRecognitionEnvironment,
@@ -94,19 +98,74 @@ export class WebSpeechRecognitionProvider implements SpeechRecognitionProvider {
     return new Promise<string>((resolve, reject) => {
       const recognition = new Recognition();
       this.activeRecognition = recognition;
-      recognition.continuous = false;
+      recognition.continuous = true;
       recognition.interimResults = false;
       recognition.lang = "en-SG";
       recognition.maxAlternatives = 1;
       let settled = false;
+      let restartTimer: ReturnType<typeof setTimeout> | null = null;
+      let restartPending = false;
+      const deadline = Date.now() + speechListeningWindowMs;
+      const noSpeechError = () =>
+        new SpeechRecognitionProviderError(
+          "NO_SPEECH",
+          "I couldn't hear that. Try again and speak when Listening appears.",
+        );
+      const deadlineTimer = setTimeout(() => {
+        if (settled) return;
+        finish({ error: noSpeechError() });
+        try {
+          recognition.stop();
+        } catch {
+          // The browser may already have ended this recognition attempt.
+        }
+      }, speechListeningWindowMs);
       const finish = (result: { transcript?: string; error?: Error }) => {
         if (settled) return;
         settled = true;
+        clearTimeout(deadlineTimer);
+        if (restartTimer) clearTimeout(restartTimer);
+        recognition.onresult = null;
+        recognition.onerror = null;
+        recognition.onend = null;
         if (this.activeRecognition === recognition) {
           this.activeRecognition = null;
+          this.stopActiveRecognition = null;
         }
         if (result.transcript) resolve(result.transcript);
         else reject(result.error);
+      };
+      const scheduleRestart = () => {
+        if (settled || restartPending) return;
+        const remainingMs = deadline - Date.now();
+        if (remainingMs <= speechRecognitionRestartDelayMs) {
+          finish({ error: noSpeechError() });
+          return;
+        }
+        restartPending = true;
+        restartTimer = setTimeout(() => {
+          restartPending = false;
+          if (settled) return;
+          try {
+            recognition.start();
+          } catch {
+            finish({
+              error: new SpeechRecognitionProviderError(
+                "RECOGNITION_FAILED",
+                "I couldn't restart the microphone. Try again.",
+              ),
+            });
+          }
+        }, speechRecognitionRestartDelayMs);
+      };
+      this.stopActiveRecognition = () => {
+        if (settled) return;
+        finish({ error: noSpeechError() });
+        try {
+          recognition.stop();
+        } catch {
+          // The recognition attempt has already stopped.
+        }
       };
       recognition.onresult = (event) => {
         const transcript = event.results?.[0]?.[0]?.transcript?.trim();
@@ -116,12 +175,16 @@ export class WebSpeechRecognitionProvider implements SpeechRecognitionProvider {
             : {
                 error: new SpeechRecognitionProviderError(
                   "NO_SPEECH",
-                  "I couldn't hear that.",
+                  "I couldn't hear that. Try again and speak when Listening appears.",
                 ),
               },
         );
       };
       recognition.onerror = (event) => {
+        if (event.error === "no-speech") {
+          scheduleRestart();
+          return;
+        }
         const permissionDenied =
           event.error === "not-allowed" ||
           event.error === "service-not-allowed";
@@ -135,12 +198,7 @@ export class WebSpeechRecognitionProvider implements SpeechRecognitionProvider {
         });
       };
       recognition.onend = () => {
-        finish({
-          error: new SpeechRecognitionProviderError(
-            "NO_SPEECH",
-            "I couldn't hear that.",
-          ),
-        });
+        scheduleRestart();
       };
       try {
         recognition.start();
@@ -156,7 +214,7 @@ export class WebSpeechRecognitionProvider implements SpeechRecognitionProvider {
   }
 
   stop() {
-    this.activeRecognition?.stop();
+    this.stopActiveRecognition?.();
   }
 
   private constructorForEnvironment() {

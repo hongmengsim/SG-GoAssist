@@ -28,7 +28,7 @@ it("captures one en-SG transcript without storing audio", async () => {
   const transcript = provider.start();
   expect(provider.isSupported()).toBe(true);
   expect(FakeRecognition.latest).toMatchObject({
-    continuous: false,
+    continuous: true,
     interimResults: false,
     lang: "en-SG",
     maxAlternatives: 1,
@@ -37,6 +37,26 @@ it("captures one en-SG transcript without storing audio", async () => {
     results: [{ 0: { transcript: "What bus is here?" } }],
   });
   await expect(transcript).resolves.toBe("What bus is here?");
+});
+
+it("keeps listening after an early no-speech event", async () => {
+  jest.useFakeTimers();
+  const provider = new WebSpeechRecognitionProvider({
+    SpeechRecognition: FakeRecognition,
+  } as any);
+  const transcript = provider.start();
+  const recognition = FakeRecognition.latest!;
+
+  recognition.onerror?.({ error: "no-speech" });
+  recognition.onend?.();
+  jest.advanceTimersByTime(150);
+  expect(recognition.start).toHaveBeenCalledTimes(2);
+
+  recognition.onresult?.({
+    results: [{ 0: { transcript: "Request the ramp" } }],
+  });
+  await expect(transcript).resolves.toBe("Request the ramp");
+  jest.useRealTimers();
 });
 
 it("reports unsupported browsers and microphone permission failures", async () => {

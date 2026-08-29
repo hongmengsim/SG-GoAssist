@@ -76,7 +76,10 @@ it("shows listening and processing states before a visible grounded response", a
   renderPanel({ provider, processTranscript });
 
   fireEvent.press(screen.getByLabelText("Talk to GoAssist"));
-  expect(screen.getByText("Listening…")).toBeTruthy();
+  expect(screen.getByText("Listening — speak now")).toBeTruthy();
+  expect(
+    screen.getByText("Speak now. Listening for up to 10 seconds."),
+  ).toBeTruthy();
   await act(async () => resolveRecognition("What bus is here?"));
   await screen.findByText("Thinking…");
   await act(async () =>

@@ -815,6 +815,26 @@ const nativeGoogleMapsConfigured =
   Boolean(nativeGoogleMapsApiKey) && !nativeGoogleMapsApiKeyIsPlaceholder;
 const liveStatusErrorMessage =
   "We are having trouble updating live bus status. Your request is still saved.";
+const focusedAssistLocationTimeoutMs = 8000;
+
+function settleWithin<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timeout = setTimeout(
+      () => reject(new Error("The request timed out.")),
+      timeoutMs,
+    );
+    promise.then(
+      (value) => {
+        clearTimeout(timeout);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timeout);
+        reject(error);
+      },
+    );
+  });
+}
 
 function logMapConfiguration(stage: string) {
   if (__DEV__ && process.env.NODE_ENV !== "test") {
@@ -2592,7 +2612,8 @@ function SgGoAssistApp() {
         ? { ok: true }
         : {
             ok: false,
-            reason: "I couldn’t identify your current bus stop.",
+            reason:
+              "I couldn’t identify your nearest bus stop. Use my location or choose a bus stop manually.",
           };
     },
     requestRamp: async (busId) => {
@@ -5376,7 +5397,10 @@ function SgGoAssistApp() {
     setFocusedAssistManualStop(null);
     setFocusedAssistSelectedBusId(null);
     try {
-      const permission = await Location.requestForegroundPermissionsAsync();
+      const permission = await settleWithin(
+        Location.requestForegroundPermissionsAsync(),
+        focusedAssistLocationTimeoutMs,
+      );
       if (requestId !== focusedAssistLocationRequestRef.current) {
         return;
       }
@@ -5392,9 +5416,12 @@ function SgGoAssistApp() {
         );
         return;
       }
-      const position = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.Balanced,
-      });
+      const position = await settleWithin(
+        Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.Balanced,
+        }),
+        focusedAssistLocationTimeoutMs,
+      );
       if (requestId !== focusedAssistLocationRequestRef.current) {
         return;
       }
@@ -7991,7 +8018,7 @@ function SgGoAssistApp() {
                       <Text style={themedBodyStyle()}>
                         Destination: {selectedAlightingStop.description}.{" "}
                         {selectedAlightingStopIndex > 0
-                          ? `${selectedAlightingStopIndex} stops after boarding.`
+                          ? `${selectedAlightingStopIndex} ${selectedAlightingStopIndex === 1 ? "stop" : "stops"} after boarding.`
                           : ""}
                       </Text>
                     ) : null}
@@ -8023,14 +8050,6 @@ function SgGoAssistApp() {
                         fully deployed before boarding.
                       </Text>
                     ) : null}
-                    <Text style={themedBodyStyle()}>
-                      Every spoken update is also displayed on this screen.
-                    </Text>
-                    <Text style={themedBodyStyle()}>
-                      {appPreferences.vibrationAlerts === "OFF"
-                        ? "Vibration alerts are off."
-                        : `Vibration alerts: ${appPreferences.vibrationAlerts.toLowerCase()}.`}
-                    </Text>
                     <View style={styles.iconTitleRow}>
                       <BusFront
                         size={24}

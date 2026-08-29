@@ -221,19 +221,45 @@ export function createBrowserSpeechAdapter(): SpeechAdapter | null {
   const speechSynthesis = environment.speechSynthesis;
   const Utterance = environment.SpeechSynthesisUtterance;
   if (!speechSynthesis || !Utterance) return null;
+  let completionTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const clearCompletionTimer = () => {
+    if (completionTimer) clearTimeout(completionTimer);
+    completionTimer = null;
+  };
 
   return {
-    cancel: () => speechSynthesis.cancel(),
+    cancel: () => {
+      clearCompletionTimer();
+      speechSynthesis.cancel();
+    },
     speak: (text, { onDone }) => {
       try {
         const utterance = new Utterance(text);
+        let completed = false;
+        const complete = () => {
+          if (completed) return;
+          completed = true;
+          clearCompletionTimer();
+          onDone();
+        };
         utterance.lang = "en-SG";
         utterance.rate = 0.96;
-        utterance.onend = onDone;
-        utterance.onerror = onDone;
+        utterance.onend = complete;
+        utterance.onerror = complete;
+        const wordCount = Math.max(1, text.trim().split(/\s+/).length);
+        const completionTimeoutMs = Math.min(
+          15_000,
+          Math.max(4_000, wordCount * 700),
+        );
+        completionTimer = setTimeout(() => {
+          speechSynthesis.cancel();
+          complete();
+        }, completionTimeoutMs);
         speechSynthesis.speak(utterance);
         return true;
       } catch {
+        clearCompletionTimer();
         return false;
       }
     },
