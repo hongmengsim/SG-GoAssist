@@ -1,6 +1,8 @@
 import React, {
+  createContext,
   memo,
   useCallback,
+  useContext,
   useEffect,
   useMemo,
   useRef,
@@ -10,7 +12,10 @@ import {
   AccessibilityInfo,
   ActivityIndicator,
   Alert,
+  Animated,
   Keyboard,
+  Linking,
+  Modal,
   type LayoutChangeEvent,
   Pressable,
   SafeAreaView,
@@ -25,6 +30,7 @@ import {
   type ImageSourcePropType,
 } from "react-native";
 import * as Haptics from "expo-haptics";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
   Accessibility,
   ArrowLeft,
@@ -44,7 +50,6 @@ import {
   Compass,
   DoorOpen,
   Footprints,
-  Home,
   List,
   LocateFixed,
   Map as MapIcon,
@@ -63,16 +68,20 @@ import {
   Volume2,
   type LucideIcon,
 } from "lucide-react-native";
-import type { MarkerClusterer as GoogleMarkerClusterer } from "@googlemaps/markerclusterer";
 import type {
+  AccessibilityPreferences,
   AccessibilityRequirements,
-  AppAccessibilityPreferences,
-  AssistanceRequestStatus,
+  AccessibilityTextSize,
+  VibrationAlertMode,
+  AssistancePhase,
   AssistanceType,
   Bus,
   ArrivalBus,
   BusArrivalService,
+  BusServiceRouteOption,
+  BusStop,
   BusStopArrivalsResponse,
+  BusStopServiceRoutesResponse,
   JourneyPhase,
   NearbyBusStop,
   NearbyBusStopsResponse,
@@ -82,14 +91,92 @@ import type {
   VerificationMethod,
   VehicleStatus,
 } from "@buspass/shared";
-import { assistanceTypesForPhase } from "@buspass/shared";
 import {
+  AssistanceRequestStatus,
+  assistanceTypesForPhase,
+  canTransitionAssistanceRequestStatus,
+  canTransitionVehicleStatus,
+} from "@buspass/shared";
+import {
+  BusStopRequestError,
   cancelAssistanceRequest,
   createAssistanceRequest,
+  fetchBusStop,
   fetchBusStopArrivals,
+  fetchBusStopServiceRoutes,
+  fetchRegionalBusStops,
   findNearbyBusStops,
+  searchBusStops,
 } from "./src/api/assistanceApi";
 import { subscribeToRequestStatus } from "./src/api/statusSocket";
+import { FeatureIllustration } from "./src/components/FeatureIllustration";
+import { JourneyMap } from "./src/components/JourneyMap";
+import {
+  createFocusedAssistController,
+  deriveFocusedAssistContext,
+  type FocusedAssistController,
+} from "./src/focusedAssist/FocusedAssistController";
+import {
+  createBusPresenceProvider,
+  resolveCurrentStop,
+} from "./src/focusedAssist/presenceProvider";
+import type {
+  BusAtStop,
+  FocusedAssistContext,
+  FocusedAssistRequestContext,
+} from "./src/focusedAssist/types";
+import {
+  createBrowserSpeechAdapter,
+  GuidanceService,
+  type GuidanceEvent,
+  type GuidanceHaptic,
+  type GuidancePriority,
+} from "./src/guidance/GuidanceService";
+import {
+  VoiceAssistantController,
+  type VoiceAssistantActions,
+} from "./src/voiceAssistant/VoiceAssistantController";
+import { VoiceAssistantPanel } from "./src/voiceAssistant/VoiceAssistantPanel";
+import {
+  shouldSuppressAssistantTts,
+  WebSpeechRecognitionProvider,
+} from "./src/voiceAssistant/SpeechRecognitionProvider";
+import type {
+  AssistantContext,
+  AssistantActionResult,
+} from "./src/voiceAssistant/types";
+import { illustrations } from "./src/illustrations";
+import {
+  accessibilityRequirementsFromPreferences,
+  applyAccessibilityPreset,
+  defaultAccessibilityPreferences,
+  isLargeText,
+  mergeAccessibilityPreferences,
+  parsePersistedAccessibilityPreferences,
+  preferencesWithAssistanceRequirements,
+  serializeAccessibilityPreferences,
+  textSizeScale,
+  type AccessibilityPreset,
+} from "./src/preferences/accessibilityPreferences";
+import {
+  type MobilityMode,
+  type RouteStep,
+  type RoutingProvider,
+  RoutingProviderError,
+  type WalkingRoute,
+} from "./src/routing/RoutingProvider";
+import { createRoutingProvider } from "./src/routing/AccessibleRoutingProvider";
+import {
+  calculateWalkingRouteProgress,
+  distanceBetweenRoutingCoordinates,
+  type WalkingRouteProgress,
+} from "./src/routing/routeProgress";
+import {
+  createRouteMonitoringState,
+  isWalkingLocationAccuracyLimited,
+  updateRouteMonitoring,
+  type RouteMonitoringState,
+} from "./src/routing/routeMonitor";
 import * as Location from "expo-location";
 
 const brandLogo = require("./assets/applogo.png");
@@ -103,22 +190,34 @@ const optionIcons = {
   largeText: require("./assets/large-text.png"),
   highContrast: require("./assets/high-contrast.png"),
 };
-type TabIconName = "home" | "journey" | "assist" | "profile";
+type TabIconName = "journey" | "assist" | "profile";
 
 type Screen =
   | "AUTH"
   | "PROFILE"
-  | "LOCATION"
+  | "JOURNEY_IDLE"
   | "STOP"
   | "BUS"
   | "ACCESSIBILITY"
   | "CONFIRM"
   | "STATUS"
   | "ONBOARD"
-  | "ALIGHTING_STOP"
-  | "COMPLETED";
+  | "ALIGHTING_STOP";
 
-type AppTab = "HOME" | "JOURNEY" | "ASSISTANCE" | "PROFILE";
+type AppTab = "JOURNEY" | "ASSISTANCE" | "PROFILE";
+type JourneyCompletionKind = "ENDED_EARLY" | "FINISHED";
+type AccessibilityPreferenceSection =
+  "MOBILITY" | "VISION" | "HEARING" | "JOURNEY_SUPPORT" | "INTERACTION";
+const AccessibilityRuntimeContext = createContext({
+  largerControls: false,
+  reducedMotion: false,
+  textSize: "STANDARD" as AccessibilityTextSize,
+});
+export type JourneyNextAction = {
+  step: number;
+  title: string;
+  detail: string;
+};
 type MapLandmark = {
   id: string;
   name: string;
@@ -229,14 +328,28 @@ type BusServiceOption = {
   buses: ArrivalBus[];
   arrivalUnavailable: boolean;
 };
-type StaticSearchStop = {
-  busStopCode: string;
-  roadName: string;
-  description: string;
-  latitude: number;
-  longitude: number;
+type DataLoadStatus = "IDLE" | "LOADING" | "SUCCESS" | "ERROR";
+type PersistedActiveJourney = {
+  version: 1;
+  savedAt: string;
+  selectedStop: NearbyBusStop;
+  selectedServiceOption: BusServiceOption;
+  selectedBus: Bus;
+  selectedArrival: ArrivalBus | null;
+  selectedAlightingStop: RouteStop | null;
+  routeStops: RouteStop[];
+  currentStopIndex: number;
+  journeyPhase: JourneyPhase;
+  journeySetupState: JourneySetupState;
+  journeyRequirements: AccessibilityRequirements;
+  requestId: string | null;
+  requestStatus: AssistanceRequestStatus | null;
+  requestPhase?: AssistancePhase | null;
+  vehicleStatus: VehicleStatus | null;
 };
+type StaticSearchStop = BusStop;
 type SearchStatus = "IDLE" | "SEARCHING" | "SUCCESS" | "EMPTY" | "ERROR";
+type RegionalStopsStatus = "IDLE" | "LOADING" | "SUCCESS" | "ERROR";
 type BusStopSearchResults = {
   stops: StaticSearchStop[];
   places: MapLandmark[];
@@ -258,7 +371,6 @@ const iconSizes = {
 };
 
 const APP_ICONS = {
-  home: Home,
   journey: Route,
   assist: Accessibility,
   profile: User,
@@ -283,20 +395,10 @@ function appIcon(name: keyof typeof APP_ICONS | string): LucideIcon {
   return CircleHelp;
 }
 
-const defaultRequirements: AccessibilityRequirements = {
-  wheelchairRamp: false,
-  busAudioIdentification: false,
-  extendedDwellTime: false,
-};
-
-const defaultAppPreferences: AppAccessibilityPreferences = {
-  screenReaderOptimised: true,
-  hapticAlerts: true,
-  largeText: false,
-  highContrast: false,
-  repeatAudio: true,
-  themeMode: "light",
-};
+const defaultRequirements = accessibilityRequirementsFromPreferences(
+  defaultAccessibilityPreferences,
+);
+const defaultAppPreferences = defaultAccessibilityPreferences;
 const defaultMapLayers: MapLayers = {
   busStops: true,
   selectedService: true,
@@ -306,6 +408,7 @@ const defaultMapLayers: MapLayers = {
 };
 
 const localPreferencesKey = "sg-goassist.preferences.v1";
+const localActiveJourneyKey = "sg-goassist.active-journey.v1";
 const destination = "Kent Ridge Terminal";
 const boardingStop = "Changi Airport Terminal 1";
 const kentRidgeRouteStops: RouteStop[] = [
@@ -439,7 +542,7 @@ const serviceRoutesByNumber: Record<string, RouteStop[]> = {
   "183": service183RouteStops,
   "188": service188RouteStops,
 };
-const additionalSearchStops: StaticSearchStop[] = [
+const additionalSearchStops: Array<Omit<StaticSearchStop, "services">> = [
   {
     busStopCode: "18309",
     roadName: "Kent Ridge Cres",
@@ -490,28 +593,46 @@ const additionalSearchStops: StaticSearchStop[] = [
     longitude: 103.77574,
   },
 ];
-const localSearchStops: StaticSearchStop[] = Array.from(
-  new Map(
-    [
-      ...Object.values(serviceRoutesByNumber).flat(),
-      ...additionalSearchStops,
-    ].map((stop) => [
-      stop.busStopCode,
-      {
+const localSearchStops: StaticSearchStop[] = buildDemoSearchStops(
+  serviceRoutesByNumber,
+  additionalSearchStops,
+);
+
+function buildDemoSearchStops(
+  routes: Record<string, RouteStop[]>,
+  additional: Array<Omit<StaticSearchStop, "services">>,
+): StaticSearchStop[] {
+  const stops = new Map<string, StaticSearchStop>();
+  for (const [serviceNo, routeStops] of Object.entries(routes)) {
+    for (const stop of routeStops) {
+      const existing = stops.get(stop.busStopCode);
+      stops.set(stop.busStopCode, {
         busStopCode: stop.busStopCode,
         roadName: stop.roadName,
         description: stop.description,
         latitude: stop.latitude,
         longitude: stop.longitude,
-      },
-    ]),
-  ).values(),
-).sort((a, b) => a.busStopCode.localeCompare(b.busStopCode));
+        services: Array.from(
+          new Set([...(existing?.services ?? []), serviceNo]),
+        ).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
+      });
+    }
+  }
+  for (const stop of additional) {
+    if (!stops.has(stop.busStopCode)) {
+      stops.set(stop.busStopCode, { ...stop, services: [] });
+    }
+  }
+  return [...stops.values()].sort((a, b) =>
+    a.busStopCode.localeCompare(b.busStopCode),
+  );
+}
 const emptySearchResults: BusStopSearchResults = {
   stops: [],
   places: [],
   services: [],
 };
+const emptyRouteStops: RouteStop[] = [];
 const spacing = {
   xs: 4,
   sm: 8,
@@ -532,7 +653,7 @@ const borders = {
 };
 const typography = {
   pageTitle: 30,
-  sectionTitle: 24,
+  sectionTitle: 28,
   cardTitle: 20,
   body: 17,
   secondary: 15,
@@ -543,26 +664,26 @@ const touchTarget = {
   comfortable: 56,
 };
 const manualStopLookup = {
-  latitude: 1.2942,
-  longitude: 103.7711,
+  latitude: 1.3521,
+  longitude: 103.8198,
   accuracyMeters: 0,
 };
 const nearbyStopsCacheMs = 5 * 60 * 1000;
 const arrivalsCacheMs = 20 * 1000;
-const maxRenderedMapStops = 8;
 const enableCameraDebugLogs = false;
 const enableLocationDebugLogs = false;
 const mapViewportPaddingPercent = 12;
 const minimumMapSpanMeters = 260;
 const searchAreaThresholdMeters = 180;
 const mapZoomLimits = {
-  min: 13,
+  min: 11,
   journeyMin: 14,
   fullRouteMin: 12,
   max: 19,
 };
-const bottomNavigationHeight = 66;
+const bottomNavigationHeight = 86;
 const mapOverlayMargin = 12;
+const mapTopOverlayMargin = 18;
 const rightToolbarWidth = 64;
 const mapTopControlGap = 8;
 const mapTopControlRowHeight = 52;
@@ -570,23 +691,24 @@ const contextualMapControlHeight = 44;
 const mapCameraInsetSpacing = 12;
 const mapLayerZ = {
   scrim: 24,
-  sheet: 20,
   overlays: 30,
-  sideControls: 31,
-  morePanel: 32,
+  sideControls: 45,
+  morePanel: 46,
   search: 34,
-  navigation: 40,
+  sheet: 40,
+  navigation: 50,
 };
 const mapBottomSheetHeights: Record<BottomSheetState, number> = {
-  HIDDEN_PEEK: 58,
+  HIDDEN_PEEK: 0,
   COLLAPSED: 96,
   MEDIUM: 330,
   EXPANDED: 560,
 };
+const mapSideControlTopOffset = 190;
 const defaultMapCanvasHeight = 720;
 const defaultMapCanvasWidth = 390;
 const mapTopOverlayHeight =
-  mapOverlayMargin + mapTopControlRowHeight + mapCameraInsetSpacing;
+  mapTopOverlayMargin + mapTopControlRowHeight + mapCameraInsetSpacing;
 const followUserMovementThresholdMeters = 28;
 const minimumUsableMapDimension = 100;
 const centerSafeZoneScale = 0.46;
@@ -612,7 +734,8 @@ type ViewportSource =
   | "ROUTE"
   | "ACTIVE_JOURNEY"
   | "FULL_ROUTE"
-  | "DESTINATION_FOCUS";
+  | "DESTINATION_FOCUS"
+  | "CLUSTER_EXPAND";
 type CameraMode =
   | "FOLLOW_USER"
   | "MANUAL"
@@ -621,6 +744,13 @@ type CameraMode =
   | "STOP_FOCUS"
   | "ROUTE_FOCUS"
   | "FOLLOW_JOURNEY";
+type MapInteractionMode =
+  | "BROWSE"
+  | "CHOOSE_ORIGIN_ON_MAP"
+  | "CHOOSE_DESTINATION_ON_MAP"
+  | "FOLLOW_USER"
+  | "FOLLOW_JOURNEY";
+type MapFollowState = "FREE" | "FOLLOW_USER" | "FOLLOW_USER_HEADING";
 type MapViewport = {
   center: MapCoordinate;
   zoom: number;
@@ -654,21 +784,6 @@ type MapCameraGeometry = {
   mapWidth: number;
   usableMapRect: UsableMapRect;
 };
-type GoAssistMapController = {
-  focusUser: (coordinate: MapCoordinate) => void;
-  focusStop: (stop: MapCoordinate) => void;
-  focusBounds: (bounds: MapCoordinate[]) => void;
-  focusJourney: (points: MapCoordinate[]) => void;
-  resetNorth: () => void;
-  getViewport: () => MapViewport;
-  getZoom: () => number;
-};
-type MapInteractionState = {
-  userIsPanning: boolean;
-  userIsZooming: boolean;
-  lastManualViewport: MapViewport | null;
-};
-type MapProviderName = "GOOGLE_MAPS" | "ACCESSIBLE_FALLBACK";
 type ProviderViewportChange = Pick<
   MapViewport,
   "center" | "zoom" | "bearing" | "pitch"
@@ -683,7 +798,7 @@ type CameraCommand =
   | "fitWalkingRoute"
   | "fitFullRoute"
   | "searchResult"
-  | "focusCluster"
+  | "expandCluster"
   | "resetMap"
   | "northUp";
 type NearbySearchOrigin = {
@@ -691,89 +806,108 @@ type NearbySearchOrigin = {
   label: string;
   source: ViewportSource;
 };
-const googleMapsApiKey =
+const nativeGoogleMapsApiKey =
   process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY?.trim() ?? "";
-let googleMapsSdkLoadPromise: Promise<void> | null = null;
+const nativeGoogleMapsApiKeyIsPlaceholder =
+  /^(your|replace|example|placeholder)/i.test(nativeGoogleMapsApiKey) ||
+  /google_maps_api_key/i.test(nativeGoogleMapsApiKey);
+const nativeGoogleMapsConfigured =
+  Boolean(nativeGoogleMapsApiKey) && !nativeGoogleMapsApiKeyIsPlaceholder;
+const liveStatusErrorMessage =
+  "We are having trouble updating live bus status. Your request is still saved.";
 
-function shouldUseGoogleMapsProvider(showInlineControls: boolean) {
+function logMapConfiguration(stage: string) {
+  if (__DEV__ && process.env.NODE_ENV !== "test") {
+    console.info(`[Map] ${stage}`, {
+      nativeGoogleMapsConfigured,
+      platform: Platform.OS,
+      webProvider: Platform.OS === "web" ? "OPENSTREETMAP" : undefined,
+    });
+  }
+}
+
+function shouldUseOpenStreetMapProvider(showInlineControls: boolean) {
   return (
     !showInlineControls &&
     Platform.OS === "web" &&
-    Boolean(googleMapsApiKey) &&
     typeof document !== "undefined"
   );
 }
 
-async function loadGoogleMapsSdk() {
-  if (!googleMapsSdkLoadPromise) {
-    googleMapsSdkLoadPromise = import("@googlemaps/js-api-loader").then(
-      async ({ importLibrary, setOptions }) => {
-        setOptions({
-          key: googleMapsApiKey,
-          language: "en",
-          region: "SG",
-          v: "weekly",
-        });
-        await Promise.all([importLibrary("maps"), importLibrary("marker")]);
-      },
-    );
+function shouldUseNativeMapsProvider(showInlineControls: boolean) {
+  return (
+    !showInlineControls && Platform.OS !== "web" && nativeGoogleMapsConfigured
+  );
+}
+
+function shouldUseMapProvider(showInlineControls: boolean) {
+  return (
+    shouldUseOpenStreetMapProvider(showInlineControls) ||
+    shouldUseNativeMapsProvider(showInlineControls)
+  );
+}
+
+function mapConfigurationMessage() {
+  return "We couldn't load the map right now.";
+}
+
+function mapTechnicalConfigurationMessage() {
+  if (Platform.OS === "web" && typeof document === "undefined") {
+    return "OpenStreetMap needs a browser document to render map tiles.";
   }
-  return googleMapsSdkLoadPromise;
-}
-
-function toGoogleLatLng(point: MapCoordinate): google.maps.LatLngLiteral {
-  return { lat: point.latitude, lng: point.longitude };
-}
-
-function googleMapStyles(
-  lightMode: boolean,
-  highContrast: boolean,
-): google.maps.MapTypeStyle[] {
-  const labelColor = highContrast ? (lightMode ? "#000000" : "#FFFFFF") : null;
-  return [
-    {
-      featureType: "poi.business",
-      stylers: [{ visibility: "off" }],
-    },
-    {
-      featureType: "transit.station.bus",
-      stylers: [{ visibility: "off" }],
-    },
-    {
-      featureType: "road",
-      elementType: "geometry",
-      stylers: [{ saturation: lightMode ? -18 : -45 }],
-    },
-    {
-      featureType: "water",
-      elementType: "geometry",
-      stylers: [{ color: lightMode ? "#B7DDE8" : "#123746" }],
-    },
-    {
-      featureType: "landscape",
-      elementType: "geometry",
-      stylers: [{ color: lightMode ? "#E7F0EE" : "#13292F" }],
-    },
-    ...(labelColor
-      ? [
-          {
-            elementType: "labels.text.fill",
-            stylers: [{ color: labelColor }],
-          },
-          {
-            elementType: "labels.text.stroke",
-            stylers: [{ color: lightMode ? "#FFFFFF" : "#000000" }],
-          },
-        ]
-      : []),
-  ];
-}
-
-function mapProviderDisplayName(provider: MapProviderName) {
-  return provider === "GOOGLE_MAPS" ? "Google Maps" : "accessible fallback map";
+  if (Platform.OS !== "web" && !nativeGoogleMapsConfigured) {
+    return "Native Google Maps could not be loaded. Check the native Maps SDK, billing, API key restrictions, and development-build configuration.";
+  }
+  return "The map renderer is unavailable on this platform.";
 }
 type LocationState =
   "loading" | "available" | "approximate" | "permission_denied" | "unavailable";
+type DirectionsStatus =
+  | "IDLE"
+  | "NEEDS_LOCATION"
+  | "LOADING"
+  | "READY"
+  | "ERROR"
+  | "RATE_LIMITED"
+  | "WHEELCHAIR_UNAVAILABLE"
+  | "KNOWN_BARRIER";
+type GuidanceStatus = "INACTIVE" | "ACTIVE" | "ARRIVED";
+type GuidanceMode = "INACTIVE" | "PREVIEW" | "ACTIVE" | "ARRIVED";
+type AccessibleStopRouteStatus =
+  "CHECKING" | "AVAILABLE" | "LIMITED_DATA" | "UNAVAILABLE";
+
+export function rankStopsForWheelchair(
+  stops: NearbyBusStop[],
+  routeStatuses: Record<string, AccessibleStopRouteStatus>,
+  accessibleOnly = false,
+) {
+  const rank: Record<AccessibleStopRouteStatus, number> = {
+    AVAILABLE: 0,
+    LIMITED_DATA: 1,
+    CHECKING: 2,
+    UNAVAILABLE: 3,
+  };
+  const candidates = accessibleOnly
+    ? stops.filter((stop) => {
+        const status = routeStatuses[stop.busStopCode];
+        return (
+          status === "AVAILABLE" ||
+          status === "LIMITED_DATA" ||
+          status === "CHECKING"
+        );
+      })
+    : stops;
+  return [...candidates].sort((first, second) => {
+    const firstStatus = routeStatuses[first.busStopCode];
+    const secondStatus = routeStatuses[second.busStopCode];
+    const accessibilityDifference =
+      (firstStatus ? rank[firstStatus] : 4) -
+      (secondStatus ? rank[secondStatus] : 4);
+    return (
+      accessibilityDifference || first.distanceMeters - second.distanceMeters
+    );
+  });
+}
 type NearbyStopsState =
   "idle" | "loading" | "success" | "empty" | "network_error" | "service_error";
 type ConnectivityState = "online" | "offline" | "reconnecting";
@@ -785,8 +919,27 @@ type TransportDiscoveryState = {
   nearbyStops: NearbyBusStop[];
   nearbyStopsStatus: NearbyStopsState;
   connectivity: ConnectivityState;
-  lastSuccessfulLocation: (MapCoordinate & { accuracyMeters?: number }) | null;
+  lastSuccessfulLocation:
+    | (MapCoordinate & {
+        accuracyMeters?: number;
+        headingDegrees?: number;
+      })
+    | null;
 };
+type JourneyDiscoveryStatus = {
+  title: string;
+  message: string;
+  tone: "info" | "error";
+  primary?: string;
+  secondary?: string;
+};
+type FindBusPanelState =
+  | { kind: "IDLE" }
+  | { kind: "LOCATING"; message: string }
+  | { kind: "MAP_LOADING"; message: string }
+  | { kind: "LOCATION_ERROR"; status: JourneyDiscoveryStatus }
+  | { kind: "DISCOVERY_ERROR"; status: JourneyDiscoveryStatus }
+  | { kind: "NOTICE"; status: JourneyDiscoveryStatus };
 const orientationLandmarks: MapLandmark[] = [
   {
     id: "university-hall",
@@ -1271,15 +1424,16 @@ const demoProfiles: PassengerProfile[] = [
     verificationMethod: "DEMO_CREDENTIAL",
     verifiedCredentialLast4: "4821",
     verifiedAt: profileTimestamp,
-    assistanceDefaults: {
-      wheelchairRamp: false,
-      busAudioIdentification: true,
-      extendedDwellTime: false,
-    },
-    appPreferences: {
+    accessibilityPreferences: {
+      ...defaultAccessibilityPreferences,
+      audioBusIdentification: true,
+      wheelchairRouting: false,
+      avoidSteepSlopes: true,
+      preferSmoothSurfaces: true,
       screenReaderOptimised: true,
-      hapticAlerts: true,
-      largeText: true,
+      spokenGuidance: true,
+      vibrationAlerts: "IMPORTANT",
+      textSize: "LARGE",
       highContrast: true,
       repeatAudio: true,
       themeMode: "light",
@@ -1299,14 +1453,27 @@ class AppErrorBoundary extends React.Component<
     return { error };
   }
 
+  componentDidCatch(error: Error, info: React.ErrorInfo) {
+    console.error("SG GoAssist failed to render", error, info.componentStack);
+  }
+
   render() {
     if (this.state.error) {
       return (
         <SafeAreaView style={styles.safeArea}>
-          <View style={styles.container}>
+          <View style={styles.container} accessibilityRole="alert" accessible>
             <BrandHeader highContrast={false} />
             <Text style={styles.errorText}>The app could not start.</Text>
-            <Text style={styles.bodyText}>{this.state.error.message}</Text>
+            <Text style={styles.bodyText}>
+              We couldn't open SG GoAssist right now. Please try again.
+            </Text>
+            <PrimaryButton
+              label="Try again"
+              icon={RefreshCw}
+              onPress={() => this.setState({ error: null })}
+              lightMode={false}
+              highContrast={false}
+            />
           </View>
         </SafeAreaView>
       );
@@ -1324,24 +1491,242 @@ export default function App() {
   );
 }
 
+export function shouldStackJourneyEntry({
+  width,
+  fontScale,
+  largeText,
+}: {
+  width: number;
+  fontScale: number;
+  largeText: boolean;
+}) {
+  return width < 340 || fontScale >= 1.2 || largeText;
+}
+
+export function shouldStackFeatureIllustration({
+  width,
+  fontScale,
+  largeText,
+}: {
+  width: number;
+  fontScale: number;
+  largeText: boolean;
+}) {
+  return width < 360 || fontScale >= 1.2 || largeText;
+}
+
+export function shouldStackAccessibilityChoices({
+  width,
+  textSize,
+}: {
+  width: number;
+  textSize: AccessibilityTextSize;
+}) {
+  return (
+    width < 340 ||
+    textSize === "EXTRA_LARGE" ||
+    (textSize === "LARGE" && width < 390)
+  );
+}
+
+export function deriveJourneyNextAction({
+  journeyPhase,
+  selectedStopName,
+  serviceNo,
+  destinationName,
+  nextStopName,
+  walkingInstruction,
+  wheelchairAssistance,
+}: {
+  journeyPhase: JourneyPhase;
+  selectedStopName?: string;
+  serviceNo?: string;
+  destinationName?: string;
+  nextStopName?: string;
+  walkingInstruction?: string;
+  wheelchairAssistance: boolean;
+}): JourneyNextAction {
+  if (journeyPhase === "COMPLETED") {
+    return {
+      step: 4,
+      title: "Journey complete",
+      detail: "You have left the bus.",
+    };
+  }
+  if (journeyPhase === "DISEMBARKING" || journeyPhase === "ALIGHTING") {
+    return {
+      step: 4,
+      title: "Alight when safe",
+      detail: destinationName
+        ? `Leave at ${destinationName}.`
+        : "Follow the driver's safety instructions.",
+    };
+  }
+  if (journeyPhase === "DESTINATION_NEXT") {
+    return {
+      step: 4,
+      title: "Prepare to alight",
+      detail: destinationName
+        ? `${destinationName} is next.`
+        : "Your stop is next.",
+    };
+  }
+  if (journeyPhase === "DESTINATION_APPROACHING") {
+    return {
+      step: 4,
+      title: "Get ready to alight",
+      detail: destinationName
+        ? `You are approaching ${destinationName}.`
+        : "Your destination is approaching.",
+    };
+  }
+  if (journeyPhase === "ONBOARD") {
+    return {
+      step: 4,
+      title: "Stay onboard",
+      detail: nextStopName
+        ? `Next stop: ${nextStopName}.`
+        : destinationName
+          ? `Continue to ${destinationName}.`
+          : "Follow your stop countdown.",
+    };
+  }
+  if (
+    journeyPhase === "WAITING_FOR_BUS" ||
+    journeyPhase === "BUS_ARRIVING" ||
+    journeyPhase === "BOARDING"
+  ) {
+    return {
+      step: 2,
+      title: serviceNo ? `Wait for Service ${serviceNo}` : "Wait for your bus",
+      detail: wheelchairAssistance
+        ? "Stay near the boarding point. Board after ramp assistance is ready."
+        : selectedStopName
+          ? `Wait at ${selectedStopName}.`
+          : "Stay near the boarding point.",
+    };
+  }
+  if (journeyPhase === "WALKING_TO_STOP") {
+    return {
+      step: 1,
+      title: selectedStopName
+        ? `Go to ${selectedStopName}`
+        : "Go to your bus stop",
+      detail:
+        walkingInstruction ??
+        "Follow the walking directions to your boarding stop.",
+    };
+  }
+  if (serviceNo) {
+    return {
+      step: 2,
+      title: `Review Service ${serviceNo}`,
+      detail: destinationName
+        ? `Confirm your journey to ${destinationName}.`
+        : "Choose your destination and confirm the journey.",
+    };
+  }
+  if (selectedStopName) {
+    return {
+      step: 1,
+      title: "Choose a bus service",
+      detail: `Boarding from ${selectedStopName}.`,
+    };
+  }
+  return {
+    step: 1,
+    title: "Choose your bus stop",
+    detail: "Use your location, search, or select a stop manually.",
+  };
+}
+
+function createPlatformHapticAdapter() {
+  if (Platform.OS === "web") {
+    const browserNavigator = (
+      globalThis as typeof globalThis & {
+        navigator?: { vibrate?: (duration: number) => boolean };
+      }
+    ).navigator;
+    if (typeof browserNavigator?.vibrate !== "function") return undefined;
+    return (haptic: GuidanceHaptic) => {
+      const duration =
+        haptic === "START"
+          ? 25
+          : haptic === "TURN"
+            ? 40
+            : haptic === "WARNING"
+              ? 55
+              : 35;
+      browserNavigator.vibrate?.(duration);
+    };
+  }
+  return (haptic: GuidanceHaptic) => {
+    const feedbackType =
+      haptic === "WARNING" || haptic === "TURN"
+        ? Haptics.NotificationFeedbackType.Warning
+        : Haptics.NotificationFeedbackType.Success;
+    void Haptics.notificationAsync(feedbackType).catch(() => undefined);
+  };
+}
+
 function SgGoAssistApp() {
-  const { height, width } = useWindowDimensions();
+  const { fontScale, height, width } = useWindowDimensions();
   const isCompactWidth = width < 380;
-  const [screen, setScreen] = useState<Screen>("LOCATION");
+  const [screen, setScreen] = useState<Screen>("JOURNEY_IDLE");
   const [profiles, setProfiles] = useState<PassengerProfile[]>(demoProfiles);
   const [activeProfile, setActiveProfile] = useState<PassengerProfile | null>(
     null,
   );
   const [isEditingProfileNeeds, setIsEditingProfileNeeds] = useState(false);
+  const [profilePreferenceSection, setProfilePreferenceSection] =
+    useState<AccessibilityPreferenceSection | null>(null);
   const [authName, setAuthName] = useState("");
   const [authEmail, setAuthEmail] = useState("");
   const [verificationMethod, setVerificationMethod] =
     useState<VerificationMethod>("DEMO_CREDENTIAL");
   const [credentialLast4, setCredentialLast4] = useState("");
-  const [requirements, setRequirements] = useState(defaultRequirements);
+  const [appPreferences, setAppPreferences] = useState(defaultAppPreferences);
+  const requirements = useMemo(
+    () => accessibilityRequirementsFromPreferences(appPreferences),
+    [appPreferences],
+  );
+  const setRequirements = useCallback(
+    (update: React.SetStateAction<AccessibilityRequirements>) => {
+      setAppPreferences((current) => {
+        const currentRequirements =
+          accessibilityRequirementsFromPreferences(current);
+        const nextRequirements =
+          typeof update === "function" ? update(currentRequirements) : update;
+        return preferencesWithAssistanceRequirements(current, nextRequirements);
+      });
+    },
+    [],
+  );
   const [journeyRequirements, setJourneyRequirements] =
     useState(defaultRequirements);
-  const [appPreferences, setAppPreferences] = useState(defaultAppPreferences);
+  const guidanceServiceRef = useRef<GuidanceService | null>(null);
+  if (!guidanceServiceRef.current) {
+    guidanceServiceRef.current = new GuidanceService({
+      speech: createBrowserSpeechAdapter(),
+      haptic: createPlatformHapticAdapter(),
+    });
+  }
+  const [latestSpokenGuidance, setLatestSpokenGuidance] = useState<
+    string | null
+  >(null);
+  const [guidanceSpeaking, setGuidanceSpeaking] = useState(false);
+  const [spokenGuidanceSupported, setSpokenGuidanceSupported] = useState(false);
+  const preferencesHydratedRef = useRef(false);
+  const activeJourneyHydratedRef = useRef(false);
+  const latestPreferencesRef = useRef(appPreferences);
+  latestPreferencesRef.current = appPreferences;
+  const largeText = isLargeText(appPreferences);
+  const extraLargeText = appPreferences.textSize === "EXTRA_LARGE";
+  const shouldStackJourneyIntro = shouldStackJourneyEntry({
+    width,
+    fontScale,
+    largeText,
+  });
   const [transportDiscovery, setTransportDiscovery] =
     useState<TransportDiscoveryState>({
       location: "unavailable",
@@ -1357,8 +1742,13 @@ function SgGoAssistApp() {
     null,
   );
   const [mapViewMode, setMapViewMode] = useState<"MAP" | "LIST">("MAP");
+  const [nearbyOpen, setNearbyOpen] = useState(false);
+  const [accessibleRoutesOnly, setAccessibleRoutesOnly] = useState(false);
+  const [accessibleStopRoutes, setAccessibleStopRoutes] = useState<
+    Record<string, AccessibleStopRouteStatus>
+  >({});
   const [bottomSheetState, setBottomSheetState] =
-    useState<BottomSheetState>("COLLAPSED");
+    useState<BottomSheetState>("HIDDEN_PEEK");
   const [bottomSheetContent, setBottomSheetContent] =
     useState<MapBottomSheetContent>("PLANNER");
   const [lastExpandedSheetState, setLastExpandedSheetState] =
@@ -1378,6 +1768,10 @@ function SgGoAssistApp() {
     pitch: 0,
     mode: "USER_LOCATION",
   });
+  const [regionalStops, setRegionalStops] = useState<NearbyBusStop[]>([]);
+  const [regionalStopsStatus, setRegionalStopsStatus] =
+    useState<RegionalStopsStatus>("IDLE");
+  const [regionalStopsRetryKey, setRegionalStopsRetryKey] = useState(0);
   const [measuredMapLayout, setMeasuredMapLayout] = useState<MapLayoutSize>(
     () =>
       measuredMapLayoutSize({
@@ -1411,10 +1805,48 @@ function SgGoAssistApp() {
       label: "Nearby bus stops",
       source: "USER_LOCATION",
     });
-  const [directionsActive, setDirectionsActive] = useState(false);
-  const [followMode, setFollowMode] = useState(false);
+  const [guidanceMode, setGuidanceMode] = useState<GuidanceMode>("INACTIVE");
+  const directionsActive = guidanceMode !== "INACTIVE";
+  const guidanceStatus: GuidanceStatus =
+    guidanceMode === "ACTIVE"
+      ? "ACTIVE"
+      : guidanceMode === "ARRIVED"
+        ? "ARRIVED"
+        : "INACTIVE";
+  const [followState, setFollowState] = useState<MapFollowState>("FREE");
   const [mapRotationEnabled, setMapRotationEnabled] = useState(false);
-  const [mapHeadingDegrees, setMapHeadingDegrees] = useState(24);
+  const [mapHeadingDegrees, setMapHeadingDegrees] = useState(0);
+  const [directionsStatus, setDirectionsStatus] =
+    useState<DirectionsStatus>("IDLE");
+  const [mobilityMode, setMobilityMode] = useState<MobilityMode>("WALKING");
+  const [directionsError, setDirectionsError] = useState<string | null>(null);
+  const [walkingRoute, setWalkingRoute] = useState<WalkingRoute | null>(null);
+  const [routeFitKey, setRouteFitKey] = useState(0);
+  const walkingProgressRef = useRef<WalkingRouteProgress | null>(null);
+  const walkingRouteMonitoringRef = useRef<RouteMonitoringState>(
+    createRouteMonitoringState(),
+  );
+  const [walkingRouteMonitoring, setWalkingRouteMonitoring] =
+    useState<RouteMonitoringState>(createRouteMonitoringState);
+  const [walkingOffRouteDismissed, setWalkingOffRouteDismissed] =
+    useState(false);
+  const walkingGuidanceThresholdRef = useRef<string | null>(null);
+  const [locationPulseKey, setLocationPulseKey] = useState(0);
+  const [systemReducedMotion, setSystemReducedMotion] = useState(false);
+  const [screenReaderDetected, setScreenReaderDetected] = useState(false);
+  const [hapticsSupported, setHapticsSupported] = useState(false);
+  const reducedMotion = systemReducedMotion || appPreferences.reducedMotion;
+  const screenReaderMode =
+    screenReaderDetected || appPreferences.screenReaderOptimised;
+  const screenReaderModeRef = useRef(screenReaderMode);
+  screenReaderModeRef.current = screenReaderMode;
+  useEffect(() => {
+    if (!directionsActive) {
+      setMobilityMode(
+        appPreferences.wheelchairRouting ? "WHEELCHAIR" : "WALKING",
+      );
+    }
+  }, [appPreferences.wheelchairRouting, directionsActive]);
   const nearbyStops = transportDiscovery.nearbyStops;
   const currentLocation = transportDiscovery.lastSuccessfulLocation;
   const [journeySetupState, setJourneySetupState] =
@@ -1423,6 +1855,11 @@ function SgGoAssistApp() {
   const [selectedServiceOption, setSelectedServiceOption] =
     useState<BusServiceOption | null>(null);
   const [arrivingBuses, setArrivingBuses] = useState<ArrivalBus[]>([]);
+  const [arrivalsStatus, setArrivalsStatus] = useState<DataLoadStatus>("IDLE");
+  const [routeDetailsStatus, setRouteDetailsStatus] =
+    useState<DataLoadStatus>("IDLE");
+  const [staticServicesStatus, setStaticServicesStatus] =
+    useState<DataLoadStatus>("IDLE");
   const [selectedBus, setSelectedBus] = useState<Bus | null>(null);
   const [selectedArrival, setSelectedArrival] = useState<ArrivalBus | null>(
     null,
@@ -1435,12 +1872,45 @@ function SgGoAssistApp() {
   const [requestId, setRequestId] = useState<string | null>(null);
   const [requestStatus, setRequestStatus] =
     useState<AssistanceRequestStatus | null>(null);
+  const requestStatusRef = useRef<AssistanceRequestStatus | null>(null);
+  const [requestPhase, setRequestPhase] = useState<AssistancePhase | null>(
+    null,
+  );
+  const [focusedAssistLocating, setFocusedAssistLocating] = useState(false);
+  const [focusedAssistContextError, setFocusedAssistContextError] = useState<
+    string | null
+  >(null);
+  const [focusedAssistManualStop, setFocusedAssistManualStop] =
+    useState<NearbyBusStop | null>(null);
+  const [focusedAssistArrivals, setFocusedAssistArrivals] = useState<
+    ArrivalBus[]
+  >([]);
+  const [focusedAssistSelectedBusId, setFocusedAssistSelectedBusId] = useState<
+    string | null
+  >(null);
+  const [focusedAssistRequest, setFocusedAssistRequest] =
+    useState<FocusedAssistRequestContext>({
+      requestId: null,
+      status: null,
+      assistanceType: null,
+      submitting: false,
+      bus: null,
+      stop: null,
+      error: null,
+    });
+  const requestPhaseRef = useRef<AssistancePhase | null>(null);
   const [confirmingCancelRequest, setConfirmingCancelRequest] = useState(false);
+  const [confirmingJourneyEnd, setConfirmingJourneyEnd] =
+    useState<JourneyCompletionKind | null>(null);
+  const [journeyEndInProgress, setJourneyEndInProgress] = useState(false);
   const [vehicleStatus, setVehicleStatus] = useState<VehicleStatus | null>(
     null,
   );
+  const vehicleStatusRef = useRef<VehicleStatus | null>(null);
   const [events, setEvents] = useState<StatusUpdateMessage[]>([]);
   const [visualAlert, setVisualAlert] = useState<string | null>(null);
+  const [hasSpokenGuidanceInCurrentFlow, setHasSpokenGuidanceInCurrentFlow] =
+    useState(false);
   const [loadingMessage, setLoadingMessage] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1450,6 +1920,11 @@ function SgGoAssistApp() {
   const arrivalsCacheRef = useRef(
     new Map<string, { timestamp: number; result: BusStopArrivalsResponse }>(),
   );
+  const routeDetailsCacheRef = useRef(
+    new Map<string, BusStopServiceRoutesResponse>(),
+  );
+  const stopDetailsCacheRef = useRef(new Map<string, BusStop>());
+  const selectedServiceOptionRef = useRef<BusServiceOption | null>(null);
   const stopsRequestRef = useRef<{
     id: number;
     controller: AbortController | null;
@@ -1457,6 +1932,11 @@ function SgGoAssistApp() {
     id: 0,
     controller: null,
   });
+  const regionalStopsRequestRef = useRef<{
+    id: number;
+    controller: AbortController | null;
+  }>({ id: 0, controller: null });
+  const locationLookupRequestRef = useRef(0);
   const arrivalsRequestRef = useRef<{
     id: number;
     controller: AbortController | null;
@@ -1464,10 +1944,52 @@ function SgGoAssistApp() {
     id: 0,
     controller: null,
   });
+  const routeDetailsRequestRef = useRef<{
+    id: number;
+    controller: AbortController | null;
+  }>({ id: 0, controller: null });
+  const stopDetailsRequestRef = useRef<{
+    id: number;
+    controller: AbortController | null;
+  }>({ id: 0, controller: null });
   const lastLocationResultRef = useRef<{
     timestamp: number;
-    coords: { latitude: number; longitude: number; accuracyMeters?: number };
+    coords: {
+      latitude: number;
+      longitude: number;
+      accuracyMeters?: number;
+      headingDegrees?: number;
+    };
   } | null>(null);
+  const routingProviderRef = useRef<RoutingProvider | null>(null);
+  if (!routingProviderRef.current) {
+    routingProviderRef.current = createRoutingProvider();
+  }
+  const directionsRequestRef = useRef<{
+    id: number;
+    controller: AbortController | null;
+  }>({ id: 0, controller: null });
+  const journeySessionIdRef = useRef(0);
+  const focusedAssistRequestSessionRef = useRef(0);
+  const focusedAssistSubmittingRef = useRef(false);
+  const focusedAssistSelectingStopRef = useRef(false);
+  const focusedAssistPreviousSelectedStopRef = useRef<NearbyBusStop | null>(
+    null,
+  );
+  const focusedAssistLocationRequestRef = useRef(0);
+  const focusedAssistAnnouncedBusRef = useRef<string | null>(null);
+  const busPresenceProviderRef = useRef(
+    createBusPresenceProvider({ demoMode: __DEV__ }),
+  );
+  const speechRecognitionProviderRef = useRef(
+    new WebSpeechRecognitionProvider(),
+  );
+  const journeyEndInProgressRef = useRef(false);
+  const activeJourneyPersistenceQueueRef = useRef<Promise<void>>(
+    Promise.resolve(),
+  );
+  const guidanceSessionIdRef = useRef(0);
+  const arrivalAnnouncementStopRef = useRef<string | null>(null);
   const initialCameraAppliedRef = useRef(false);
   const cameraIntentIdRef = useRef(0);
   const searchRequestIdRef = useRef(0);
@@ -1491,21 +2013,51 @@ function SgGoAssistApp() {
   const mapCameraGeometry = useMemo(
     () =>
       createMapCameraGeometry({
-        bottomSheetState,
         contextualActionVisible: searchThisAreaVisible,
         mapLayout: measuredMapLayout,
       }),
-    [
-      bottomSheetState,
-      measuredMapLayout.height,
-      measuredMapLayout.width,
-      searchThisAreaVisible,
-    ],
+    [measuredMapLayout.height, measuredMapLayout.width, searchThisAreaVisible],
   );
   const mapCameraGeometryRef = useRef(mapCameraGeometry);
   const bottomSheetStateRef = useRef(bottomSheetState);
   const currentLocationRef = useRef(currentLocation);
   const selectedStopCameraIntentRef = useRef(0);
+
+  function queueActiveJourneyPersistence(operation: () => Promise<void>) {
+    activeJourneyPersistenceQueueRef.current =
+      activeJourneyPersistenceQueueRef.current
+        .catch(() => undefined)
+        .then(operation);
+    return activeJourneyPersistenceQueueRef.current;
+  }
+
+  useEffect(() => {
+    selectedServiceOptionRef.current = selectedServiceOption;
+  }, [selectedServiceOption]);
+
+  useEffect(() => {
+    if (!selectedStop) {
+      setStaticServicesStatus("IDLE");
+      return;
+    }
+    if (bottomSheetContent !== "STOP_DETAILS" && screen !== "BUS") {
+      return;
+    }
+    if (selectedStop.services.length > 0) {
+      stopDetailsCacheRef.current.set(selectedStop.busStopCode, selectedStop);
+      setStaticServicesStatus("SUCCESS");
+      return;
+    }
+    void loadStaticStopDetails(selectedStop);
+    return () => {
+      const currentRequest = stopDetailsRequestRef.current;
+      currentRequest.controller?.abort();
+      stopDetailsRequestRef.current = {
+        id: currentRequest.id + 1,
+        controller: null,
+      };
+    };
+  }, [bottomSheetContent, screen, selectedStop?.busStopCode]);
 
   useEffect(() => {
     mapCameraGeometryRef.current = mapCameraGeometry;
@@ -1526,7 +2078,91 @@ function SgGoAssistApp() {
 
   useEffect(() => {
     currentLocationRef.current = currentLocation;
+    if (currentLocation?.headingDegrees !== undefined) {
+      setMapHeadingDegrees(currentLocation.headingDegrees);
+    }
   }, [currentLocation]);
+
+  useEffect(() => {
+    const guidanceService = guidanceServiceRef.current!;
+    return guidanceService.subscribe((snapshot) => {
+      setLatestSpokenGuidance(snapshot.latestSpokenText);
+      setGuidanceSpeaking(snapshot.speaking);
+      setSpokenGuidanceSupported(snapshot.speechSupported);
+      setHapticsSupported(snapshot.hapticsSupported);
+      if (snapshot.latestSpokenText) {
+        setHasSpokenGuidanceInCurrentFlow(true);
+      }
+    });
+  }, []);
+
+  useEffect(() => {
+    guidanceServiceRef.current!.configure({
+      spokenGuidanceEnabled: appPreferences.spokenGuidance,
+      vibrationAlerts: appPreferences.vibrationAlerts,
+    });
+  }, [appPreferences.spokenGuidance, appPreferences.vibrationAlerts]);
+
+  useEffect(() => {
+    if (__DEV__ && process.env.NODE_ENV !== "test") {
+      const provider = routingProviderRef.current!;
+      console.info("[Routing] development provider", {
+        id: provider.id,
+        name: provider.name,
+        routeCache: "short-lived memory cache",
+      });
+    }
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    const reducedMotionResult = AccessibilityInfo.isReduceMotionEnabled?.();
+    if (reducedMotionResult) {
+      void reducedMotionResult.then((enabled) => {
+        if (active) {
+          setSystemReducedMotion(enabled);
+        }
+      });
+    }
+    const subscription = AccessibilityInfo.addEventListener?.(
+      "reduceMotionChanged",
+      setSystemReducedMotion,
+    );
+    return () => {
+      active = false;
+      subscription?.remove();
+    };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    void AccessibilityInfo.isScreenReaderEnabled?.().then((enabled) => {
+      if (active && enabled) setScreenReaderDetected(true);
+    });
+    const subscription = AccessibilityInfo.addEventListener?.(
+      "screenReaderChanged",
+      setScreenReaderDetected,
+    );
+    return () => {
+      active = false;
+      subscription?.remove();
+    };
+  }, []);
+
+  useEffect(() => {
+    guidanceSessionIdRef.current += 1;
+    directionsRequestRef.current.controller?.abort();
+    directionsRequestRef.current = {
+      id: directionsRequestRef.current.id + 1,
+      controller: null,
+    };
+    setGuidanceMode("INACTIVE");
+    setDirectionsStatus("IDLE");
+    setDirectionsError(null);
+    resetWalkingRouteMonitoring();
+    setWalkingRoute(null);
+    arrivalAnnouncementStopRef.current = null;
+  }, [selectedStop?.busStopCode]);
 
   useEffect(() => {
     setMeasuredMapLayout((current) => {
@@ -1548,6 +2184,92 @@ function SgGoAssistApp() {
         ? current
         : next,
     );
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    const hydrationSessionId = journeySessionIdRef.current;
+    void readSavedActiveJourney().then((savedJourney) => {
+      if (!active) {
+        return;
+      }
+      activeJourneyHydratedRef.current = true;
+      if (hydrationSessionId !== journeySessionIdRef.current) {
+        return;
+      }
+      if (savedJourney) {
+        const restoredSessionId = hydrationSessionId + 1;
+        journeySessionIdRef.current = restoredSessionId;
+        setSelectedStop(savedJourney.selectedStop);
+        setSelectedServiceOption(savedJourney.selectedServiceOption);
+        setServiceOptions([savedJourney.selectedServiceOption]);
+        setSelectedBus(savedJourney.selectedBus);
+        setSelectedArrival(savedJourney.selectedArrival);
+        setArrivingBuses(savedJourney.selectedServiceOption.buses);
+        setSelectedAlightingStop(savedJourney.selectedAlightingStop);
+        setRouteStops(savedJourney.routeStops);
+        setCurrentStopIndex(savedJourney.currentStopIndex);
+        setJourneyPhase(savedJourney.journeyPhase);
+        setJourneySetupState(savedJourney.journeySetupState);
+        setJourneyRequirements(savedJourney.journeyRequirements);
+        setRequestId(savedJourney.requestId);
+        setRequestStatus(savedJourney.requestStatus);
+        setRequestPhase(
+          savedJourney.requestPhase ??
+            (savedJourney.journeyPhase === "DISEMBARKING" ||
+            savedJourney.journeyPhase === "ALIGHTING"
+              ? "ALIGHTING"
+              : savedJourney.requestId
+                ? "BOARDING"
+                : null),
+        );
+        setVehicleStatus(savedJourney.vehicleStatus);
+        setScreen(screenForPersistedJourney(savedJourney));
+
+        void fetchBusStopArrivals(savedJourney.selectedStop.busStopCode)
+          .then((arrivals) => {
+            if (!active || restoredSessionId !== journeySessionIdRef.current) {
+              return;
+            }
+            const refreshedService = arrivals.services.find(
+              (service) =>
+                service.serviceNo === savedJourney.selectedBus.busService,
+            );
+            const refreshedArrival = refreshedService?.buses[0] ?? null;
+            if (refreshedService) {
+              const refreshedOption = serviceOptionsFromArrivals(
+                savedJourney.selectedStop,
+                [refreshedService],
+              )[0];
+              if (refreshedOption) {
+                setSelectedServiceOption(refreshedOption);
+                setServiceOptions([refreshedOption]);
+                setArrivingBuses(refreshedService.buses);
+              }
+            }
+            if (refreshedArrival) {
+              setSelectedArrival(refreshedArrival);
+              setSelectedBus((current) =>
+                current
+                  ? {
+                      ...current,
+                      busId: refreshedArrival.busId,
+                      estimatedArrivalSeconds: refreshedArrival.etaSeconds,
+                      isAccessible: refreshedArrival.wheelchairAccessible,
+                      nextStop: refreshedArrival.destination,
+                    }
+                  : current,
+              );
+            }
+          })
+          .catch(() => {
+            // The restored journey remains usable with its last known data.
+          });
+      }
+    });
+    return () => {
+      active = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -1576,8 +2298,11 @@ function SgGoAssistApp() {
     [journeyRequirements],
   );
   const alightingAssistanceTypes = useMemo(
-    () => assistanceTypesForPhase(requirements, "ALIGHTING"),
-    [requirements],
+    () =>
+      appPreferences.alightingAssistance
+        ? assistanceTypesForPhase(journeyRequirements, "ALIGHTING")
+        : [],
+    [appPreferences.alightingAssistance, journeyRequirements],
   );
   const selectedNeeds = useMemo(
     () => assistanceTypes.map(readableAssistanceType).join(", "),
@@ -1586,15 +2311,18 @@ function SgGoAssistApp() {
   const hasUnsavedProfileNeeds = useMemo(
     () =>
       activeProfile
-        ? profilePreferencesChanged(activeProfile, requirements, appPreferences)
+        ? profilePreferencesChanged(activeProfile, appPreferences)
         : false,
-    [activeProfile, appPreferences, requirements],
+    [activeProfile, appPreferences],
   );
   const currentRouteStop = routeStops[currentStopIndex] ?? null;
   const nextRouteStop = routeStops[currentStopIndex + 1] ?? null;
   const plannedRouteStops = useMemo(
-    () => routeStopsForBus(selectedBus, selectedStop, selectedArrival),
-    [selectedArrival, selectedBus, selectedStop],
+    () =>
+      routeStops.length > 0
+        ? routeStops
+        : routeStopsForBus(selectedBus, selectedStop, selectedArrival),
+    [routeStops, selectedArrival, selectedBus, selectedStop],
   );
   const selectedAlightingStopIndex = routeStopIndex(
     routeStops,
@@ -1605,15 +2333,409 @@ function SgGoAssistApp() {
     currentStopIndex,
     selectedAlightingStop,
   );
-  const destinationApproaching =
-    stopsRemaining !== null && stopsRemaining > 1 && stopsRemaining <= 2;
   const selectedStopIsNext =
     Boolean(selectedAlightingStop && nextRouteStop) &&
     selectedAlightingStop?.busStopCode === nextRouteStop?.busStopCode;
   const selectedStopReached =
     Boolean(selectedAlightingStop && currentRouteStop) &&
     selectedAlightingStop?.busStopCode === currentRouteStop?.busStopCode;
-  const visibleStops = useMemo(() => {
+  const focusedAssistOnboard =
+    Boolean(selectedBus) &&
+    (journeyPhase === "ONBOARD" ||
+      journeyPhase === "DESTINATION_APPROACHING" ||
+      journeyPhase === "DESTINATION_NEXT" ||
+      journeyPhase === "DISEMBARKING" ||
+      journeyPhase === "ALIGHTING");
+  const focusedAssistHasActiveJourney =
+    Boolean(selectedBus && selectedStop) &&
+    (journeyPhase === "WAITING_FOR_BUS" ||
+      journeyPhase === "BUS_ARRIVING" ||
+      journeyPhase === "BOARDING" ||
+      focusedAssistOnboard);
+  const focusedAssistNearbyStops = useMemo(() => {
+    const candidates = [...nearbyStops];
+    if (
+      selectedStop &&
+      !candidates.some(
+        (candidate) => candidate.busStopCode === selectedStop.busStopCode,
+      )
+    ) {
+      candidates.push(selectedStop);
+    }
+    return candidates;
+  }, [nearbyStops, selectedStop]);
+  const focusedAssistArrivalCandidates = useMemo(() => {
+    const candidates = [...focusedAssistArrivals];
+    if (
+      selectedArrival &&
+      !candidates.some((candidate) => candidate.busId === selectedArrival.busId)
+    ) {
+      candidates.push(selectedArrival);
+    }
+    return candidates;
+  }, [focusedAssistArrivals, selectedArrival]);
+  const focusedAssistActiveJourney =
+    focusedAssistHasActiveJourney && selectedBus
+      ? {
+          bus: selectedBus,
+          boardingStopCode: selectedStop?.busStopCode ?? null,
+          arrival: selectedArrival,
+          phase: journeyPhase,
+          vehicleStatus,
+        }
+      : null;
+  const focusedAssistActiveBus: BusAtStop | null = selectedBus
+    ? {
+        id: selectedBus.busId,
+        serviceNo: selectedBus.busService,
+        vehicleId: selectedBus.busId,
+        destination: selectedArrival?.destination ?? selectedBus.nextStop,
+        wheelchairAccessible: selectedBus.isAccessible,
+        etaSeconds: selectedArrival?.etaSeconds,
+        confidence: vehicleStatus === "ARRIVED" ? "HIGH" : "MEDIUM",
+        source:
+          vehicleStatus === "ARRIVED" ? "VEHICLE_TELEMETRY" : "ACTIVE_JOURNEY",
+        activeJourneyMatch: focusedAssistHasActiveJourney,
+      }
+    : null;
+  const activeJourneyRequestEvent = events.find(
+    (event) => event.type === "REQUEST_STATUS" && event.requestId === requestId,
+  );
+  const activeJourneyFocusedRequest: FocusedAssistRequestContext = {
+    requestId,
+    status: requestStatus,
+    assistanceType:
+      activeJourneyRequestEvent?.type === "REQUEST_STATUS"
+        ? (activeJourneyRequestEvent.assistanceTypes[0] ?? null)
+        : null,
+    submitting: isLoading && Boolean(selectedBus),
+    bus: focusedAssistActiveBus,
+    stop: selectedStop,
+    error: null,
+  };
+  const effectiveFocusedAssistRequest = focusedAssistOnboard
+    ? requestId && requestPhase === "ALIGHTING"
+      ? activeJourneyFocusedRequest
+      : {
+          requestId: null,
+          status: null,
+          assistanceType: null,
+          submitting: false,
+          bus: focusedAssistActiveBus,
+          stop: selectedStop,
+          error: null,
+        }
+    : focusedAssistRequest.requestId ||
+        focusedAssistRequest.submitting ||
+        focusedAssistRequest.error
+      ? focusedAssistRequest
+      : requestId && requestPhase === "BOARDING"
+        ? activeJourneyFocusedRequest
+        : focusedAssistRequest;
+  const focusedAssistContext = useMemo(
+    () =>
+      deriveFocusedAssistContext(
+        {
+          locating: focusedAssistLocating,
+          location: currentLocation,
+          nearbyStops: focusedAssistNearbyStops,
+          manuallySelectedStop: focusedAssistManualStop,
+          arrivals: focusedAssistArrivalCandidates,
+          activeJourney: focusedAssistActiveJourney,
+          onboard: focusedAssistOnboard,
+          destinationName: selectedAlightingStop?.description ?? null,
+          destinationIsNext:
+            selectedStopIsNext || journeyPhase === "DESTINATION_NEXT",
+          selectedBusId: focusedAssistSelectedBusId,
+          request: effectiveFocusedAssistRequest,
+        },
+        busPresenceProviderRef.current,
+      ),
+    [
+      currentLocation,
+      effectiveFocusedAssistRequest,
+      focusedAssistActiveJourney,
+      focusedAssistArrivalCandidates,
+      focusedAssistLocating,
+      focusedAssistManualStop,
+      focusedAssistNearbyStops,
+      focusedAssistOnboard,
+      focusedAssistSelectedBusId,
+      journeyPhase,
+      selectedAlightingStop?.description,
+      selectedStopIsNext,
+    ],
+  );
+  const focusedAssistController = useMemo<FocusedAssistController>(
+    () =>
+      createFocusedAssistController({
+        getContext: () => focusedAssistContext,
+        selectBus: (busId) => {
+          setFocusedAssistSelectedBusId(busId);
+          setFocusedAssistRequest((current) => ({
+            ...current,
+            error: null,
+          }));
+        },
+        requestRamp: requestFocusedAssistRamp,
+        requestExtraTime: requestFocusedAssistExtraTime,
+        requestAlightingAssistance: requestFocusedAlightingAssistance,
+        refreshContext: refreshFocusedAssistContext,
+        reportError: (message) =>
+          setFocusedAssistRequest((current) => ({
+            ...current,
+            submitting: false,
+            error: message,
+          })),
+      }),
+    [focusedAssistContext],
+  );
+  const assistantCurrentStop = focusedAssistOnboard
+    ? currentRouteStop
+    : (focusedAssistContext.stop ?? selectedStop);
+  const assistantRampStatus =
+    effectiveFocusedAssistRequest.assistanceType === "EXTENDED_DWELL_TIME" &&
+    (focusedAssistContext.state === "REQUESTING" ||
+      focusedAssistContext.state === "REQUESTED" ||
+      focusedAssistContext.state === "ACKNOWLEDGED")
+      ? focusedAssistContext.selectedBus?.confidence === "HIGH"
+        ? "ONE_BUS_PRESENT"
+        : "BUS_CONFIRMATION_REQUIRED"
+      : focusedAssistContext.state;
+  const assistantContext = useMemo<AssistantContext>(
+    () => ({
+      journeyStage: journeyPhase,
+      hasActiveJourney: focusedAssistHasActiveJourney,
+      onboard: focusedAssistOnboard,
+      currentStop: assistantCurrentStop
+        ? {
+            busStopCode: assistantCurrentStop.busStopCode,
+            description: assistantCurrentStop.description,
+          }
+        : null,
+      selectedService:
+        selectedBus?.busService ??
+        focusedAssistContext.selectedBus?.serviceNo ??
+        null,
+      destination: selectedAlightingStop?.description ?? null,
+      nextStop: nextRouteStop?.description ?? null,
+      stopsRemaining,
+      busesAtStop: focusedAssistContext.buses.map((bus) => ({
+        id: bus.id,
+        serviceNo: bus.serviceNo,
+        destination: bus.destination,
+        wheelchairAccessible: bus.wheelchairAccessible,
+        confidence: bus.confidence,
+      })),
+      selectedBusAtStop: focusedAssistContext.selectedBus
+        ? {
+            id: focusedAssistContext.selectedBus.id,
+            serviceNo: focusedAssistContext.selectedBus.serviceNo,
+            destination: focusedAssistContext.selectedBus.destination,
+            wheelchairAccessible:
+              focusedAssistContext.selectedBus.wheelchairAccessible,
+            confidence: focusedAssistContext.selectedBus.confidence,
+          }
+        : null,
+      busArrivalSeconds:
+        selectedArrival?.etaSeconds ??
+        focusedAssistContext.selectedBus?.etaSeconds ??
+        null,
+      rampStatus: assistantRampStatus,
+      alightingAssistanceStatus:
+        requestPhase === "ALIGHTING" ? requestStatus : null,
+      walkingGuidanceActive: directionsActive,
+      walkingRouteAvailable: Boolean(walkingRoute),
+      preferences: {
+        wheelchairAssistance: appPreferences.wheelchairAssistance,
+        spokenGuidance: appPreferences.spokenGuidance,
+        simplifiedJourney: appPreferences.simplifiedJourney,
+        vibrationAlerts: appPreferences.vibrationAlerts !== "OFF",
+      },
+    }),
+    [
+      appPreferences.simplifiedJourney,
+      appPreferences.spokenGuidance,
+      appPreferences.vibrationAlerts,
+      appPreferences.wheelchairAssistance,
+      assistantCurrentStop,
+      assistantRampStatus,
+      directionsActive,
+      focusedAssistContext.buses,
+      focusedAssistContext.selectedBus,
+      focusedAssistHasActiveJourney,
+      focusedAssistOnboard,
+      journeyPhase,
+      nextRouteStop?.description,
+      requestPhase,
+      requestStatus,
+      selectedAlightingStop?.description,
+      selectedArrival?.etaSeconds,
+      selectedBus?.busService,
+      stopsRemaining,
+      walkingRoute,
+    ],
+  );
+  const assistantContextRef = useRef(assistantContext);
+  assistantContextRef.current = assistantContext;
+  const focusedAssistControllerRef = useRef(focusedAssistController);
+  focusedAssistControllerRef.current = focusedAssistController;
+  const voiceAssistantActionHandlersRef = useRef<Omit<
+    VoiceAssistantActions,
+    "getContext"
+  > | null>(null);
+  voiceAssistantActionHandlersRef.current = {
+    refreshLocationContext: async () => {
+      await focusedAssistControllerRef.current.refreshContext();
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      return assistantContextRef.current.currentStop
+        ? { ok: true }
+        : {
+            ok: false,
+            reason: "I couldn’t identify your current bus stop.",
+          };
+    },
+    requestRamp: async (busId) => {
+      const sent =
+        await focusedAssistControllerRef.current.requestRampForBus(busId);
+      return sent
+        ? { ok: true }
+        : {
+            ok: false,
+            reason:
+              focusedAssistControllerRef.current.getContext().request.error ??
+              "A ramp request is already active or the bus can no longer be confirmed.",
+          };
+    },
+    requestExtraBoardingTime: async (busId) => {
+      const sent =
+        await focusedAssistControllerRef.current.requestExtraTimeForBus(busId);
+      return sent
+        ? { ok: true }
+        : {
+            ok: false,
+            reason:
+              focusedAssistControllerRef.current.getContext().request.error ??
+              "An assistance request is already active or the bus can no longer be confirmed.",
+          };
+    },
+    requestAlightingAssistance: async () => ({
+      ok: await focusedAssistControllerRef.current.requestAlightingAssistance(),
+      reason: "I couldn’t send your alighting assistance request.",
+    }),
+    startDirectionsToSelectedStop: startVoiceWalkingGuidance,
+    stopGuidance: () => {
+      if (!directionsActive) {
+        return { ok: false, reason: "Walking guidance isn’t active." };
+      }
+      exitGuidance();
+      return { ok: true };
+    },
+    repeatGuidance: () => {
+      const latest = guidanceServiceRef.current!.snapshot().latestSpokenText;
+      if (!latest) {
+        return {
+          ok: false,
+          reason: "There isn’t a guidance message to repeat yet.",
+        };
+      }
+      if (
+        shouldSuppressAssistantTts({
+          platform: Platform.OS,
+          screenReaderDetected,
+        })
+      ) {
+        AccessibilityInfo.announceForAccessibility(latest);
+        return { ok: true, text: latest };
+      }
+      return guidanceServiceRef.current!.repeatLatest({ force: true })
+        ? { ok: true, text: latest }
+        : { ok: false, reason: "Speech is unavailable in this browser." };
+    },
+    endJourney: async () => ({
+      ok: await endJourney("ENDED_EARLY"),
+      reason: "I couldn’t end your journey.",
+    }),
+    speakResponse: (text) => {
+      if (
+        shouldSuppressAssistantTts({
+          platform: Platform.OS,
+          screenReaderDetected,
+        })
+      ) {
+        AccessibilityInfo.announceForAccessibility(text);
+        return false;
+      }
+      return guidanceServiceRef.current!.speakAssistantResponse(text);
+    },
+  };
+  const voiceAssistantControllerRef = useRef<VoiceAssistantController | null>(
+    null,
+  );
+  if (!voiceAssistantControllerRef.current) {
+    voiceAssistantControllerRef.current = new VoiceAssistantController(
+      {
+        getContext: () => assistantContextRef.current,
+        refreshLocationContext: () =>
+          voiceAssistantActionHandlersRef.current!.refreshLocationContext(),
+        requestRamp: (busId) =>
+          voiceAssistantActionHandlersRef.current!.requestRamp(busId),
+        requestExtraBoardingTime: (busId) =>
+          voiceAssistantActionHandlersRef.current!.requestExtraBoardingTime(
+            busId,
+          ),
+        requestAlightingAssistance: () =>
+          voiceAssistantActionHandlersRef.current!.requestAlightingAssistance(),
+        startDirectionsToSelectedStop: () =>
+          voiceAssistantActionHandlersRef.current!.startDirectionsToSelectedStop(),
+        stopGuidance: () =>
+          voiceAssistantActionHandlersRef.current!.stopGuidance(),
+        repeatGuidance: () =>
+          voiceAssistantActionHandlersRef.current!.repeatGuidance(),
+        endJourney: () => voiceAssistantActionHandlersRef.current!.endJourney(),
+        speakResponse: (text) =>
+          voiceAssistantActionHandlersRef.current!.speakResponse(text),
+      },
+      {
+        developmentLogging: __DEV__ && process.env.NODE_ENV !== "test",
+      },
+    );
+  }
+  useEffect(() => {
+    if (
+      !selectedBus ||
+      !selectedArrival ||
+      (journeyPhase !== "WAITING_FOR_BUS" &&
+        journeySetupState !== "WAITING_FOR_BUS")
+    ) {
+      return;
+    }
+    const minutes = Math.max(1, Math.ceil(selectedArrival.etaSeconds / 60));
+    const approaching = selectedArrival.etaSeconds <= 90;
+    if (approaching && !appPreferences.warnBusApproaching) {
+      return;
+    }
+    const band = approaching
+      ? "approaching"
+      : selectedArrival.etaSeconds <= 360
+        ? "five-minutes"
+        : "later";
+    announceSemanticGuidance({
+      haptic: approaching ? "WARNING" : undefined,
+      id: `bus-${selectedArrival.busId}-eta-${band}`,
+      priority: "BUS",
+      text: approaching
+        ? `Service ${selectedBus.busService} is approaching.`
+        : `Service ${selectedBus.busService} is approximately ${minutes} minutes away.`,
+    });
+  }, [
+    appPreferences.warnBusApproaching,
+    journeyPhase,
+    journeySetupState,
+    selectedArrival,
+    selectedBus,
+  ]);
+  const filteredNearbyStops = useMemo(() => {
     const query = stopSearchQuery.trim().toLowerCase();
     if (!query) {
       return nearbyStops;
@@ -1637,6 +2759,99 @@ function SgGoAssistApp() {
       );
     });
   }, [nearbyStops, stopSearchQuery]);
+  useEffect(() => {
+    if (
+      !appPreferences.preferAccessibleStops ||
+      !nearbyOpen ||
+      !currentLocation ||
+      filteredNearbyStops.length === 0
+    ) {
+      return undefined;
+    }
+    const controller = new AbortController();
+    const shortlist = [...filteredNearbyStops]
+      .sort((first, second) => first.distanceMeters - second.distanceMeters)
+      .slice(0, 3);
+    setAccessibleStopRoutes((current) => ({
+      ...current,
+      ...Object.fromEntries(
+        shortlist.map((stop) => [stop.busStopCode, "CHECKING" as const]),
+      ),
+    }));
+    void (async () => {
+      for (const stop of shortlist) {
+        try {
+          const route = await routingProviderRef.current!.getRoute({
+            origin: currentLocation,
+            destination: stop,
+            destinationLabel: stop.description,
+            mobilityMode: "WHEELCHAIR",
+            accessibilityPreferences: {
+              avoidSteps: true,
+              avoidSteepSlopes: appPreferences.avoidSteepSlopes,
+              preferSmoothSurfaces: appPreferences.preferSmoothSurfaces,
+            },
+            signal: controller.signal,
+          });
+          if (controller.signal.aborted) return;
+          setAccessibleStopRoutes((current) => ({
+            ...current,
+            [stop.busStopCode]:
+              route.accessibility.confidence === "LIMITED_DATA"
+                ? "LIMITED_DATA"
+                : "AVAILABLE",
+          }));
+        } catch (routeError) {
+          if (controller.signal.aborted) return;
+          setAccessibleStopRoutes((current) => ({
+            ...current,
+            [stop.busStopCode]:
+              routeError instanceof RoutingProviderError &&
+              (routeError.code === "NO_ROUTE" ||
+                routeError.code === "KNOWN_BARRIER")
+                ? "UNAVAILABLE"
+                : "LIMITED_DATA",
+          }));
+        }
+      }
+    })();
+    return () => controller.abort();
+  }, [
+    appPreferences.avoidSteepSlopes,
+    appPreferences.preferSmoothSurfaces,
+    appPreferences.preferAccessibleStops,
+    currentLocation?.latitude,
+    currentLocation?.longitude,
+    filteredNearbyStops,
+    nearbyOpen,
+  ]);
+  const visibleNearbyStops = useMemo(() => {
+    if (!appPreferences.preferAccessibleStops) {
+      return filteredNearbyStops;
+    }
+    return rankStopsForWheelchair(
+      filteredNearbyStops,
+      accessibleStopRoutes,
+      accessibleRoutesOnly,
+    );
+  }, [
+    accessibleRoutesOnly,
+    accessibleStopRoutes,
+    appPreferences.preferAccessibleStops,
+    filteredNearbyStops,
+  ]);
+  const recommendedAccessibleStopCode = appPreferences.preferAccessibleStops
+    ? (visibleNearbyStops.find(
+        (stop) => accessibleStopRoutes[stop.busStopCode] === "AVAILABLE",
+      )?.busStopCode ?? visibleNearbyStops[0]?.busStopCode)
+    : undefined;
+  const visibleMapStops = useMemo(() => {
+    const byCode = new Map<string, NearbyBusStop>();
+    for (const stop of regionalStops) byCode.set(stop.busStopCode, stop);
+    for (const stop of nearbyStops) byCode.set(stop.busStopCode, stop);
+    if (selectedStop) byCode.set(selectedStop.busStopCode, selectedStop);
+    return [...byCode.values()];
+  }, [nearbyStops, regionalStops, selectedStop]);
   const availableDestinationStops = useMemo(() => {
     const query = destinationSearchQuery.trim().toLowerCase();
     const upcoming = plannedRouteStops.slice(1);
@@ -1668,14 +2883,133 @@ function SgGoAssistApp() {
     () => mapCandidateJourneyPoint(mapViewport.center),
     [mapViewport.center.latitude, mapViewport.center.longitude],
   );
-  const homeDiscovery = homeDiscoveryStatus(transportDiscovery);
-  const retryHomeDiscovery =
+  const canRepeatJourneyGuidance =
+    appPreferences.repeatAudio &&
+    hasSpokenGuidanceInCurrentFlow &&
+    Boolean(selectedBus || selectedStop);
+  const isJourneyLocationLoading =
+    screen === "JOURNEY_IDLE" &&
+    isLoading &&
+    loadingMessage === "Finding nearby bus stops...";
+  const isJourneyManualStopsLoading =
+    screen === "JOURNEY_IDLE" &&
+    isLoading &&
+    loadingMessage === "Loading nearby bus stops...";
+  const isJourneyEntryLoading =
+    isJourneyLocationLoading || isJourneyManualStopsLoading;
+  const journeyEntryLoadingPresentationRef = useRef<{
+    kind: "LOCATING" | "MAP_LOADING";
+    message: string;
+  }>({
+    kind: "LOCATING",
+    message: "Finding nearby bus stops...",
+  });
+  if (isJourneyLocationLoading) {
+    journeyEntryLoadingPresentationRef.current = {
+      kind: "LOCATING",
+      message: "Finding nearby bus stops...",
+    };
+  } else if (isJourneyManualStopsLoading) {
+    journeyEntryLoadingPresentationRef.current = {
+      kind: "MAP_LOADING",
+      message: "Loading bus stop choices...",
+    };
+  }
+  const journeyEntryLoadingVisible = useDelayedLoadingVisibility(
+    isJourneyEntryLoading,
+  );
+  const findBusPanelState = resolveFindBusPanelState({
+    discovery: transportDiscovery,
+    loadingKind: journeyEntryLoadingPresentationRef.current.kind,
+    loadingMessage: journeyEntryLoadingPresentationRef.current.message,
+    loadingVisible: journeyEntryLoadingVisible,
+  });
+  const retryJourneyDiscovery =
     transportDiscovery.lastSuccessfulLocation &&
     (transportDiscovery.nearbyStopsStatus === "network_error" ||
       transportDiscovery.nearbyStopsStatus === "service_error" ||
       transportDiscovery.nearbyStopsStatus === "empty")
       ? showNearbyStopsInArea
       : findMyBusStop;
+  useEffect(() => {
+    if (screen !== "STOP") {
+      return;
+    }
+
+    regionalStopsRequestRef.current.controller?.abort();
+    const controller = new AbortController();
+    const requestId = regionalStopsRequestRef.current.id + 1;
+    regionalStopsRequestRef.current = { id: requestId, controller };
+    setRegionalStopsStatus("LOADING");
+
+    const timeout = setTimeout(() => {
+      const query = {
+        latitude: mapViewport.center.latitude,
+        longitude: mapViewport.center.longitude,
+        radiusMeters: regionalStopRadiusForZoom(mapViewport.zoom),
+        limit: 500,
+      };
+      void fetchRegionalBusStops(query, controller.signal)
+        .then((result) => {
+          if (regionalStopsRequestRef.current.id !== requestId) return;
+          setRegionalStops(result.stops);
+          setRegionalStopsStatus("SUCCESS");
+          if (__DEV__ && process.env.NODE_ENV !== "test") {
+            console.debug(
+              `[BusStops] Loaded ${result.stops.length} stops for viewport`,
+              {
+                center: {
+                  latitude: query.latitude,
+                  longitude: query.longitude,
+                },
+                radiusMeters: query.radiusMeters,
+              },
+            );
+          }
+        })
+        .catch((apiError: unknown) => {
+          if (
+            apiError instanceof DOMException &&
+            apiError.name === "AbortError"
+          )
+            return;
+          if (regionalStopsRequestRef.current.id !== requestId) return;
+          if (__DEV__ && process.env.NODE_ENV !== "test") {
+            console.error("[BusStops] Failed to load visible stops", {
+              endpoint:
+                apiError instanceof BusStopRequestError
+                  ? apiError.endpoint
+                  : "/api/bus-stops/nearby",
+              status:
+                apiError instanceof BusStopRequestError
+                  ? apiError.status
+                  : null,
+              center: {
+                latitude: query.latitude,
+                longitude: query.longitude,
+              },
+              radiusMeters: query.radiusMeters,
+              error:
+                apiError instanceof Error
+                  ? apiError.message
+                  : "Unknown bus-stop request error",
+            });
+          }
+          setRegionalStopsStatus("ERROR");
+        });
+    }, 225);
+
+    return () => {
+      clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [
+    mapViewport.center.latitude,
+    mapViewport.center.longitude,
+    mapViewport.zoom,
+    regionalStopsRetryKey,
+    screen,
+  ]);
   useEffect(() => {
     if (!busStopSearch.isOpen) {
       return;
@@ -1701,27 +3035,86 @@ function SgGoAssistApp() {
       requestId,
     }));
 
+    const controller = new AbortController();
     const timeout = setTimeout(() => {
-      const results = searchTransport(query);
-      if (searchRequestIdRef.current !== requestId) {
-        return;
-      }
-      const hasResults =
-        results.stops.length > 0 ||
-        results.places.length > 0 ||
-        results.services.length > 0;
-      setBusStopSearch((current) => ({
-        ...current,
-        status: hasResults ? "SUCCESS" : "EMPTY",
-        results,
-        requestId,
-      }));
-    }, 300);
+      const fallbackStops =
+        process.env.NODE_ENV === "test"
+          ? localSearchStops
+          : [...regionalStops, ...nearbyStops];
+      const localResults = searchTransport(query, fallbackStops);
+      void searchBusStops(query, controller.signal)
+        .then((response) => {
+          if (searchRequestIdRef.current !== requestId) return;
+          const resultStops =
+            process.env.NODE_ENV === "test"
+              ? Array.from(
+                  new Map(
+                    [...response.stops, ...localResults.stops].map((stop) => [
+                      stop.busStopCode,
+                      stop,
+                    ]),
+                  ).values(),
+                )
+              : response.stops;
+          const services = Array.from(
+            new Set(
+              resultStops
+                .flatMap((stop) => stop.services)
+                .filter((service) =>
+                  normalizeSearchText(service).includes(
+                    normalizeSearchText(query),
+                  ),
+                ),
+            ),
+          )
+            .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+            .slice(0, 5);
+          const results: BusStopSearchResults = {
+            stops: resultStops,
+            places: localResults.places,
+            services,
+          };
+          const hasResults =
+            results.stops.length > 0 ||
+            results.places.length > 0 ||
+            results.services.length > 0;
+          setBusStopSearch((current) => ({
+            ...current,
+            status: hasResults ? "SUCCESS" : "EMPTY",
+            results,
+            requestId,
+          }));
+        })
+        .catch((apiError: unknown) => {
+          if (
+            apiError instanceof DOMException &&
+            apiError.name === "AbortError"
+          )
+            return;
+          if (searchRequestIdRef.current !== requestId) return;
+          const hasFallbackResults =
+            localResults.stops.length > 0 ||
+            localResults.places.length > 0 ||
+            localResults.services.length > 0;
+          setBusStopSearch((current) => ({
+            ...current,
+            status: hasFallbackResults ? "SUCCESS" : "ERROR",
+            results: localResults,
+            requestId,
+          }));
+        });
+    }, 250);
 
-    return () => clearTimeout(timeout);
-  }, [busStopSearch.isOpen, busStopSearch.query]);
+    return () => {
+      clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [busStopSearch.isOpen, busStopSearch.query, nearbyStops, regionalStops]);
   const updateBottomSheetState = useCallback((state: BottomSheetState) => {
     setBottomSheetState(state);
+    if (state === "HIDDEN_PEEK") {
+      setNearbyOpen(false);
+    }
     if (state !== "HIDDEN_PEEK") {
       setLastExpandedSheetState(state);
     }
@@ -1777,7 +3170,7 @@ function SgGoAssistApp() {
     [],
   );
   const visibleLandmarks = useMemo(() => {
-    const stopCodes = new Set(visibleStops.map((stop) => stop.busStopCode));
+    const stopCodes = new Set(visibleMapStops.map((stop) => stop.busStopCode));
     const query = stopSearchQuery.trim().toLowerCase();
     return orientationLandmarks.filter((landmark) => {
       const relatedToVisibleStop = landmark.relatedStopCodes.some((code) =>
@@ -1792,7 +3185,7 @@ function SgGoAssistApp() {
         (relatedToVisibleStop || Boolean(query && queryMatch))
       );
     });
-  }, [stopSearchQuery, visibleStops]);
+  }, [stopSearchQuery, visibleMapStops]);
   const selectedLandmark = useMemo(
     () =>
       selectedLandmarkId
@@ -1807,7 +3200,7 @@ function SgGoAssistApp() {
     [selectedLandmarkId, selectedStop],
   );
   useEffect(() => {
-    if (!currentLocation || mapCameraMode !== "FOLLOW_USER") {
+    if (!currentLocation || followState === "FREE") {
       return;
     }
 
@@ -1853,7 +3246,7 @@ function SgGoAssistApp() {
     );
   }, [
     currentLocation,
-    mapCameraMode,
+    followState,
     mapCameraGeometry,
     mapViewport.center,
     mapViewport.zoom,
@@ -1866,13 +3259,14 @@ function SgGoAssistApp() {
       setSelectedStop(stop);
       setSelectedLandmarkId(null);
       setBottomSheetContent("STOP_DETAILS");
+      setNearbyOpen(false);
       updateBottomSheetState("MEDIUM");
-      setDirectionsActive(false);
-      setFollowMode(false);
+      setGuidanceMode("INACTIVE");
+      setFollowState("FREE");
       handleStopSelectionCamera({
         currentLocation,
+        currentGeometry: mapCameraGeometryRef.current,
         geometry: createMapCameraGeometry({
-          bottomSheetState: "MEDIUM",
           mapLayout: measuredMapLayout,
         }),
         intentId: selectionIntentId,
@@ -1881,9 +3275,7 @@ function SgGoAssistApp() {
         stop,
         viewport: mapViewport,
       });
-      AccessibilityInfo.announceForAccessibility(
-        `Selected bus stop, ${stop.description}.`,
-      );
+      announceGuidance(`Selected bus stop, ${stop.description}.`);
     },
     [
       currentLocation,
@@ -1895,19 +3287,11 @@ function SgGoAssistApp() {
   );
   const markMapMoved = useCallback(() => {
     selectedStopCameraIntentRef.current += 1;
-    runCameraCommand("manualPan", "USER_PAN", (current) => ({
-      ...current,
-      center: {
-        latitude: current.center.latitude + 0.0038,
-        longitude: current.center.longitude + 0.0108,
-        accuracyMeters: 0,
-      },
-      zoom: clampMapZoom(current.zoom - 1, "USER_PAN"),
-      bearing: current.bearing,
-      pitch: current.pitch,
-    }));
-    setFollowMode(false);
-  }, [runCameraCommand]);
+    setViewportSource("USER_PAN");
+    setMapCameraMode("MANUAL");
+    setMapManuallyMoved(true);
+    setFollowState("FREE");
+  }, []);
   const handleProviderViewportChange = useCallback(
     ({ center, zoom, bearing, pitch }: ProviderViewportChange) => {
       selectedStopCameraIntentRef.current += 1;
@@ -1923,34 +3307,33 @@ function SgGoAssistApp() {
         }),
         "MANUAL",
       );
-      setFollowMode(false);
+      setFollowState("FREE");
     },
     [runCameraCommand],
   );
   const focusStopCluster = useCallback(
     (center: MapCoordinate) => {
       runCameraCommand(
-        "focusCluster",
-        "SEARCH_RESULT",
+        "expandCluster",
+        "CLUSTER_EXPAND",
         (current) => ({
           ...current,
           center,
           zoom: clampMapZoom(
-            Math.min(Math.max(current.zoom + 1.25, 15.5), current.zoom + 2),
-            "SEARCH_RESULT",
+            Math.min(18, Math.max(current.zoom + 2, 16)),
+            "CLUSTER_EXPAND",
           ),
           bearing: current.bearing,
           pitch: current.pitch,
         }),
         "CLUSTER_FOCUS",
       );
-      updateBottomSheetState("COLLAPSED");
-      setFollowMode(false);
+      setFollowState("FREE");
       AccessibilityInfo.announceForAccessibility(
         "Zooming into clustered nearby bus stops.",
       );
     },
-    [runCameraCommand, updateBottomSheetState],
+    [runCameraCommand],
   );
   const recenterStopMap = useCallback(() => {
     const focusZoom = 15;
@@ -1972,35 +3355,511 @@ function SgGoAssistApp() {
       }),
       "FOLLOW_USER",
     );
-    setFollowMode(false);
-  }, [bottomSheetState, currentLocation, runCameraCommand]);
+    setFollowState("FOLLOW_USER");
+  }, [currentLocation, runCameraCommand]);
   const confirmSelectedStop = useCallback(() => {
     if (selectedStop) {
+      if (focusedAssistSelectingStopRef.current) {
+        const focusedStop = selectedStop;
+        focusedAssistSelectingStopRef.current = false;
+        setFocusedAssistManualStop(focusedStop);
+        setFocusedAssistSelectedBusId(null);
+        setFocusedAssistArrivals([]);
+        setSelectedStop(focusedAssistPreviousSelectedStopRef.current);
+        focusedAssistPreviousSelectedStopRef.current = null;
+        setScreen("ACCESSIBILITY");
+        focusedAssistLocationRequestRef.current += 1;
+        void loadFocusedAssistArrivals(focusedStop);
+        return;
+      }
       confirmBusStop(selectedStop);
     }
   }, [selectedStop]);
+  const selectServiceFromSelectedStop = useCallback(
+    (serviceNo: string) => {
+      if (selectedStop) {
+        confirmBusStop(selectedStop, serviceNo);
+      }
+    },
+    [selectedStop],
+  );
   const hearSelectedStop = useCallback(() => {
     if (selectedStop) {
-      AccessibilityInfo.announceForAccessibility(
-        stopAnnouncement(selectedStop),
-      );
+      announceGuidance(stopAnnouncement(selectedStop));
     }
   }, [selectedStop]);
+  const requestWalkingDirections = useCallback(
+    async (
+      reason: "INITIAL" | "RECALCULATE" = "INITIAL",
+      requestedMobilityMode: MobilityMode = mobilityMode,
+    ) => {
+      if (!selectedStop) {
+        return null;
+      }
+      setGuidanceMode("PREVIEW");
+      setDirectionsError(null);
+      setBottomSheetContent("WALKING_TO_STOP");
+      updateBottomSheetState("MEDIUM");
+      if (!currentLocation) {
+        resetWalkingRouteMonitoring();
+        setWalkingRoute(null);
+        setDirectionsStatus("NEEDS_LOCATION");
+        AccessibilityInfo.announceForAccessibility(
+          "Your location is needed for walking directions.",
+        );
+        return null;
+      }
+
+      directionsRequestRef.current.controller?.abort();
+      const controller = new AbortController();
+      const requestId = directionsRequestRef.current.id + 1;
+      const requestedStopCode = selectedStop.busStopCode;
+      directionsRequestRef.current = { id: requestId, controller };
+      setDirectionsStatus("LOADING");
+      resetWalkingRouteMonitoring();
+      setWalkingRoute(null);
+      setFollowState("FREE");
+
+      try {
+        const route = await routingProviderRef.current!.getRoute({
+          origin: currentLocation,
+          destination: selectedStop,
+          destinationLabel: selectedStop.description,
+          mobilityMode: requestedMobilityMode,
+          accessibilityPreferences: {
+            avoidSteps: true,
+            avoidSteepSlopes: appPreferences.avoidSteepSlopes,
+            preferSmoothSurfaces: appPreferences.preferSmoothSurfaces,
+          },
+          signal: controller.signal,
+        });
+        if (
+          requestId !== directionsRequestRef.current.id ||
+          requestedStopCode !== selectedStop.busStopCode
+        ) {
+          return null;
+        }
+        setWalkingRoute(route);
+        setDirectionsStatus("READY");
+        setDirectionsError(null);
+        setMapLayers((current) => ({ ...current, walkingRoute: true }));
+        setViewportSource("ROUTE");
+        setMapCameraMode("ROUTE_FOCUS");
+        setMapManuallyMoved(false);
+        setRouteFitKey((current) => current + 1);
+        if (reason === "RECALCULATE") {
+          announceSemanticGuidance({
+            haptic: "START",
+            id: `${requestedMobilityMode.toLowerCase()}-route-${requestId}-recalculated`,
+            priority: "WALKING",
+            text: `${requestedMobilityMode === "WHEELCHAIR" ? "Wheelchair" : "Walking"} route recalculated. ${friendlyDistance(route.distanceMeters)} remaining.`,
+          });
+        }
+        if (requestedMobilityMode === "WHEELCHAIR") {
+          announceSemanticGuidance({
+            haptic: "START",
+            id: `wheelchair-route-${requestId}-selected`,
+            kind: "ACCESSIBLE_ROUTE_SELECTED",
+            priority: "WALKING",
+            text: "Wheelchair-friendly route selected. Based on available accessibility data.",
+          });
+          const accessibilityWarning = route.accessibility.warnings.find(
+            (warning) => warning.code === "INCOMPLETE_ACCESSIBILITY_DATA",
+          );
+          if (accessibilityWarning) {
+            announceSemanticGuidance({
+              id: `wheelchair-route-${requestId}-accessibility-warning`,
+              kind: "ACCESSIBILITY_WARNING",
+              priority: "WALKING",
+              text: accessibilityWarning.message,
+            });
+          }
+        }
+        if (requestedMobilityMode === "WALKING") {
+          AccessibilityInfo.announceForAccessibility(
+            `Walking directions, approximately ${friendlyWalkingMinutes(route.durationSeconds)} minutes, ${friendlyDistance(route.distanceMeters)}.`,
+          );
+        }
+        return route;
+      } catch (routeError) {
+        if (
+          routeError instanceof DOMException &&
+          routeError.name === "AbortError"
+        ) {
+          return null;
+        }
+        if (requestId !== directionsRequestRef.current.id) {
+          return null;
+        }
+        const rateLimited =
+          routeError instanceof RoutingProviderError &&
+          routeError.code === "RATE_LIMITED";
+        const wheelchairUnavailable =
+          routeError instanceof RoutingProviderError &&
+          routeError.code === "WHEELCHAIR_ROUTING_UNAVAILABLE";
+        const knownBarrier =
+          routeError instanceof RoutingProviderError &&
+          routeError.code === "KNOWN_BARRIER";
+        setDirectionsStatus(
+          rateLimited
+            ? "RATE_LIMITED"
+            : knownBarrier
+              ? "KNOWN_BARRIER"
+              : requestedMobilityMode === "WHEELCHAIR" || wheelchairUnavailable
+                ? "WHEELCHAIR_UNAVAILABLE"
+                : "ERROR",
+        );
+        const unavailableMessage = knownBarrier
+          ? "This route contains a known wheelchair barrier."
+          : requestedMobilityMode === "WHEELCHAIR" || wheelchairUnavailable
+            ? "No wheelchair-accessible route found."
+            : "Walking route unavailable.";
+        setDirectionsError(
+          rateLimited
+            ? "The routing service is busy. Try again shortly."
+            : unavailableMessage,
+        );
+        resetWalkingRouteMonitoring();
+        setWalkingRoute(null);
+        const spokenError = rateLimited
+          ? "The routing service is busy. Try again shortly."
+          : unavailableMessage;
+        if (requestedMobilityMode === "WHEELCHAIR") {
+          announceSemanticGuidance({
+            haptic: "WARNING",
+            id: `wheelchair-route-${requestId}-unavailable`,
+            kind: "NO_ACCESSIBLE_ROUTE",
+            priority: "WALKING",
+            text: spokenError,
+          });
+        } else {
+          AccessibilityInfo.announceForAccessibility(spokenError);
+        }
+        return null;
+      }
+    },
+    [
+      appPreferences.avoidSteepSlopes,
+      appPreferences.preferSmoothSurfaces,
+      currentLocation,
+      mobilityMode,
+      selectedStop,
+      updateBottomSheetState,
+    ],
+  );
   const startDirections = useCallback(() => {
-    if (!selectedStop) {
+    void requestWalkingDirections();
+  }, [requestWalkingDirections]);
+  const changeDirectionsMobilityMode = useCallback(
+    (nextMode: MobilityMode) => {
+      if (nextMode === mobilityMode) return;
+      setMobilityMode(nextMode);
+      announceSemanticGuidance({
+        id: `mobility-mode-${nextMode.toLowerCase()}-${Date.now()}`,
+        kind: "MOBILITY_MODE_CHANGED",
+        priority: "WALKING",
+        text:
+          nextMode === "WHEELCHAIR"
+            ? "Wheelchair routing selected."
+            : "Standard walking directions selected. This route is not checked for wheelchair access.",
+      });
+      if (directionsActive) {
+        void requestWalkingDirections("INITIAL", nextMode);
+      }
+    },
+    [directionsActive, mobilityMode, requestWalkingDirections],
+  );
+  const recalculateWalkingDirections = useCallback(() => {
+    setWalkingOffRouteDismissed(false);
+    void requestWalkingDirections("RECALCULATE");
+  }, [requestWalkingDirections]);
+  useEffect(() => {
+    if (
+      directionsActive &&
+      directionsStatus === "NEEDS_LOCATION" &&
+      currentLocation
+    ) {
+      void requestWalkingDirections();
+    }
+  }, [
+    currentLocation,
+    directionsActive,
+    directionsStatus,
+    requestWalkingDirections,
+  ]);
+  const exitGuidance = useCallback(() => {
+    guidanceSessionIdRef.current += 1;
+    directionsRequestRef.current.controller?.abort();
+    directionsRequestRef.current = {
+      id: directionsRequestRef.current.id + 1,
+      controller: null,
+    };
+    setGuidanceMode("INACTIVE");
+    setDirectionsStatus("IDLE");
+    setDirectionsError(null);
+    resetWalkingRouteMonitoring();
+    setWalkingRoute(null);
+    setFollowState("FREE");
+    setMapCameraMode("MANUAL");
+    setLocationPulseKey(0);
+    setNearbyOpen(false);
+    setBottomSheetContent("STOP_DETAILS");
+    updateBottomSheetState("MEDIUM");
+    arrivalAnnouncementStopRef.current = null;
+    const guidanceService = guidanceServiceRef.current!;
+    guidanceService.stopActiveSpeech();
+    guidanceService.clearEvents("walking-");
+  }, [updateBottomSheetState]);
+  const beginWalkingGuidance = useCallback(
+    (route: WalkingRoute) => {
+      if (!currentLocation) {
+        return false;
+      }
+      guidanceSessionIdRef.current += 1;
+      setGuidanceMode("ACTIVE");
+      setFollowState("FOLLOW_USER");
+      setViewportSource("USER_LOCATION");
+      setMapCameraMode("FOLLOW_USER");
+      updateBottomSheetState("COLLAPSED");
+      setLocationPulseKey((current) => current + 1);
+      const firstStep = route.steps[0];
+      const firstDistance = firstStep?.distanceMeters ?? route.distanceMeters;
+      walkingGuidanceThresholdRef.current = `0:${walkingGuidanceDistanceBand(firstDistance)}`;
+      announceSemanticGuidance({
+        haptic: "START",
+        id: `walking-${directionsRequestRef.current.id}-started`,
+        priority: "WALKING",
+        text: walkingStepAnnouncement(
+          firstStep?.instruction ?? "Walking guidance started",
+          firstDistance,
+        ),
+      });
+      return true;
+    },
+    [currentLocation, updateBottomSheetState],
+  );
+  const startWalkingGuidance = useCallback(() => {
+    if (walkingRoute) {
+      beginWalkingGuidance(walkingRoute);
+    }
+  }, [beginWalkingGuidance, walkingRoute]);
+  const walkingRouteProgress = useMemo<WalkingRouteProgress | null>(
+    () =>
+      walkingRoute && currentLocation
+        ? calculateWalkingRouteProgress(walkingRoute, currentLocation, {
+            accuracyMeters: currentLocation.accuracyMeters,
+            headingDegrees: currentLocation.headingDegrees,
+            previousProgress: walkingProgressRef.current,
+          })
+        : null,
+    [currentLocation, walkingRoute],
+  );
+  useEffect(() => {
+    walkingProgressRef.current = walkingRouteProgress;
+  }, [walkingRouteProgress]);
+  const walkingLocationAccuracyLimited = isWalkingLocationAccuracyLimited(
+    currentLocation?.accuracyMeters,
+  );
+  const walkingRouteOffRoute =
+    guidanceStatus === "ACTIVE" &&
+    walkingRouteMonitoring.offRoute &&
+    !walkingOffRouteDismissed;
+
+  useEffect(() => {
+    if (
+      guidanceStatus !== "ACTIVE" ||
+      !walkingRouteProgress ||
+      !currentLocation ||
+      !selectedStop
+    ) {
       return;
     }
-    setDirectionsActive(true);
-    updateBottomSheetState("EXPANDED");
-    setFollowMode(false);
-    setViewportSource("ROUTE");
-    setMapCameraMode("STOP_FOCUS");
-    AccessibilityInfo.announceForAccessibility(
-      firstMoveInstruction(selectedStop, selectedLandmark),
+    const previous = walkingRouteMonitoringRef.current;
+    const next = updateRouteMonitoring(previous, {
+      accuracyMeters: currentLocation.accuracyMeters,
+      distanceToDestinationMeters: distanceBetweenRoutingCoordinates(
+        currentLocation,
+        selectedStop,
+      ),
+      distanceToRouteMeters: walkingRouteProgress.distanceToRouteMeters,
+    });
+    walkingRouteMonitoringRef.current = next;
+    setWalkingRouteMonitoring(next);
+    if (!previous.offRoute && next.offRoute) {
+      announceSemanticGuidance({
+        haptic: "WARNING",
+        id: `walking-off-route-${directionsRequestRef.current.id}-${next.offRouteEpisode}`,
+        priority: "WALKING",
+        text: "You're off the suggested walking route.",
+      });
+    }
+  }, [currentLocation, guidanceStatus, selectedStop, walkingRouteProgress]);
+
+  useEffect(() => {
+    if (!walkingRouteMonitoring.offRoute) {
+      setWalkingOffRouteDismissed(false);
+    }
+  }, [walkingRouteMonitoring.offRoute]);
+
+  useEffect(() => {
+    if (guidanceStatus !== "ACTIVE" || !walkingLocationAccuracyLimited) return;
+    announceSemanticGuidance({
+      id: `walking-poor-accuracy-${directionsRequestRef.current.id}`,
+      priority: "WALKING",
+      text: "Location accuracy is limited. Follow the map and signs around you.",
+    });
+  }, [guidanceStatus, walkingLocationAccuracyLimited]);
+
+  useEffect(() => {
+    if (
+      guidanceStatus !== "ACTIVE" ||
+      !walkingRoute ||
+      !walkingRouteProgress ||
+      walkingLocationAccuracyLimited
+    ) {
+      return;
+    }
+    const stepIndex = walkingRouteProgress.activeStepIndex;
+    const band = walkingGuidanceDistanceBand(
+      walkingRouteProgress.distanceToNextManeuverMeters,
     );
-  }, [selectedLandmark, selectedStop, updateBottomSheetState]);
+    const eventKey = `${stepIndex}:${band}`;
+    const previousEventKey = walkingGuidanceThresholdRef.current;
+    if (previousEventKey === eventKey) return;
+    const stepChanged = !previousEventKey?.startsWith(`${stepIndex}:`);
+    walkingGuidanceThresholdRef.current = eventKey;
+    if (!stepChanged && band !== "NEAR" && band !== "NOW") return;
+    const activeStep = walkingRoute.steps[stepIndex];
+    const nextStep = walkingRoute.steps[stepIndex + 1];
+    const instruction = stepChanged
+      ? walkingStepAnnouncement(
+          activeStep?.instruction ?? "Continue toward the bus stop",
+          walkingRouteProgress.distanceToNextManeuverMeters,
+        )
+      : walkingManeuverAnnouncement(
+          nextStep?.instruction ?? "Your bus stop is ahead",
+          walkingRouteProgress.distanceToNextManeuverMeters,
+          band === "NOW",
+        );
+    announceSemanticGuidance({
+      haptic:
+        band === "NOW" && nextStep?.maneuver?.includes("turn")
+          ? "TURN"
+          : undefined,
+      id: `walking-${directionsRequestRef.current.id}-step-${stepIndex}-${band}`,
+      priority: "WALKING",
+      text: instruction,
+    });
+  }, [
+    guidanceStatus,
+    walkingLocationAccuracyLimited,
+    walkingRoute,
+    walkingRouteProgress,
+  ]);
+
+  useEffect(() => {
+    if (
+      guidanceStatus !== "ACTIVE" ||
+      !currentLocation ||
+      !selectedStop ||
+      !walkingRoute
+    ) {
+      return;
+    }
+    if (!walkingRouteMonitoring.arrived) {
+      return;
+    }
+    setGuidanceMode("ARRIVED");
+    setFollowState("FOLLOW_USER");
+    updateBottomSheetState("MEDIUM");
+    if (arrivalAnnouncementStopRef.current === selectedStop.busStopCode) {
+      return;
+    }
+    arrivalAnnouncementStopRef.current = selectedStop.busStopCode;
+    announceSemanticGuidance({
+      haptic: "SUCCESS",
+      id: `walking-arrived-${directionsRequestRef.current.id}-${selectedStop.busStopCode}`,
+      priority: "DESTINATION",
+      text: `You've reached the bus stop. ${selectedStop.description}, Bus Stop ${selectedStop.busStopCode}.`,
+    });
+  }, [
+    currentLocation,
+    guidanceStatus,
+    selectedStop,
+    updateBottomSheetState,
+    walkingRoute,
+    walkingRouteMonitoring.arrived,
+  ]);
+
+  useEffect(() => {
+    if (
+      guidanceStatus !== "ACTIVE" ||
+      typeof Location.watchPositionAsync !== "function"
+    ) {
+      return undefined;
+    }
+    const guidanceSessionId = guidanceSessionIdRef.current;
+    let disposed = false;
+    let subscription: Location.LocationSubscription | null = null;
+    void Location.watchPositionAsync(
+      {
+        accuracy: Location.Accuracy.Balanced,
+        distanceInterval: 8,
+        timeInterval: 5_000,
+      },
+      (position) => {
+        if (disposed || guidanceSessionId !== guidanceSessionIdRef.current) {
+          return;
+        }
+        const coords = {
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+          accuracyMeters: position.coords.accuracy ?? undefined,
+          headingDegrees:
+            position.coords.heading !== null && position.coords.heading >= 0
+              ? position.coords.heading
+              : undefined,
+        };
+        lastLocationResultRef.current = { timestamp: Date.now(), coords };
+        setTransportDiscovery((current) => ({
+          ...current,
+          location: locationStateForCoords(coords),
+          locationPermission: "granted",
+          locationRequested: true,
+          lastSuccessfulLocation: coords,
+        }));
+      },
+    )
+      .then((nextSubscription) => {
+        if (disposed || guidanceSessionId !== guidanceSessionIdRef.current) {
+          nextSubscription.remove();
+          return;
+        }
+        subscription = nextSubscription;
+      })
+      .catch(() => {
+        // The routed path remains usable when live location updates fail.
+      });
+    return () => {
+      disposed = true;
+      subscription?.remove();
+    };
+  }, [guidanceStatus]);
   const toggleFollowMode = useCallback(() => {
-    setFollowMode((current) => !current);
+    setFollowState((current) => {
+      if (current === "FREE") {
+        return "FOLLOW_USER";
+      }
+      if (
+        current === "FOLLOW_USER" &&
+        currentLocation?.headingDegrees !== undefined
+      ) {
+        return "FOLLOW_USER_HEADING";
+      }
+      return currentLocation?.headingDegrees === undefined
+        ? "FOLLOW_USER"
+        : "FREE";
+    });
     runCameraCommand(
       "locateUser",
       "USER_LOCATION",
@@ -2016,26 +3875,25 @@ function SgGoAssistApp() {
       }),
       "FOLLOW_USER",
     );
-  }, [bottomSheetState, currentLocation, runCameraCommand]);
+  }, [currentLocation, runCameraCommand]);
   const showWholeRoute = useCallback(() => {
-    setDirectionsActive(true);
+    setGuidanceMode("PREVIEW");
     setMapManuallyMoved(false);
+    if (walkingRoute) {
+      setRouteFitKey((current) => current + 1);
+      return;
+    }
     runCameraCommand("fitWalkingRoute", "ROUTE", (current) => ({
       ...current,
       center: selectedStop ?? current.center,
       zoom: clampMapZoom(15, "ROUTE"),
     }));
-  }, [runCameraCommand, selectedStop]);
+  }, [runCameraCommand, selectedStop, walkingRoute]);
   const rotateMap = useCallback(() => {
-    setMapRotationEnabled((current) => {
-      const enabled = !current;
-      setMapViewport((viewport) => ({
-        ...viewport,
-        bearing: enabled ? (viewport.bearing === 0 ? 35 : viewport.bearing) : 0,
-        mode: viewport.mode,
-      }));
-      return enabled;
-    });
+    setMapRotationEnabled(false);
+    AccessibilityInfo.announceForAccessibility(
+      "This map stays north up. Device heading is shown on your location marker when available.",
+    );
   }, []);
   const resetMapNorth = useCallback(() => {
     setMapRotationEnabled(false);
@@ -2054,7 +3912,7 @@ function SgGoAssistApp() {
   const resetMapView = useCallback(() => {
     setMapRotationEnabled(false);
     setMapLayers(defaultMapLayers);
-    setFollowMode(false);
+    setFollowState("FREE");
     const mode = selectedStop ? "SELECTED_STOP" : "USER_LOCATION";
     const zoom = selectedStop ? 17 : 15;
     runCameraCommand(
@@ -2077,9 +3935,9 @@ function SgGoAssistApp() {
       }),
       selectedStop ? "STOP_FOCUS" : "FOLLOW_USER",
     );
-  }, [bottomSheetState, currentLocation, runCameraCommand, selectedStop]);
+  }, [currentLocation, runCameraCommand, selectedStop]);
   const viewFullRoute = useCallback(() => {
-    setFollowMode(false);
+    setFollowState("FREE");
     runCameraCommand("fitFullRoute", "FULL_ROUTE", (current) => ({
       ...current,
       center: selectedStop ?? selectedLandmark ?? current.center,
@@ -2087,26 +3945,41 @@ function SgGoAssistApp() {
     }));
   }, [runCameraCommand, selectedLandmark, selectedStop]);
   const hearDirections = useCallback(() => {
-    if (selectedStop) {
-      AccessibilityInfo.announceForAccessibility(
-        routeAnnouncement(selectedStop, selectedLandmark),
+    if (selectedStop && walkingRoute) {
+      const activeStep =
+        walkingRoute.steps[walkingRouteProgress?.activeStepIndex ?? 0];
+      announceGuidance(
+        [
+          `Walking to ${selectedStop.description}.`,
+          `${friendlyWalkingMinutes(
+            walkingRouteProgress?.remainingDurationSeconds ??
+              walkingRoute.durationSeconds,
+          )} minutes, ${friendlyDistance(
+            walkingRouteProgress?.remainingDistanceMeters ??
+              walkingRoute.distanceMeters,
+          )} remaining.`,
+          activeStep?.instruction,
+        ]
+          .filter(Boolean)
+          .join(" "),
       );
+    } else if (selectedStop) {
+      announceGuidance(routeAnnouncement(selectedStop, selectedLandmark));
     }
-  }, [selectedLandmark, selectedStop]);
+  }, [selectedLandmark, selectedStop, walkingRoute, walkingRouteProgress]);
   const selectLandmark = useCallback(
     (landmark: MapLandmark) => {
       setSelectedLandmarkId(landmark.id);
       setSelectedStop(null);
-      setDirectionsActive(false);
-      setFollowMode(false);
+      setNearbyOpen(false);
+      setGuidanceMode("INACTIVE");
+      setFollowState("FREE");
       runCameraCommand("searchResult", "SEARCH_RESULT", (current) => ({
         ...current,
         center: landmark,
         zoom: 16,
       }));
-      AccessibilityInfo.announceForAccessibility(
-        `${landmark.name}. Nearby bus stops are shown.`,
-      );
+      announceGuidance(`${landmark.name}. Nearby bus stops are shown.`);
     },
     [runCameraCommand],
   );
@@ -2149,8 +4022,9 @@ function SgGoAssistApp() {
       setSelectedStop(stop);
       setSelectedLandmarkId(null);
       setBottomSheetContent("STOP_DETAILS");
-      setDirectionsActive(false);
-      setFollowMode(false);
+      setNearbyOpen(false);
+      setGuidanceMode("INACTIVE");
+      setFollowState("FREE");
       setStopSearchQuery("");
       setScreen("STOP");
       updateBottomSheetState("MEDIUM");
@@ -2166,8 +4040,8 @@ function SgGoAssistApp() {
       });
       handleStopSelectionCamera({
         currentLocation,
+        currentGeometry: mapCameraGeometryRef.current,
         geometry: createMapCameraGeometry({
-          bottomSheetState: "MEDIUM",
           mapLayout: measuredMapLayout,
         }),
         intentId: selectionIntentId,
@@ -2176,7 +4050,7 @@ function SgGoAssistApp() {
         stop,
         viewport: mapViewport,
       });
-      AccessibilityInfo.announceForAccessibility(
+      announceGuidance(
         `${stop.description}, Bus Stop ${stop.busStopCode}. Stop details shown.`,
       );
     },
@@ -2210,10 +4084,11 @@ function SgGoAssistApp() {
       }));
       setMapPickMode(null);
       setBottomSheetContent("ROUTE_OPTIONS");
+      setNearbyOpen(false);
       updateBottomSheetState(
         plan.alternatives.length > 0 ? "MEDIUM" : "COLLAPSED",
       );
-      AccessibilityInfo.announceForAccessibility(
+      announceGuidance(
         plan.alternatives.length > 0
           ? `Journey options ready for ${destinationPoint.label}.`
           : `No journey options found for ${destinationPoint.label}.`,
@@ -2240,9 +4115,8 @@ function SgGoAssistApp() {
         };
       });
       setBottomSheetContent(hasDestination ? "ROUTE_OPTIONS" : "PLANNER");
-      AccessibilityInfo.announceForAccessibility(
-        `Starting point set to ${originPoint.label}.`,
-      );
+      setNearbyOpen(false);
+      announceGuidance(`Starting point set to ${originPoint.label}.`);
     },
     [journeyPlanner.destination, requirements],
   );
@@ -2322,16 +4196,19 @@ function SgGoAssistApp() {
     ],
   );
   const selectSearchService = useCallback((serviceNo: string) => {
-    const serviceStops = (serviceRoutesByNumber[serviceNo] ?? []).map((stop) =>
-      toStaticSearchStop(stop),
-    );
     setBusStopSearch((current) => ({
       ...current,
       isOpen: true,
       query: serviceNo,
-      status: serviceStops.length > 0 ? "SUCCESS" : "EMPTY",
+      status: current.results.stops.some((stop) =>
+        stop.services.includes(serviceNo),
+      )
+        ? "SUCCESS"
+        : "SEARCHING",
       results: {
-        stops: serviceStops,
+        stops: current.results.stops.filter((stop) =>
+          stop.services.includes(serviceNo),
+        ),
         places: [],
         services: [],
       },
@@ -2361,9 +4238,10 @@ function SgGoAssistApp() {
   }, [effectiveJourneyOrigin, requirements]);
   const chooseDestinationOnMap = useCallback(() => {
     setMapPickMode("DESTINATION");
+    setNearbyOpen(false);
     closeStopSearch();
     updateBottomSheetState("HIDDEN_PEEK");
-    AccessibilityInfo.announceForAccessibility(
+    announceGuidance(
       "Move the map and set the destination shown at the centre pin.",
     );
   }, [closeStopSearch, updateBottomSheetState]);
@@ -2377,6 +4255,7 @@ function SgGoAssistApp() {
         selectedAlternativeId: alternativeId,
       }));
       setBottomSheetContent("ROUTE_OPTIONS");
+      setNearbyOpen(false);
       updateBottomSheetState("EXPANDED");
     },
     [updateBottomSheetState],
@@ -2385,6 +4264,8 @@ function SgGoAssistApp() {
     if (!selectedJourneyAlternative) {
       return;
     }
+
+    journeySessionIdRef.current += 1;
 
     const option: BusServiceOption = {
       serviceNo: selectedJourneyAlternative.serviceNo,
@@ -2430,39 +4311,141 @@ function SgGoAssistApp() {
     setJourneyRequirements(requirements);
     setRequestId(null);
     setRequestStatus(null);
+    setRequestPhase(null);
     setEvents([]);
     setVehicleStatus(null);
     setJourneySetupState("WALKING_TO_STOP");
     setJourneyPhase("WALKING_TO_STOP");
     setScreen("STATUS");
-    AccessibilityInfo.announceForAccessibility(
+    announceGuidance(
       `Journey started. Walk to ${selectedJourneyAlternative.boardingStop.description}. Take Service ${selectedJourneyAlternative.serviceNo} to ${selectedJourneyAlternative.alightingStop.description}.`,
     );
   }, [requirements, selectedJourneyAlternative]);
   const sessionId = activeProfile?.profileId ?? "demo-passenger-session";
   const activeTab = getActiveTab(screen);
+  const currentWalkingInstruction = walkingRoute
+    ? walkingRoute.steps[walkingRouteProgress?.activeStepIndex ?? 0]
+        ?.instruction
+    : undefined;
+  const journeyNextAction = deriveJourneyNextAction({
+    journeyPhase,
+    selectedStopName: selectedStop?.description,
+    serviceNo: selectedBus?.busService,
+    destinationName: selectedAlightingStop?.description,
+    nextStopName: nextRouteStop?.description,
+    walkingInstruction: currentWalkingInstruction,
+    wheelchairAssistance: journeyRequirements.wheelchairRamp,
+  });
   const resolvedThemeMode = appPreferences.themeMode;
   const lightMode = resolvedThemeMode === "light";
   const highContrastDark = appPreferences.highContrast && !lightMode;
   const highContrastLight = appPreferences.highContrast && lightMode;
 
   useEffect(() => {
-    const saved = readSavedPreferences();
-    if (!saved) {
-      return;
-    }
-
-    setRequirements(saved.assistanceDefaults);
-    setJourneyRequirements(saved.assistanceDefaults);
-    setAppPreferences(saved.appPreferences);
+    let active = true;
+    void readSavedPreferences().then((saved) => {
+      if (!active) {
+        return;
+      }
+      if (saved) {
+        setJourneyRequirements(accessibilityRequirementsFromPreferences(saved));
+        setAppPreferences(saved);
+      }
+      preferencesHydratedRef.current = true;
+      if (!saved) {
+        void savePreferencesLocally(latestPreferencesRef.current);
+      }
+    });
+    return () => {
+      active = false;
+    };
   }, []);
 
   useEffect(() => {
-    savePreferencesLocally({
-      assistanceDefaults: requirements,
-      appPreferences,
-    });
-  }, [appPreferences, requirements]);
+    if (!preferencesHydratedRef.current) {
+      return;
+    }
+    void savePreferencesLocally(appPreferences);
+  }, [appPreferences]);
+
+  useEffect(() => {
+    if (!activeJourneyHydratedRef.current) {
+      return;
+    }
+    if (!selectedStop || !selectedServiceOption || !selectedBus) {
+      void queueActiveJourneyPersistence(clearSavedActiveJourney);
+      return;
+    }
+    const journeySessionId = journeySessionIdRef.current;
+    const persistedJourney: PersistedActiveJourney = {
+      version: 1,
+      savedAt: new Date().toISOString(),
+      selectedStop,
+      selectedServiceOption,
+      selectedBus,
+      selectedArrival,
+      selectedAlightingStop,
+      routeStops,
+      currentStopIndex,
+      journeyPhase,
+      journeySetupState,
+      journeyRequirements,
+      requestId,
+      requestStatus,
+      requestPhase,
+      vehicleStatus,
+    };
+    void queueActiveJourneyPersistence(() =>
+      journeySessionId === journeySessionIdRef.current
+        ? saveActiveJourneyLocally(persistedJourney)
+        : Promise.resolve(),
+    );
+  }, [
+    currentStopIndex,
+    journeyPhase,
+    journeyRequirements,
+    journeySetupState,
+    requestId,
+    requestPhase,
+    requestStatus,
+    routeStops,
+    selectedAlightingStop,
+    selectedArrival,
+    selectedBus,
+    selectedServiceOption,
+    selectedStop,
+    vehicleStatus,
+  ]);
+
+  useEffect(() => {
+    requestStatusRef.current = requestStatus;
+  }, [requestStatus]);
+
+  useEffect(() => {
+    requestPhaseRef.current = requestPhase;
+  }, [requestPhase]);
+
+  useEffect(() => {
+    if (
+      !requestId ||
+      requestPhase !== "ALIGHTING" ||
+      requestStatus !== AssistanceRequestStatus.ACKNOWLEDGED
+    ) {
+      return;
+    }
+    notifyPassenger(
+      assistanceConfirmationAnnouncement(alightingAssistanceTypes, "ALIGHTING"),
+      {
+        haptic: "SUCCESS",
+        id: `assistance-${requestId}-received`,
+        priority: "BUS",
+      },
+    );
+  }, [alightingAssistanceTypes, requestId, requestPhase, requestStatus]);
+
+  useEffect(() => {
+    vehicleStatusRef.current = vehicleStatus;
+  }, [vehicleStatus]);
 
   useEffect(() => {
     if (!visualAlert) {
@@ -2471,68 +4454,241 @@ function SgGoAssistApp() {
 
     const timeout = setTimeout(
       () => setVisualAlert(null),
-      requirements.extendedDwellTime ? 6000 : 3200,
+      appPreferences.longerMessageDuration
+        ? 8000
+        : requirements.extendedDwellTime
+          ? 6000
+          : 3200,
     );
     return () => clearTimeout(timeout);
-  }, [requirements.extendedDwellTime, visualAlert]);
+  }, [
+    appPreferences.longerMessageDuration,
+    requirements.extendedDwellTime,
+    visualAlert,
+  ]);
 
   useEffect(() => {
     if (!requestId) {
       return;
     }
+    const journeySessionId = journeySessionIdRef.current;
 
     return subscribeToRequestStatus(
       requestId,
       (message) => {
-        setEvents((current) => [message, ...current]);
-
+        if (journeySessionId !== journeySessionIdRef.current) {
+          return;
+        }
         if (message.type === "REQUEST_STATUS") {
+          const currentStatus = requestStatusRef.current;
+          if (!canApplyRequestStatus(currentStatus, message.status)) {
+            return;
+          }
+
+          if (currentStatus === message.status) {
+            return;
+          }
+
+          requestStatusRef.current = message.status;
           setRequestStatus(message.status);
+          setEvents((current) => [message, ...current]);
           if (message.status === "ACKNOWLEDGED") {
             notifyPassenger(
-              `Your assistance request is confirmed for Service ${message.busService}. You do not need to request again.`,
-              Haptics.NotificationFeedbackType.Success,
+              assistanceConfirmationAnnouncement(
+                message.assistanceTypes,
+                requestPhaseRef.current ?? "BOARDING",
+              ),
+              {
+                haptic: "SUCCESS",
+                id: `assistance-${message.requestId}-received`,
+                priority: "BUS",
+              },
             );
           }
+          return;
         }
 
         if (message.type === "VEHICLE_STATUS") {
+          const currentStatus = vehicleStatusRef.current;
+          if (
+            !canTransitionVehicleStatus(currentStatus, message.status) ||
+            currentStatus === message.status
+          ) {
+            return;
+          }
+          vehicleStatusRef.current = message.status;
           setVehicleStatus(message.status);
-          if (message.status === "APPROACHING") {
+        }
+
+        setEvents((current) =>
+          current.some(
+            (event) =>
+              event.type === message.type &&
+              event.timestamp === message.timestamp,
+          )
+            ? current
+            : [message, ...current],
+        );
+
+        if (message.type === "VEHICLE_STATUS") {
+          if (
+            message.status === "APPROACHING" &&
+            latestPreferencesRef.current.warnBusApproaching
+          ) {
             notifyPassenger(
               `Your bus is approaching. Service ${message.busService} will arrive soon.`,
-              Haptics.NotificationFeedbackType.Warning,
-              2,
+              {
+                haptic: "WARNING",
+                id: `bus-${message.busId}-approaching`,
+                priority: "BUS",
+              },
             );
           }
-          if (message.status === "ARRIVED") {
+          if (
+            message.status === "ARRIVED" &&
+            latestPreferencesRef.current.warnBusArrives
+          ) {
             notifyPassenger(
               `Your bus is here. Service ${message.busService} is at the stop.`,
-              Haptics.NotificationFeedbackType.Success,
+              {
+                haptic: "SUCCESS",
+                id: `bus-${message.busId}-arrived`,
+                priority: "BUS",
+              },
             );
           }
         }
       },
-      () =>
-        setError(
-          "We are having trouble updating live bus status. Your request is still saved.",
-        ),
+      () => {
+        if (journeySessionId === journeySessionIdRef.current) {
+          setError(liveStatusErrorMessage);
+        }
+      },
+      {
+        onConnected: () => {
+          if (journeySessionId === journeySessionIdRef.current) {
+            setError((current) =>
+              current === liveStatusErrorMessage ? null : current,
+            );
+          }
+        },
+      },
     );
-  }, [appPreferences.hapticAlerts, requestId]);
+  }, [requestId]);
+
+  useEffect(() => {
+    const focusedRequestId = focusedAssistRequest.requestId;
+    if (!focusedRequestId) {
+      return;
+    }
+    const focusedSessionId = focusedAssistRequestSessionRef.current;
+    return subscribeToRequestStatus(
+      focusedRequestId,
+      (message) => {
+        if (
+          focusedSessionId !== focusedAssistRequestSessionRef.current ||
+          message.type !== "REQUEST_STATUS" ||
+          message.requestId !== focusedRequestId
+        ) {
+          return;
+        }
+        let becameAcknowledged = false;
+        setFocusedAssistRequest((current) => {
+          if (
+            !canApplyRequestStatus(current.status, message.status) ||
+            current.status === message.status
+          ) {
+            return current;
+          }
+          becameAcknowledged =
+            message.status === AssistanceRequestStatus.ACKNOWLEDGED;
+          return {
+            ...current,
+            status: message.status,
+            submitting: false,
+            error:
+              message.status === AssistanceRequestStatus.FAILED
+                ? current.assistanceType === "EXTENDED_DWELL_TIME"
+                  ? "We couldn't request more boarding time."
+                  : "We couldn't complete the ramp request."
+                : null,
+          };
+        });
+        if (becameAcknowledged) {
+          notifyPassenger(
+            focusedAssistRequest.assistanceType === "EXTENDED_DWELL_TIME"
+              ? "The bus has received your request for more boarding time."
+              : "The bus has received your ramp request.",
+            {
+              haptic: "SUCCESS",
+              id: `focused-assist-${focusedRequestId}-received`,
+              priority: "BUS",
+            },
+          );
+        }
+      },
+      () => {
+        if (focusedSessionId === focusedAssistRequestSessionRef.current) {
+          setFocusedAssistRequest((current) => ({
+            ...current,
+            error:
+              "Live request updates are unavailable. Your request may still be active.",
+          }));
+        }
+      },
+      {
+        onConnected: () => {
+          if (focusedSessionId === focusedAssistRequestSessionRef.current) {
+            setFocusedAssistRequest((current) => ({
+              ...current,
+              error:
+                current.error ===
+                "Live request updates are unavailable. Your request may still be active."
+                  ? null
+                  : current.error,
+            }));
+          }
+        },
+      },
+    );
+  }, [focusedAssistRequest.assistanceType, focusedAssistRequest.requestId]);
+
+  useEffect(() => {
+    const bus = focusedAssistContext.selectedBus;
+    if (
+      focusedAssistContext.state !== "ONE_BUS_PRESENT" ||
+      !bus ||
+      focusedAssistAnnouncedBusRef.current === bus.id
+    ) {
+      return;
+    }
+    focusedAssistAnnouncedBusRef.current = bus.id;
+    notifyPassenger(`Service ${bus.serviceNo} is at your stop.`, {
+      haptic: "SUCCESS",
+      id: `focused-assist-${bus.id}-present`,
+      priority: "BUS",
+    });
+  }, [focusedAssistContext.selectedBus, focusedAssistContext.state]);
 
   function notifyPassenger(
     message: string,
-    feedbackType: Haptics.NotificationFeedbackType,
-    vibrationCount = 1,
+    event: {
+      id: string;
+      priority: GuidancePriority;
+      haptic?: GuidanceHaptic;
+    },
   ) {
-    setVisualAlert(message);
-    AccessibilityInfo.announceForAccessibility(message);
-    if (appPreferences.hapticAlerts) {
-      Haptics.notificationAsync(feedbackType);
-      if (vibrationCount > 1) {
-        setTimeout(() => Haptics.notificationAsync(feedbackType), 500);
-      }
+    const preferences = latestPreferencesRef.current;
+    if (
+      preferences.visualJourneyAlerts ||
+      (preferences.textAnnouncementEquivalent && preferences.spokenGuidance)
+    ) {
+      setVisualAlert(message);
     }
+    announceSemanticGuidance(
+      { ...event, text: message },
+      { visualEquivalent: false },
+    );
   }
 
   function announceCurrentJourney() {
@@ -2544,26 +4700,25 @@ function SgGoAssistApp() {
         journeyPhase === "DISEMBARKING" ||
         journeyPhase === "ALIGHTING")
     ) {
-      const announcement = [
-        `On Service ${selectedBus.busService}.`,
-        nextRouteStop
-          ? `Next stop: ${nextRouteStop.description}.`
-          : "Final stop.",
-        selectedAlightingStop
-          ? `Destination: ${selectedAlightingStop.description}.`
-          : "Destination not selected.",
-        stopsRemaining === null
-          ? undefined
-          : stopsRemaining === 0
-            ? "This is your stop."
-            : stopsRemaining === 1
-              ? "Your stop is next."
-              : `${stopsRemaining} stops remaining.`,
-      ]
-        .filter(Boolean)
-        .join(" ");
+      const announcement =
+        selectedStopReached && selectedAlightingStop
+          ? `This is your stop, ${selectedAlightingStop.description}. Remain onboard until the bus has stopped and it is safe to exit.`
+          : (selectedStopIsNext || journeyPhase === "DESTINATION_NEXT") &&
+              selectedAlightingStop
+            ? `Your destination, ${selectedAlightingStop.description}, is the next stop. Prepare to alight.`
+            : [
+                `On Service ${selectedBus.busService}.`,
+                nextRouteStop
+                  ? `Next stop: ${nextRouteStop.description}.`
+                  : "Final stop.",
+                selectedAlightingStop && stopsRemaining !== null
+                  ? `${stopsRemaining} ${stopsRemaining === 1 ? "stop" : "stops"} to ${selectedAlightingStop.description}.`
+                  : "Destination not selected.",
+              ]
+                .filter(Boolean)
+                .join(" ");
       setVisualAlert(announcement);
-      AccessibilityInfo.announceForAccessibility(announcement);
+      announceGuidance(announcement);
       return;
     }
 
@@ -2587,7 +4742,7 @@ function SgGoAssistApp() {
 
     if (announcement) {
       setVisualAlert(announcement);
-      AccessibilityInfo.announceForAccessibility(announcement);
+      announceGuidance(announcement);
     }
   }
 
@@ -2601,8 +4756,7 @@ function SgGoAssistApp() {
       displayName,
       email,
       verificationStatus: "UNVERIFIED",
-      assistanceDefaults: requirements,
-      appPreferences,
+      accessibilityPreferences: appPreferences,
       createdAt: now,
       updatedAt: now,
     };
@@ -2615,13 +4769,16 @@ function SgGoAssistApp() {
     profile: PassengerProfile,
     nextScreen: Screen = "PROFILE",
   ) {
+    const profilePreferences = accessibilityPreferencesForProfile(profile);
+    const profileRequirements =
+      accessibilityRequirementsFromPreferences(profilePreferences);
     setActiveProfile(profile);
     setIsEditingProfileNeeds(false);
-    setRequirements(profile.assistanceDefaults);
+    setProfilePreferenceSection(null);
     if (!selectedBus || requestStatus) {
-      setJourneyRequirements(profile.assistanceDefaults);
+      setJourneyRequirements(profileRequirements);
     }
-    setAppPreferences(profile.appPreferences);
+    setAppPreferences(profilePreferences);
     setScreen(nextScreen);
     AccessibilityInfo.announceForAccessibility(
       `Signed in as ${profile.displayName}.`,
@@ -2635,8 +4792,9 @@ function SgGoAssistApp() {
 
     const updatedProfile: PassengerProfile = {
       ...activeProfile,
-      assistanceDefaults: requirements,
-      appPreferences,
+      accessibilityPreferences: appPreferences,
+      assistanceDefaults: undefined,
+      appPreferences: undefined,
       updatedAt: new Date().toISOString(),
     };
 
@@ -2649,11 +4807,14 @@ function SgGoAssistApp() {
       ),
     );
     setVisualAlert("Preferences saved");
-    if (appPreferences.hapticAlerts) {
-      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    if (appPreferences.vibrationAlerts !== "OFF") {
+      void Haptics.notificationAsync(
+        Haptics.NotificationFeedbackType.Success,
+      ).catch(() => undefined);
     }
     AccessibilityInfo.announceForAccessibility("Preferences saved.");
     setIsEditingProfileNeeds(false);
+    setProfilePreferenceSection(null);
   }
 
   function resetProfileNeedsEditing() {
@@ -2661,9 +4822,9 @@ function SgGoAssistApp() {
       return;
     }
 
-    setRequirements(activeProfile.assistanceDefaults);
-    setAppPreferences(activeProfile.appPreferences);
+    setAppPreferences(accessibilityPreferencesForProfile(activeProfile));
     setIsEditingProfileNeeds(false);
+    setProfilePreferenceSection(null);
   }
 
   function cancelProfileNeedsEditing() {
@@ -2689,7 +4850,7 @@ function SgGoAssistApp() {
   function signOut() {
     setActiveProfile(null);
     setIsEditingProfileNeeds(false);
-    setRequirements(defaultRequirements);
+    setProfilePreferenceSection(null);
     setJourneyRequirements(defaultRequirements);
     setAppPreferences(defaultAppPreferences);
     setVerificationMethod("DEMO_CREDENTIAL");
@@ -2740,10 +4901,6 @@ function SgGoAssistApp() {
   }
 
   function openTab(tab: AppTab) {
-    if (tab === "HOME") {
-      setScreen("LOCATION");
-      return;
-    }
     if (tab === "JOURNEY") {
       if (
         journeyPhase === "ONBOARD" ||
@@ -2753,10 +4910,6 @@ function SgGoAssistApp() {
         journeyPhase === "ALIGHTING"
       ) {
         setScreen("ONBOARD");
-        return;
-      }
-      if (journeyPhase === "COMPLETED") {
-        setScreen("COMPLETED");
         return;
       }
       if (requestId) {
@@ -2769,25 +4922,86 @@ function SgGoAssistApp() {
         );
         return;
       }
-      if (
-        nearbyStops.length === 0 &&
-        transportDiscovery.nearbyStopsStatus === "idle"
-      ) {
-        void loadManualStops({ sheetContent: "PLANNER" });
+      if (selectedStop) {
+        setScreen("BUS");
+        return;
       }
-      setScreen("STOP");
+      setScreen("JOURNEY_IDLE");
       return;
     }
     if (tab === "ASSISTANCE") {
       setScreen("ACCESSIBILITY");
+      void prepareFocusedAssistContext();
       return;
     }
     setScreen("PROFILE");
     setIsEditingProfileNeeds(false);
+    setProfilePreferenceSection(null);
   }
 
-  function returnToCurrentJourney() {
-    openTab("JOURNEY");
+  function announceGuidance(message: string) {
+    setHasSpokenGuidanceInCurrentFlow(true);
+    AccessibilityInfo.announceForAccessibility(message);
+  }
+
+  function announceSemanticGuidance(
+    event: GuidanceEvent,
+    {
+      screenReader = true,
+      visualEquivalent = true,
+    }: { screenReader?: boolean; visualEquivalent?: boolean } = {},
+  ) {
+    const result = guidanceServiceRef.current!.announce(event);
+    if (result.duplicate) return result;
+    const preferences = latestPreferencesRef.current;
+    if (
+      visualEquivalent &&
+      preferences.spokenGuidance &&
+      preferences.textAnnouncementEquivalent
+    ) {
+      setVisualAlert(event.text);
+    }
+    if (screenReader && screenReaderModeRef.current) {
+      AccessibilityInfo.announceForAccessibility(event.text);
+    }
+    return result;
+  }
+
+  function repeatLatestGuidance() {
+    guidanceServiceRef.current!.repeatLatest();
+  }
+
+  async function startVoiceWalkingGuidance(): Promise<AssistantActionResult> {
+    if (!selectedStop) {
+      return { ok: false, reason: "Choose a bus stop first." };
+    }
+    if (guidanceMode === "ACTIVE") {
+      return { ok: true };
+    }
+    const route = walkingRoute ?? (await requestWalkingDirections());
+    if (!route) {
+      return {
+        ok: false,
+        reason: currentLocation
+          ? "I couldn’t calculate directions to the selected bus stop."
+          : "Your location is needed before guidance can start.",
+      };
+    }
+    return beginWalkingGuidance(route)
+      ? { ok: true }
+      : {
+          ok: false,
+          reason: "Your location is needed before guidance can start.",
+        };
+  }
+
+  function resetWalkingRouteMonitoring() {
+    const reset = createRouteMonitoringState();
+    walkingProgressRef.current = null;
+    walkingRouteMonitoringRef.current = reset;
+    walkingGuidanceThresholdRef.current = null;
+    setWalkingRouteMonitoring(reset);
+    setWalkingOffRouteDismissed(false);
   }
 
   function useUsualAssistanceForJourney() {
@@ -2799,11 +5013,17 @@ function SgGoAssistApp() {
   }
 
   function saveJourneyAssistanceAsDefault() {
-    setRequirements(journeyRequirements);
+    const updatedPreferences = preferencesWithAssistanceRequirements(
+      appPreferences,
+      journeyRequirements,
+    );
+    setAppPreferences(updatedPreferences);
     if (activeProfile) {
       const updatedProfile: PassengerProfile = {
         ...activeProfile,
-        assistanceDefaults: journeyRequirements,
+        accessibilityPreferences: updatedPreferences,
+        assistanceDefaults: undefined,
+        appPreferences: undefined,
         updatedAt: new Date().toISOString(),
       };
       setActiveProfile(updatedProfile);
@@ -2845,8 +5065,8 @@ function SgGoAssistApp() {
     if (!options.preserveSelection) {
       setSelectedStop(null);
       setSelectedLandmarkId(null);
-      setDirectionsActive(false);
-      setFollowMode(false);
+      setGuidanceMode("INACTIVE");
+      setFollowState("FREE");
     }
     const queryCenter = options.requestOrigin ?? {
       latitude: result.debug.latitude,
@@ -2934,7 +5154,7 @@ function SgGoAssistApp() {
         requestOrigin: payload,
       });
       if (options.announce) {
-        AccessibilityInfo.announceForAccessibility(
+        announceGuidance(
           `${cached.result.stops.length} nearby bus stops found. Please confirm your bus stop.`,
         );
       }
@@ -2968,7 +5188,7 @@ function SgGoAssistApp() {
       requestOrigin: payload,
     });
     if (options.announce) {
-      AccessibilityInfo.announceForAccessibility(
+      announceGuidance(
         `${result.stops.length} nearby bus stops found. Please confirm your bus stop.`,
       );
     }
@@ -2976,7 +5196,10 @@ function SgGoAssistApp() {
   }
 
   async function findMyBusStop() {
+    const locationLookupRequestId = locationLookupRequestRef.current + 1;
+    locationLookupRequestRef.current = locationLookupRequestId;
     setBottomSheetContent("NEARBY");
+    setNearbyOpen(false);
     setIsLoading(true);
     setLoadingMessage("Finding nearby bus stops...");
     setError(null);
@@ -2991,6 +5214,9 @@ function SgGoAssistApp() {
             : current.nearbyStopsStatus,
       }));
       const permission = await Location.requestForegroundPermissionsAsync();
+      if (locationLookupRequestId !== locationLookupRequestRef.current) {
+        return;
+      }
       if (permission.status !== "granted") {
         setTransportDiscovery((current) => ({
           ...current,
@@ -3004,10 +5230,18 @@ function SgGoAssistApp() {
       const position = await Location.getCurrentPositionAsync({
         accuracy: Location.Accuracy.Balanced,
       }).then((freshPosition) => {
+        if (locationLookupRequestId !== locationLookupRequestRef.current) {
+          return null;
+        }
         const coords = {
           latitude: freshPosition.coords.latitude,
           longitude: freshPosition.coords.longitude,
           accuracyMeters: freshPosition.coords.accuracy ?? undefined,
+          headingDegrees:
+            freshPosition.coords.heading !== null &&
+            freshPosition.coords.heading >= 0
+              ? freshPosition.coords.heading
+              : undefined,
         };
         const cachedPosition = { timestamp: Date.now(), coords };
         lastLocationResultRef.current = cachedPosition;
@@ -3020,6 +5254,12 @@ function SgGoAssistApp() {
         }));
         return cachedPosition;
       });
+      if (
+        !position ||
+        locationLookupRequestId !== locationLookupRequestRef.current
+      ) {
+        return;
+      }
       let result: NearbyBusStopsResponse | null = null;
       try {
         result = await loadNearbyStopsFor(position.coords, {
@@ -3037,6 +5277,9 @@ function SgGoAssistApp() {
         ) {
           return;
         }
+        if (locationLookupRequestId !== locationLookupRequestRef.current) {
+          return;
+        }
         const failureStatus = nearbyStopsFailureStatus(apiError);
         const connectivity = readConnectivityState();
         setTransportDiscovery((current) => ({
@@ -3050,7 +5293,7 @@ function SgGoAssistApp() {
               : current.connectivity,
         }));
         setScreen("STOP");
-        updateBottomSheetState("MEDIUM");
+        updateBottomSheetState("HIDDEN_PEEK");
         return;
       }
       if (!result) {
@@ -3058,6 +5301,9 @@ function SgGoAssistApp() {
       }
     } catch (apiError) {
       if (apiError instanceof DOMException && apiError.name === "AbortError") {
+        return;
+      }
+      if (locationLookupRequestId !== locationLookupRequestRef.current) {
         return;
       }
       setTransportDiscovery((current) => ({
@@ -3072,20 +5318,167 @@ function SgGoAssistApp() {
         locationRequested: true,
       }));
     } finally {
-      setIsLoading(false);
-      setLoadingMessage(null);
+      if (locationLookupRequestId === locationLookupRequestRef.current) {
+        setIsLoading(false);
+        setLoadingMessage(null);
+      }
     }
+  }
+
+  async function loadFocusedAssistArrivals(stop: NearbyBusStop) {
+    const requestId = focusedAssistLocationRequestRef.current;
+    try {
+      const arrivals = await fetchBusStopArrivals(stop.busStopCode);
+      if (requestId !== focusedAssistLocationRequestRef.current) {
+        return;
+      }
+      setFocusedAssistArrivals(
+        arrivals.services.flatMap((service) => service.buses),
+      );
+      setFocusedAssistContextError(null);
+    } catch {
+      if (requestId === focusedAssistLocationRequestRef.current) {
+        setFocusedAssistArrivals([]);
+        setFocusedAssistContextError(
+          "We found your stop, but live bus detection is unavailable.",
+        );
+      }
+    }
+  }
+
+  async function prepareFocusedAssistContext() {
+    if (focusedAssistOnboard) {
+      return;
+    }
+    const resolution = resolveCurrentStop({
+      location: currentLocationRef.current,
+      nearbyStops: focusedAssistNearbyStops,
+      manuallySelectedStop: focusedAssistManualStop,
+    });
+    if (!resolution.stop) {
+      return;
+    }
+    focusedAssistLocationRequestRef.current += 1;
+    setFocusedAssistLocating(true);
+    setFocusedAssistContextError(null);
+    try {
+      await loadFocusedAssistArrivals(resolution.stop);
+    } finally {
+      setFocusedAssistLocating(false);
+    }
+  }
+
+  async function refreshFocusedAssistContext() {
+    const requestId = focusedAssistLocationRequestRef.current + 1;
+    focusedAssistLocationRequestRef.current = requestId;
+    setFocusedAssistLocating(true);
+    setFocusedAssistContextError(null);
+    setFocusedAssistManualStop(null);
+    setFocusedAssistSelectedBusId(null);
+    try {
+      const permission = await Location.requestForegroundPermissionsAsync();
+      if (requestId !== focusedAssistLocationRequestRef.current) {
+        return;
+      }
+      if (permission.status !== "granted") {
+        setTransportDiscovery((current) => ({
+          ...current,
+          location: "permission_denied",
+          locationPermission: "denied",
+          locationRequested: true,
+        }));
+        setFocusedAssistContextError(
+          "Location permission is needed to identify your bus stop.",
+        );
+        return;
+      }
+      const position = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced,
+      });
+      if (requestId !== focusedAssistLocationRequestRef.current) {
+        return;
+      }
+      const location = {
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+        accuracyMeters: position.coords.accuracy ?? undefined,
+        headingDegrees:
+          position.coords.heading !== null && position.coords.heading >= 0
+            ? position.coords.heading
+            : undefined,
+      };
+      lastLocationResultRef.current = {
+        timestamp: Date.now(),
+        coords: location,
+      };
+      const nearby = await findNearbyBusStops(location);
+      if (requestId !== focusedAssistLocationRequestRef.current) {
+        return;
+      }
+      setTransportDiscovery((current) => ({
+        ...current,
+        location: locationStateForCoords(location),
+        locationPermission: "granted",
+        locationRequested: true,
+        lastSuccessfulLocation: location,
+        nearbyStops: nearby.stops,
+        nearbyStopsStatus: nearby.stops.length > 0 ? "success" : "empty",
+        connectivity: "online",
+      }));
+      const resolution = resolveCurrentStop({
+        location,
+        nearbyStops: nearby.stops,
+        manuallySelectedStop: null,
+      });
+      if (!resolution.stop) {
+        setFocusedAssistArrivals([]);
+        setFocusedAssistContextError(
+          resolution.reason === "POOR_ACCURACY"
+            ? "We're not sure which bus stop you're at."
+            : "We can't identify a bus stop close enough to your location.",
+        );
+        return;
+      }
+      await loadFocusedAssistArrivals(resolution.stop);
+    } catch {
+      if (requestId === focusedAssistLocationRequestRef.current) {
+        setFocusedAssistArrivals([]);
+        setFocusedAssistContextError(
+          "We couldn't update your location. Try again or choose a bus stop.",
+        );
+      }
+    } finally {
+      if (requestId === focusedAssistLocationRequestRef.current) {
+        setFocusedAssistLocating(false);
+      }
+    }
+  }
+
+  function chooseFocusedAssistBusStop() {
+    focusedAssistPreviousSelectedStopRef.current = selectedStop;
+    focusedAssistSelectingStopRef.current = true;
+    void loadManualStops();
   }
 
   async function loadManualStops({
     sheetContent = "NEARBY",
   }: { sheetContent?: MapBottomSheetContent } = {}) {
+    locationLookupRequestRef.current += 1;
     setBottomSheetContent(sheetContent);
+    setNearbyOpen(sheetContent === "NEARBY");
     setIsLoading(true);
     setLoadingMessage("Loading nearby bus stops...");
     setError(null);
     setTransportDiscovery((current) => ({
       ...current,
+      location:
+        current.location === "loading"
+          ? current.lastSuccessfulLocation
+            ? locationStateForCoords(current.lastSuccessfulLocation)
+            : "unavailable"
+          : current.location,
+      locationRequested:
+        current.location === "loading" ? false : current.locationRequested,
       nearbyStopsStatus: "loading",
     }));
     try {
@@ -3096,6 +5489,9 @@ function SgGoAssistApp() {
         viewportSource: "SEARCH_RESULT",
         updateCamera: !initialCameraAppliedRef.current,
       });
+      if (sheetContent === "NEARBY") {
+        updateBottomSheetState(lastNearbySheetState);
+      }
     } catch (apiError) {
       if (apiError instanceof DOMException && apiError.name === "AbortError") {
         return;
@@ -3114,6 +5510,9 @@ function SgGoAssistApp() {
             : current.connectivity,
       }));
       setScreen("STOP");
+      if (sheetContent === "NEARBY") {
+        setNearbyOpen(true);
+      }
       updateBottomSheetState("MEDIUM");
     } finally {
       setIsLoading(false);
@@ -3121,23 +5520,89 @@ function SgGoAssistApp() {
     }
   }
 
-  async function confirmBusStop(stop = selectedStop) {
+  async function loadStaticStopDetails(stop: NearbyBusStop, force = false) {
+    const cached = force
+      ? undefined
+      : stopDetailsCacheRef.current.get(stop.busStopCode);
+    if (cached) {
+      setSelectedStop({ ...cached, distanceMeters: stop.distanceMeters });
+      setStaticServicesStatus("SUCCESS");
+      return;
+    }
+
+    stopDetailsRequestRef.current.controller?.abort();
+    const requestId = stopDetailsRequestRef.current.id + 1;
+    const controller = new AbortController();
+    stopDetailsRequestRef.current = { id: requestId, controller };
+    setStaticServicesStatus("LOADING");
+    try {
+      const result = await fetchBusStop(stop.busStopCode, controller.signal);
+      if (requestId !== stopDetailsRequestRef.current.id) return;
+      const enrichedStop: NearbyBusStop = {
+        ...result.stop,
+        distanceMeters: stop.distanceMeters,
+      };
+      stopDetailsCacheRef.current.set(stop.busStopCode, result.stop);
+      setSelectedStop(enrichedStop);
+      setRegionalStops((current) =>
+        current.map((candidate) =>
+          candidate.busStopCode === enrichedStop.busStopCode
+            ? { ...enrichedStop, distanceMeters: candidate.distanceMeters }
+            : candidate,
+        ),
+      );
+      setTransportDiscovery((current) => ({
+        ...current,
+        nearbyStops: current.nearbyStops.map((candidate) =>
+          candidate.busStopCode === enrichedStop.busStopCode
+            ? { ...enrichedStop, distanceMeters: candidate.distanceMeters }
+            : candidate,
+        ),
+      }));
+      setStaticServicesStatus("SUCCESS");
+    } catch (apiError) {
+      if (apiError instanceof DOMException && apiError.name === "AbortError") {
+        return;
+      }
+      if (requestId === stopDetailsRequestRef.current.id) {
+        setStaticServicesStatus("ERROR");
+      }
+    }
+  }
+
+  function confirmBusStop(stop = selectedStop, preferredServiceNo?: string) {
     if (!stop) {
       return;
     }
 
+    journeySessionIdRef.current += 1;
+    const staticOptions = serviceOptionsFromStopFallback(stop);
     setSelectedStop(stop);
     setJourneySetupState("SELECTING_SERVICE");
-    setServiceOptions([]);
+    setServiceOptions(staticOptions);
     setSelectedServiceOption(null);
+    selectedServiceOptionRef.current = null;
     setSelectedArrival(null);
     setSelectedAlightingStop(null);
     setSelectedBus(null);
     setArrivingBuses([]);
+    setArrivalsStatus("LOADING");
+    setRouteDetailsStatus("IDLE");
     setScreen("BUS");
-    setIsLoading(true);
-    setLoadingMessage("Finding buses serving this stop...");
     setError(null);
+
+    const preferredOption = preferredServiceNo
+      ? staticOptions.find((option) => option.serviceNo === preferredServiceNo)
+      : undefined;
+    if (preferredOption) {
+      selectService(preferredOption, stop);
+    }
+    void loadArrivalsForStop(stop);
+  }
+
+  async function loadArrivalsForStop(stop: NearbyBusStop) {
+    const journeySessionId = journeySessionIdRef.current;
+    setArrivalsStatus("LOADING");
     try {
       arrivalsRequestRef.current.controller?.abort();
       const cached = arrivalsCacheRef.current.get(stop.busStopCode);
@@ -3146,15 +5611,7 @@ function SgGoAssistApp() {
       const requestId = arrivalsRequestRef.current.id + 1;
 
       if (cachedIsFresh) {
-        setServiceOptions(
-          serviceOptionsFromArrivals(stop, cached.result.services),
-        );
-        const flattened = cached.result.services.flatMap(
-          (service) => service.buses,
-        );
-        setArrivingBuses(flattened);
-        setIsLoading(false);
-        setLoadingMessage(null);
+        applyArrivalResult(stop, cached.result);
         return;
       }
 
@@ -3164,35 +5621,65 @@ function SgGoAssistApp() {
         stop.busStopCode,
         controller.signal,
       );
-      if (requestId !== arrivalsRequestRef.current.id) {
+      if (
+        requestId !== arrivalsRequestRef.current.id ||
+        journeySessionId !== journeySessionIdRef.current
+      ) {
         return;
       }
       arrivalsCacheRef.current.set(stop.busStopCode, {
         timestamp: Date.now(),
         result: arrivals,
       });
-      setServiceOptions(serviceOptionsFromArrivals(stop, arrivals.services));
-      const flattened = arrivals.services.flatMap((service) => service.buses);
-      setArrivingBuses(flattened);
-      if (arrivals.services.length === 0) {
-        setError("No services were found for this stop.");
-      }
+      applyArrivalResult(stop, arrivals);
     } catch (apiError) {
       if (apiError instanceof DOMException && apiError.name === "AbortError") {
         return;
       }
-      setError(
-        "Bus arrival information is temporarily unavailable. Your stop is selected; try refreshing arrivals in a moment.",
-      );
-      setServiceOptions(serviceOptionsFromStopFallback(stop));
-    } finally {
-      setIsLoading(false);
-      setLoadingMessage(null);
+      if (journeySessionId === journeySessionIdRef.current) {
+        setArrivalsStatus("ERROR");
+      }
     }
   }
 
-  function selectService(option: BusServiceOption) {
-    if (!selectedStop) {
+  function applyArrivalResult(
+    stop: NearbyBusStop,
+    arrivals: BusStopArrivalsResponse,
+  ) {
+    const options = serviceOptionsFromArrivals(stop, arrivals.services);
+    const flattened = options.flatMap((service) => service.buses);
+    setServiceOptions(options);
+    setArrivingBuses(flattened);
+    setArrivalsStatus(flattened.length > 0 ? "SUCCESS" : "ERROR");
+
+    const currentSelection = selectedServiceOptionRef.current;
+    if (!currentSelection) return;
+    const refreshedSelection = options.find(
+      (option) => option.serviceNo === currentSelection.serviceNo,
+    );
+    if (!refreshedSelection) return;
+
+    const arrival = refreshedSelection.buses[0] ?? null;
+    selectedServiceOptionRef.current = refreshedSelection;
+    setSelectedServiceOption(refreshedSelection);
+    setSelectedArrival(arrival);
+    setSelectedBus((current) =>
+      current && current.busService === refreshedSelection.serviceNo
+        ? {
+            ...current,
+            busId:
+              arrival?.busId ??
+              `SERVICE-${refreshedSelection.serviceNo}-UNASSIGNED`,
+            isAccessible: arrival?.wheelchairAccessible ?? false,
+            wheelchairSpaces: arrival?.wheelchairAccessible ? 1 : 0,
+            estimatedArrivalSeconds: arrival?.etaSeconds ?? 0,
+          }
+        : current,
+    );
+  }
+
+  function selectService(option: BusServiceOption, stop = selectedStop) {
+    if (!stop) {
       return;
     }
 
@@ -3202,22 +5689,24 @@ function SgGoAssistApp() {
     const busId = arrival?.busId ?? `SERVICE-${option.serviceNo}-UNASSIGNED`;
     setSelectedArrival(arrival);
     setSelectedServiceOption(option);
+    selectedServiceOptionRef.current = option;
     setDestinationSearchQuery("");
     setJourneyRequirements(requirements);
     setRequestId(null);
     setRequestStatus(null);
+    setRequestPhase(null);
     setEvents([]);
     setVehicleStatus(null);
     setSelectedBus({
       busId,
       busService: option.serviceNo,
       routeNumber: option.serviceNo,
-      currentStop: selectedStop.description,
+      currentStop: stop.description,
       nextStop: arrivalDestination,
       isAccessible: arrival?.wheelchairAccessible ?? false,
       wheelchairSpaces: arrival?.wheelchairAccessible ? 1 : 0,
-      latitude: selectedStop.latitude,
-      longitude: selectedStop.longitude,
+      latitude: stop.latitude,
+      longitude: stop.longitude,
       estimatedArrivalSeconds: etaSeconds,
     });
     const selectedRoute = routeStopsForBus(
@@ -3225,15 +5714,15 @@ function SgGoAssistApp() {
         busId,
         busService: option.serviceNo,
         routeNumber: option.serviceNo,
-        currentStop: selectedStop.description,
+        currentStop: stop.description,
         nextStop: arrivalDestination,
         isAccessible: arrival?.wheelchairAccessible ?? false,
         wheelchairSpaces: arrival?.wheelchairAccessible ? 1 : 0,
-        latitude: selectedStop.latitude,
-        longitude: selectedStop.longitude,
+        latitude: stop.latitude,
+        longitude: stop.longitude,
         estimatedArrivalSeconds: etaSeconds,
       },
-      selectedStop,
+      stop,
       arrival,
     );
     setRouteStops(selectedRoute);
@@ -3241,27 +5730,121 @@ function SgGoAssistApp() {
     setSelectedAlightingStop(defaultAlightingStopForRoute(selectedRoute));
     setJourneyPhase("PLANNING");
     setJourneySetupState("SELECTING_DESTINATION");
-    AccessibilityInfo.announceForAccessibility(
+    setRouteDetailsStatus("LOADING");
+    void loadRouteDetails(stop, option, arrival);
+    announceGuidance(
       arrival
         ? `Service ${option.serviceNo} selected. Towards ${arrivalDestination}. Arriving in approximately ${Math.ceil(
             arrival.etaSeconds / 60,
           )} minutes. Choose destination.`
-        : `Service ${option.serviceNo} selected. Live arrival unavailable. Choose destination.`,
+        : `Service ${option.serviceNo} selected. Live arrival unavailable. Route details are loading.`,
     );
   }
 
-  async function submitRequest() {
-    if (
-      !selectedBus ||
-      !selectedStop ||
-      assistanceTypes.length === 0 ||
-      isLoading
-    ) {
+  async function loadRouteDetails(
+    stop: NearbyBusStop,
+    option: BusServiceOption,
+    arrival: ArrivalBus | null,
+  ) {
+    const journeySessionId = journeySessionIdRef.current;
+    setRouteDetailsStatus("LOADING");
+    const cacheKey = `${stop.busStopCode}\u0000${option.serviceNo}`;
+    const cached = routeDetailsCacheRef.current.get(cacheKey);
+    if (cached) {
+      applyRouteDetails(stop, option, arrival, cached.routes);
       return;
     }
 
+    routeDetailsRequestRef.current.controller?.abort();
+    const requestId = routeDetailsRequestRef.current.id + 1;
+    const controller = new AbortController();
+    routeDetailsRequestRef.current = { id: requestId, controller };
+    try {
+      const result = await fetchBusStopServiceRoutes(
+        stop.busStopCode,
+        option.serviceNo,
+        controller.signal,
+      );
+      if (
+        requestId !== routeDetailsRequestRef.current.id ||
+        journeySessionId !== journeySessionIdRef.current
+      )
+        return;
+      routeDetailsCacheRef.current.set(cacheKey, result);
+      applyRouteDetails(stop, option, arrival, result.routes);
+    } catch (apiError) {
+      if (apiError instanceof DOMException && apiError.name === "AbortError") {
+        return;
+      }
+      if (
+        requestId === routeDetailsRequestRef.current.id &&
+        journeySessionId === journeySessionIdRef.current
+      ) {
+        setRouteDetailsStatus("ERROR");
+      }
+    }
+  }
+
+  function applyRouteDetails(
+    stop: NearbyBusStop,
+    option: BusServiceOption,
+    arrival: ArrivalBus | null,
+    routes: BusServiceRouteOption[],
+  ) {
+    const route = preferredServiceRoute(routes, arrival?.destination);
+    if (!route) {
+      setRouteDetailsStatus("ERROR");
+      return;
+    }
+
+    const destinationName = route.destination.description;
+    const currentSelection = selectedServiceOptionRef.current;
+    if (
+      currentSelection?.serviceNo !== option.serviceNo ||
+      selectedStop?.busStopCode !== stop.busStopCode
+    ) {
+      return;
+    }
+    const updatedOption = { ...currentSelection, destination: destinationName };
+    selectedServiceOptionRef.current = updatedOption;
+    setSelectedServiceOption(updatedOption);
+    setServiceOptions((current) =>
+      current.map((candidate) =>
+        candidate.serviceNo === option.serviceNo
+          ? { ...candidate, destination: destinationName }
+          : candidate,
+      ),
+    );
+    setSelectedBus((current) =>
+      current?.busService === option.serviceNo
+        ? { ...current, nextStop: destinationName }
+        : current,
+    );
+    setRouteStops(route.stops);
+    setCurrentStopIndex(0);
+    setSelectedAlightingStop(defaultAlightingStopForRoute(route.stops));
+    setRouteDetailsStatus("SUCCESS");
+    announceGuidance(
+      `Service ${option.serviceNo}, towards ${destinationName}. Choose your destination.`,
+    );
+  }
+
+  async function submitRequest(
+    requestedAssistanceTypes: AssistanceType[] = assistanceTypes,
+    options: { stayOnAssist?: boolean } = {},
+  ) {
+    if (
+      !selectedBus ||
+      !selectedStop ||
+      requestedAssistanceTypes.length === 0 ||
+      isLoading
+    ) {
+      return false;
+    }
+
+    const journeySessionId = journeySessionIdRef.current;
     setIsLoading(true);
-    setLoadingMessage("Sending assistance request...");
+    setLoadingMessage(loadingMessageForAssistance(requestedAssistanceTypes));
     setError(null);
     try {
       const response = await createAssistanceRequest({
@@ -3274,41 +5857,203 @@ function SgGoAssistApp() {
           selectedArrival?.destination ??
           selectedBus.nextStop,
         stopCode: selectedStop.busStopCode,
-        assistanceTypes,
+        assistanceTypes: requestedAssistanceTypes,
         source: "MOBILE_APP",
         boardingOrAlighting: "BOARDING",
         accessibilityVerificationStatus: activeProfile?.verificationStatus,
         verificationMethod: activeProfile?.verificationMethod,
       });
 
+      if (journeySessionId !== journeySessionIdRef.current) {
+        void cancelAssistanceRequest(response.requestId).catch(() => undefined);
+        return false;
+      }
+
       setRequestId(response.requestId);
       setRequestStatus(response.status);
+      requestPhaseRef.current = "BOARDING";
+      setRequestPhase("BOARDING");
       setEvents([
         {
           type: "REQUEST_STATUS",
           requestId: response.requestId,
           status: response.status,
           timestamp: response.createdAt,
-          assistanceTypes,
+          assistanceTypes: requestedAssistanceTypes,
           source: "MOBILE_APP",
           busId: selectedBus.busId,
           busService: selectedBus.busService,
           message: response.duplicateOfRequestId
             ? "Ramp assistance is already requested for this bus."
-            : `The bus has received your request for ${selectedNeeds}. You do not need to request again.`,
+            : `The bus has received your request for ${requestedAssistanceTypes
+                .map(readableAssistanceType)
+                .join(", ")}. You do not need to request again.`,
         },
       ]);
       setJourneySetupState("WAITING_FOR_BUS");
       setJourneyPhase("WAITING_FOR_BUS");
-      setScreen("STATUS");
+      setScreen(options.stayOnAssist ? "ACCESSIBILITY" : "STATUS");
+      return true;
     } catch (apiError) {
-      setError(
-        `We could not confirm your assistance request for Service ${selectedBus.busService}. Please try again.`,
-      );
+      if (journeySessionId === journeySessionIdRef.current) {
+        setError(
+          `We could not confirm your assistance request for Service ${selectedBus.busService}. Please try again.`,
+        );
+      }
+      return false;
     } finally {
-      setIsLoading(false);
-      setLoadingMessage(null);
+      if (journeySessionId === journeySessionIdRef.current) {
+        setIsLoading(false);
+        setLoadingMessage(null);
+      }
     }
+  }
+
+  async function requestRampWhileWaiting() {
+    const updatedRequirements = {
+      ...journeyRequirements,
+      wheelchairRamp: true,
+    };
+    const rampRequestSent = await submitRequest(
+      assistanceTypesForPhase(updatedRequirements, "BOARDING"),
+    );
+    if (rampRequestSent) {
+      setJourneyRequirements(updatedRequirements);
+    }
+  }
+
+  async function requestFocusedAssistRamp(
+    bus: BusAtStop,
+    context: FocusedAssistContext,
+  ) {
+    return requestFocusedBoardingAssistance(bus, context, "WHEELCHAIR_RAMP");
+  }
+
+  async function requestFocusedAssistExtraTime(
+    bus: BusAtStop,
+    context: FocusedAssistContext,
+  ) {
+    return requestFocusedBoardingAssistance(
+      bus,
+      context,
+      "EXTENDED_DWELL_TIME",
+    );
+  }
+
+  async function requestFocusedBoardingAssistance(
+    bus: BusAtStop,
+    context: FocusedAssistContext,
+    assistanceType: "WHEELCHAIR_RAMP" | "EXTENDED_DWELL_TIME",
+  ) {
+    if (focusedAssistSubmittingRef.current || !context.stop) {
+      return false;
+    }
+    const isRamp = assistanceType === "WHEELCHAIR_RAMP";
+    const requestName = isRamp ? "Ramp assistance" : "More boarding time";
+    if (
+      bus.activeJourneyMatch &&
+      selectedBus?.busId === bus.vehicleId &&
+      selectedStop?.busStopCode === context.stop.busStopCode
+    ) {
+      focusedAssistSubmittingRef.current = true;
+      try {
+        const sent = await submitRequest([assistanceType], {
+          stayOnAssist: true,
+        });
+        if (sent) {
+          notifyPassenger(
+            `${requestName} requested for Service ${bus.serviceNo}.`,
+            {
+              haptic: "SUCCESS",
+              id: `focused-assist-${bus.id}-${assistanceType.toLowerCase()}-requested`,
+              priority: "BUS",
+            },
+          );
+        }
+        return sent;
+      } finally {
+        focusedAssistSubmittingRef.current = false;
+      }
+    }
+
+    focusedAssistSubmittingRef.current = true;
+    const focusedSessionId = focusedAssistRequestSessionRef.current + 1;
+    focusedAssistRequestSessionRef.current = focusedSessionId;
+    setFocusedAssistRequest({
+      requestId: null,
+      status: null,
+      assistanceType,
+      submitting: true,
+      bus,
+      stop: context.stop,
+      error: null,
+    });
+    try {
+      const response = await createAssistanceRequest({
+        sessionId,
+        busService: bus.serviceNo,
+        busId: bus.vehicleId ?? bus.id,
+        boardingStop: context.stop.busStopCode,
+        destination: bus.destination ?? "Destination not selected",
+        stopCode: context.stop.busStopCode,
+        assistanceTypes: [assistanceType],
+        source: "MOBILE_APP",
+        boardingOrAlighting: "BOARDING",
+        accessibilityVerificationStatus: activeProfile?.verificationStatus,
+        verificationMethod: activeProfile?.verificationMethod,
+      });
+      if (focusedSessionId !== focusedAssistRequestSessionRef.current) {
+        void cancelAssistanceRequest(response.requestId).catch(() => undefined);
+        return false;
+      }
+      setFocusedAssistRequest({
+        requestId: response.requestId,
+        status: response.status,
+        assistanceType,
+        submitting: false,
+        bus,
+        stop: context.stop,
+        error: null,
+      });
+      notifyPassenger(
+        response.duplicateOfRequestId
+          ? `${requestName} is already requested for Service ${bus.serviceNo}.`
+          : `${requestName} requested for Service ${bus.serviceNo}.`,
+        {
+          haptic: "SUCCESS",
+          id: `focused-assist-${bus.id}-${assistanceType.toLowerCase()}-requested`,
+          priority: "BUS",
+        },
+      );
+      return true;
+    } catch {
+      if (focusedSessionId === focusedAssistRequestSessionRef.current) {
+        setFocusedAssistRequest((current) => ({
+          ...current,
+          status: AssistanceRequestStatus.FAILED,
+          submitting: false,
+          error: isRamp
+            ? "We couldn't complete the ramp request."
+            : "We couldn't request more boarding time.",
+        }));
+      }
+      return false;
+    } finally {
+      if (focusedSessionId === focusedAssistRequestSessionRef.current) {
+        focusedAssistSubmittingRef.current = false;
+      }
+    }
+  }
+
+  async function requestFocusedAlightingAssistance() {
+    if (!focusedAssistOnboard) {
+      setFocusedAssistRequest((current) => ({
+        ...current,
+        error: "Alighting assistance is available once you are onboard.",
+      }));
+      return false;
+    }
+    return requestDisembarkation();
   }
 
   function continueToJourneyReview() {
@@ -3317,7 +6062,7 @@ function SgGoAssistApp() {
     }
     setJourneySetupState("REVIEWING_JOURNEY");
     setScreen("CONFIRM");
-    AccessibilityInfo.announceForAccessibility(
+    announceGuidance(
       `Journey preview. Service ${selectedBus.busService}. Get off at ${selectedAlightingStop.description}.`,
     );
   }
@@ -3328,11 +6073,12 @@ function SgGoAssistApp() {
     }
     setRequestId(null);
     setRequestStatus(null);
+    setRequestPhase(null);
     setEvents([]);
     setJourneySetupState("WAITING_FOR_BUS");
     setJourneyPhase("WAITING_FOR_BUS");
     setScreen("STATUS");
-    AccessibilityInfo.announceForAccessibility(
+    announceGuidance(
       `Journey started. Wait for Service ${selectedBus.busService} at ${selectedStop.description}. Destination ${selectedAlightingStop.description}.`,
     );
   }
@@ -3348,6 +6094,23 @@ function SgGoAssistApp() {
     setError(null);
     try {
       await cancelAssistanceRequest(requestId);
+      requestStatusRef.current = AssistanceRequestStatus.CANCELLED;
+      setRequestStatus(AssistanceRequestStatus.CANCELLED);
+      if (selectedBus) {
+        const cancelledEvent: StatusUpdateMessage = {
+          type: "REQUEST_STATUS",
+          requestId,
+          status: AssistanceRequestStatus.CANCELLED,
+          timestamp: new Date().toISOString(),
+          assistanceTypes,
+          source: "MOBILE_APP",
+          busId: selectedBus.busId,
+          busService: selectedBus.busService,
+          message: "Assistance request cancelled.",
+        };
+        setEvents((current) => [cancelledEvent, ...current]);
+      }
+      announceGuidance("Your assistance request has been cancelled.");
     } catch {
       setError(
         "We could not cancel the request. Your original assistance request may still be active.",
@@ -3393,6 +6156,11 @@ function SgGoAssistApp() {
                 latitude: freshPosition.coords.latitude,
                 longitude: freshPosition.coords.longitude,
                 accuracyMeters: freshPosition.coords.accuracy ?? undefined,
+                headingDegrees:
+                  freshPosition.coords.heading !== null &&
+                  freshPosition.coords.heading >= 0
+                    ? freshPosition.coords.heading
+                    : undefined,
               };
               const cachedPosition = { timestamp: Date.now(), coords };
               lastLocationResultRef.current = cachedPosition;
@@ -3433,7 +6201,8 @@ function SgGoAssistApp() {
         }),
         "FOLLOW_USER",
       );
-      setFollowMode(false);
+      setFollowState("FOLLOW_USER");
+      setLocationPulseKey((current) => current + 1);
       AccessibilityInfo.announceForAccessibility(
         "Map centred on your current location.",
       );
@@ -3451,8 +6220,8 @@ function SgGoAssistApp() {
     }
   }
 
-  async function showNearbyStopsInArea() {
-    const source = selectedLandmark
+  function resolveNearbyStopsOrigin() {
+    const source: ViewportSource = selectedLandmark
       ? "SEARCH_RESULT"
       : selectedStop
         ? "SELECTED_STOP"
@@ -3475,9 +6244,13 @@ function SgGoAssistApp() {
           : selectedStop
             ? `Bus stops near ${selectedStop.description}`
             : "Bus stops in this area";
+    return { origin, originLabel, source };
+  }
+
+  async function showNearbyStopsInArea() {
+    const { origin, originLabel, source } = resolveNearbyStopsOrigin();
     setScreen("STOP");
     setBottomSheetContent("NEARBY");
-    updateBottomSheetState("MEDIUM");
     setIsLoading(true);
     setLoadingMessage("Finding bus stops nearby...");
     setError(null);
@@ -3500,7 +6273,9 @@ function SgGoAssistApp() {
       if (source !== "USER_LOCATION") {
         setMapManuallyMoved(false);
       }
-      updateBottomSheetState("MEDIUM");
+      if (nearbyOpen) {
+        updateBottomSheetState("MEDIUM");
+      }
       if (source === "USER_PAN" || !currentLocation) {
         AccessibilityInfo.announceForAccessibility(
           "Bus stops in this area are shown.",
@@ -3523,30 +6298,23 @@ function SgGoAssistApp() {
             : current.connectivity,
       }));
       setScreen("STOP");
-      updateBottomSheetState("MEDIUM");
+      if (nearbyOpen) {
+        updateBottomSheetState("MEDIUM");
+      }
     } finally {
       setIsLoading(false);
       setLoadingMessage(null);
     }
   }
 
-  function openNearbyStopsSheet() {
-    if (
-      bottomSheetContent === "NEARBY" &&
-      (bottomSheetState === "MEDIUM" || bottomSheetState === "EXPANDED")
-    ) {
-      updateBottomSheetState("HIDDEN_PEEK");
-      return;
-    }
-
+  function openNearbyStops() {
     setScreen("STOP");
     setSelectedStop(null);
     setSelectedLandmarkId(null);
-    setDirectionsActive(false);
+    setGuidanceMode("INACTIVE");
     setBottomSheetContent("NEARBY");
-    updateBottomSheetState(
-      bottomSheetContent === "NEARBY" ? lastNearbySheetState : "MEDIUM",
-    );
+    setNearbyOpen(true);
+    updateBottomSheetState(lastNearbySheetState);
 
     if (
       transportDiscovery.nearbyStopsStatus === "idle" ||
@@ -3556,7 +6324,21 @@ function SgGoAssistApp() {
     }
   }
 
+  function toggleNearbyStopsSheet() {
+    if (nearbyOpen) {
+      setNearbyOpen(false);
+      updateBottomSheetState("HIDDEN_PEEK");
+      return;
+    }
+
+    openNearbyStops();
+  }
+
   function askToCancelRequest() {
+    if (!appPreferences.confirmImportantActions) {
+      void cancelRequest();
+      return;
+    }
     setConfirmingCancelRequest(true);
     AccessibilityInfo.announceForAccessibility(
       "Cancel assistance request? Your bus may no longer receive your accessibility request.",
@@ -3579,7 +6361,11 @@ function SgGoAssistApp() {
     setScreen("ONBOARD");
     notifyPassenger(
       `You are onboard Bus ${selectedBus.busService} towards ${selectedArrival?.destination ?? selectedBus.nextStop}.`,
-      Haptics.NotificationFeedbackType.Success,
+      {
+        haptic: "START",
+        id: `onboard-${selectedBus.busId}-started`,
+        priority: "BUS",
+      },
     );
   }
 
@@ -3597,9 +6383,7 @@ function SgGoAssistApp() {
     ) {
       setScreen("ONBOARD");
     }
-    AccessibilityInfo.announceForAccessibility(
-      `${stop.description} selected as your alighting stop.`,
-    );
+    announceGuidance(`${stop.description} selected as your alighting stop.`);
   }
 
   function simulateNextStop() {
@@ -3614,10 +6398,11 @@ function SgGoAssistApp() {
     if (selectedAlightingStop?.busStopCode === nextStop.busStopCode) {
       setJourneySetupState("DISEMBARKING");
       setJourneyPhase("DISEMBARKING");
-      notifyPassenger(
-        `This is your stop. ${nextStop.description}.`,
-        Haptics.NotificationFeedbackType.Success,
-      );
+      notifyPassenger(`This is your stop. ${nextStop.description}.`, {
+        haptic: "SUCCESS",
+        id: `onboard-${selectedBus?.busId ?? "bus"}-destination-reached-${nextIndex}`,
+        priority: "DESTINATION",
+      });
       return;
     }
 
@@ -3628,10 +6413,16 @@ function SgGoAssistApp() {
     ) {
       setJourneySetupState("DESTINATION_NEXT");
       setJourneyPhase("DESTINATION_NEXT");
-      notifyPassenger(
-        `Your stop is next. ${selectedAlightingStop.description}.`,
-        Haptics.NotificationFeedbackType.Warning,
-      );
+      if (appPreferences.warnDestinationNext) {
+        notifyPassenger(
+          `Your destination, ${selectedAlightingStop.description}, is the next stop. Prepare to alight.`,
+          {
+            haptic: "WARNING",
+            id: `onboard-${selectedBus?.busId ?? "bus"}-destination-next-${nextIndex}`,
+            priority: "DESTINATION",
+          },
+        );
+      }
       return;
     }
 
@@ -3643,20 +6434,35 @@ function SgGoAssistApp() {
     if (remainingAfterMove !== null && remainingAfterMove <= 2) {
       setJourneySetupState("DESTINATION_APPROACHING");
       setJourneyPhase("DESTINATION_APPROACHING");
-      notifyPassenger(
-        `${remainingAfterMove} stops remaining before ${selectedAlightingStop?.description}.`,
-        Haptics.NotificationFeedbackType.Warning,
-      );
+      if (appPreferences.warnTwoStopsBeforeDestination) {
+        notifyPassenger(
+          `${remainingAfterMove} stops remaining before ${selectedAlightingStop?.description}.`,
+          {
+            haptic: "WARNING",
+            id: `onboard-${selectedBus?.busId ?? "bus"}-${remainingAfterMove}-stops-remaining`,
+            priority: "DESTINATION",
+          },
+        );
+      }
       return;
     }
 
     setJourneySetupState("ONBOARD");
     setJourneyPhase("ONBOARD");
+    if (followingStop) {
+      announceSemanticGuidance({
+        id: `onboard-${selectedBus?.busId ?? "bus"}-next-stop-${nextIndex}`,
+        priority: "GENERAL",
+        text: `Next stop: ${followingStop.description}.`,
+      });
+    }
   }
 
   function themedHeadingStyle() {
     return [
       styles.heading,
+      largeText && styles.largeHeading,
+      extraLargeText && styles.extraLargeHeading,
       lightMode && lightStyles.text,
       highContrastDark && styles.highContrastText,
       highContrastLight && lightStyles.highContrastText,
@@ -3675,7 +6481,8 @@ function SgGoAssistApp() {
   function themedBodyStyle() {
     return [
       styles.bodyText,
-      appPreferences.largeText && styles.largeBody,
+      largeText && styles.largeBody,
+      extraLargeText && styles.extraLargeBody,
       lightMode && lightStyles.bodyText,
       highContrastDark && styles.highContrastMutedText,
       highContrastLight && lightStyles.highContrastMutedText,
@@ -3694,6 +6501,8 @@ function SgGoAssistApp() {
   function themedValueStyle() {
     return [
       styles.statusValue,
+      largeText && styles.largeBody,
+      extraLargeText && styles.extraLargeBody,
       lightMode && lightStyles.text,
       highContrastDark && styles.highContrastText,
       highContrastLight && lightStyles.highContrastText,
@@ -3704,7 +6513,16 @@ function SgGoAssistApp() {
     if (!selectedBus || !selectedAlightingStop || isLoading) {
       setError("Choose where to get off before requesting disembarkation.");
       setScreen("ALIGHTING_STOP");
-      return;
+      return false;
+    }
+
+    const journeySessionId = journeySessionIdRef.current;
+    if (
+      requestPhase === "ALIGHTING" &&
+      (requestStatus === AssistanceRequestStatus.SENDING ||
+        requestStatus === AssistanceRequestStatus.ACKNOWLEDGED)
+    ) {
+      return false;
     }
 
     if (alightingAssistanceTypes.length === 0) {
@@ -3712,14 +6530,14 @@ function SgGoAssistApp() {
       setVisualAlert(
         `Your request to alight at ${selectedAlightingStop.description} is ready.`,
       );
-      AccessibilityInfo.announceForAccessibility(
+      announceGuidance(
         `Request to alight at ${selectedAlightingStop.description} prepared.`,
       );
-      return;
+      return true;
     }
 
     setIsLoading(true);
-    setLoadingMessage("Sending alighting assistance request...");
+    setLoadingMessage("Updating your journey...");
     setError(null);
     try {
       const response = await createAssistanceRequest({
@@ -3739,8 +6557,15 @@ function SgGoAssistApp() {
         verificationMethod: activeProfile?.verificationMethod,
       });
 
+      if (journeySessionId !== journeySessionIdRef.current) {
+        void cancelAssistanceRequest(response.requestId).catch(() => undefined);
+        return false;
+      }
+
       setRequestId(response.requestId);
       setRequestStatus(response.status);
+      requestPhaseRef.current = "ALIGHTING";
+      setRequestPhase("ALIGHTING");
       setConfirmingCancelRequest(false);
       setJourneyPhase("DISEMBARKING");
       setEvents((current) => [
@@ -3759,1496 +6584,1746 @@ function SgGoAssistApp() {
       ]);
       setVisualAlert(
         `Alighting assistance requested for ${selectedAlightingStop.description}: ${alightingAssistanceTypes
-          .map(readableAssistanceType)
+          .map(readableAlightingAssistanceType)
           .join(", ")}.`,
       );
+      return true;
     } catch {
-      setError("We couldn't send your alighting assistance request.");
+      if (journeySessionId === journeySessionIdRef.current) {
+        setError("We couldn't send your alighting assistance request.");
+      }
+      return false;
     } finally {
-      setIsLoading(false);
-      setLoadingMessage(null);
+      if (journeySessionId === journeySessionIdRef.current) {
+        setIsLoading(false);
+        setLoadingMessage(null);
+      }
     }
   }
 
-  function endJourney() {
-    setJourneySetupState("COMPLETED");
-    setJourneyPhase("COMPLETED");
-    setScreen("COMPLETED");
-    AccessibilityInfo.announceForAccessibility("Journey completed.");
+  function invalidateJourneyAsyncWork() {
+    journeySessionIdRef.current += 1;
+    guidanceSessionIdRef.current += 1;
+    locationLookupRequestRef.current += 1;
+    searchRequestIdRef.current += 1;
+    cameraIntentIdRef.current += 1;
+    selectedStopCameraIntentRef.current += 1;
+
+    stopsRequestRef.current.controller?.abort();
+    stopsRequestRef.current = {
+      id: stopsRequestRef.current.id + 1,
+      controller: null,
+    };
+    regionalStopsRequestRef.current.controller?.abort();
+    regionalStopsRequestRef.current = {
+      id: regionalStopsRequestRef.current.id + 1,
+      controller: null,
+    };
+    arrivalsRequestRef.current.controller?.abort();
+    arrivalsRequestRef.current = {
+      id: arrivalsRequestRef.current.id + 1,
+      controller: null,
+    };
+    routeDetailsRequestRef.current.controller?.abort();
+    routeDetailsRequestRef.current = {
+      id: routeDetailsRequestRef.current.id + 1,
+      controller: null,
+    };
+    stopDetailsRequestRef.current.controller?.abort();
+    stopDetailsRequestRef.current = {
+      id: stopDetailsRequestRef.current.id + 1,
+      controller: null,
+    };
+    directionsRequestRef.current.controller?.abort();
+    directionsRequestRef.current = {
+      id: directionsRequestRef.current.id + 1,
+      controller: null,
+    };
+  }
+
+  async function endJourney(completionKind: JourneyCompletionKind) {
+    if (
+      journeyEndInProgressRef.current ||
+      (!selectedStop && !selectedServiceOption && !selectedBus)
+    ) {
+      return false;
+    }
+
+    journeyEndInProgressRef.current = true;
+    setJourneyEndInProgress(true);
+    setConfirmingJourneyEnd(null);
+    setIsLoading(true);
+    setLoadingMessage(
+      completionKind === "FINISHED"
+        ? "Finishing your journey..."
+        : "Ending your journey...",
+    );
+    setError(null);
+
+    const journeyRequestId = requestId;
+    const journeyRequestStatus = requestStatusRef.current;
+    const activeAssistanceRequest =
+      Boolean(journeyRequestId) &&
+      (journeyRequestStatus === AssistanceRequestStatus.SENDING ||
+        journeyRequestStatus === AssistanceRequestStatus.ACKNOWLEDGED);
+    invalidateJourneyAsyncWork();
+
+    let assistanceCancellationFailed = false;
+    if (activeAssistanceRequest && journeyRequestId) {
+      const cancellationController = new AbortController();
+      const cancellationTimeout = setTimeout(
+        () => cancellationController.abort(),
+        3_000,
+      );
+      try {
+        await cancelAssistanceRequest(
+          journeyRequestId,
+          cancellationController.signal,
+        );
+      } catch {
+        assistanceCancellationFailed = true;
+      } finally {
+        clearTimeout(cancellationTimeout);
+      }
+    }
+
+    await queueActiveJourneyPersistence(clearSavedActiveJourney);
+
+    guidanceServiceRef.current!.stopActiveSpeech();
+    guidanceServiceRef.current!.clearEvents();
+    resetWalkingRouteMonitoring();
+    selectedServiceOptionRef.current = null;
+    requestStatusRef.current = null;
+    requestPhaseRef.current = null;
+    vehicleStatusRef.current = null;
+    arrivalAnnouncementStopRef.current = null;
+
+    setGuidanceMode("INACTIVE");
+    setDirectionsStatus("IDLE");
+    setDirectionsError(null);
+    setWalkingRoute(null);
+    setLocationPulseKey(0);
+    setFollowState("FREE");
+    setMapRotationEnabled(false);
+    setMapHeadingDegrees(0);
+    setMapLayers(defaultMapLayers);
+    setMapManuallyMoved(false);
+    setViewportSource("USER_LOCATION");
+    setMapCameraMode("FOLLOW_USER");
+    setMapViewport({
+      center: currentLocationRef.current ?? manualStopLookup,
+      zoom: 15,
+      bearing: 0,
+      pitch: 0,
+      mode: "USER_LOCATION",
+    });
+    setMapPickMode(null);
+    setNearbyOpen(false);
+    setBottomSheetState("HIDDEN_PEEK");
+    setBottomSheetContent("PLANNER");
+    setBusStopSearch((current) => ({
+      ...current,
+      isOpen: false,
+      query: "",
+      status: "IDLE",
+      results: emptySearchResults,
+      requestId: current.requestId + 1,
+    }));
+    setStopSearchQuery("");
+    setDestinationSearchQuery("");
+    setSelectedLandmarkId(null);
+    setSelectedStop(null);
+    setServiceOptions([]);
+    setSelectedServiceOption(null);
+    setArrivingBuses([]);
+    setSelectedArrival(null);
+    setSelectedBus(null);
+    setRouteStops([]);
+    setCurrentStopIndex(0);
+    setSelectedAlightingStop(null);
+    setJourneyPlanner((current) => ({
+      origin: null,
+      destination: null,
+      alternatives: [],
+      selectedAlternativeId: null,
+      recentDestinations: current.recentDestinations,
+    }));
+    setJourneyRequirements(
+      accessibilityRequirementsFromPreferences(latestPreferencesRef.current),
+    );
+    setJourneySetupState("SELECTING_STOP");
+    setJourneyPhase("DISCOVERY");
+    setRequestId(null);
+    setRequestStatus(null);
+    setRequestPhase(null);
+    setConfirmingCancelRequest(false);
+    setVehicleStatus(null);
+    setEvents([]);
+    setHasSpokenGuidanceInCurrentFlow(false);
+    setLatestSpokenGuidance(null);
+    setArrivalsStatus("IDLE");
+    setRouteDetailsStatus("IDLE");
+    setStaticServicesStatus("IDLE");
+    setScreen("JOURNEY_IDLE");
+    setVisualAlert(
+      completionKind === "FINISHED" ? "Journey finished." : "Journey ended.",
+    );
+    setError(
+      assistanceCancellationFailed
+        ? "Your journey ended, but we could not confirm cancellation of the active assistance request. Please contact the operator if help is no longer needed."
+        : null,
+    );
+    setIsLoading(false);
+    setLoadingMessage(null);
+    setJourneyEndInProgress(false);
+    journeyEndInProgressRef.current = false;
+    AccessibilityInfo.announceForAccessibility(
+      completionKind === "FINISHED"
+        ? "Journey finished. Find your bus is ready."
+        : "Journey ended. Find your bus is ready.",
+    );
+    return true;
+  }
+
+  function requestEndJourney() {
+    if (!selectedBus || journeyEndInProgressRef.current) {
+      return;
+    }
+    setConfirmingJourneyEnd("ENDED_EARLY");
+    AccessibilityInfo.announceForAccessibility(
+      `End this journey? Service ${selectedBus.busService}. Destination ${selectedAlightingStop?.description ?? "not selected"}.`,
+    );
+  }
+
+  function finishJourney() {
+    void endJourney("FINISHED");
+  }
+
+  function requestDestinationChange() {
+    if (!appPreferences.confirmImportantActions) {
+      setScreen("ALIGHTING_STOP");
+      return;
+    }
+    Alert.alert(
+      "Change destination?",
+      "Your stop countdown and alighting guidance will update.",
+      [
+        { text: "Keep destination", style: "cancel" },
+        {
+          text: "Change destination",
+          onPress: () => setScreen("ALIGHTING_STOP"),
+        },
+      ],
+    );
   }
 
   return (
-    <SafeAreaView
-      style={[
-        styles.safeArea,
-        lightMode && lightStyles.safeArea,
-        highContrastDark && styles.highContrastSafeArea,
-        highContrastLight && lightStyles.highContrastSafeArea,
-      ]}
+    <AccessibilityRuntimeContext.Provider
+      value={{
+        largerControls: appPreferences.largerControls,
+        reducedMotion,
+        textSize: appPreferences.textSize,
+      }}
     >
-      <ScrollView
+      <SafeAreaView
         style={[
-          styles.appScroll,
-          screen === "STOP" && styles.mapWorkspaceScroll,
-        ]}
-        scrollEnabled={screen !== "STOP"}
-        showsVerticalScrollIndicator={screen !== "STOP"}
-        contentContainerStyle={[
-          styles.container,
-          isCompactWidth && styles.compactContainer,
-          screen === "STOP" && styles.mapWorkspaceContainer,
+          styles.safeArea,
+          lightMode && lightStyles.safeArea,
+          highContrastDark && styles.highContrastSafeArea,
+          highContrastLight && lightStyles.highContrastSafeArea,
         ]}
       >
-        {screen !== "STOP" ? (
-          <BrandHeader
-            highContrast={appPreferences.highContrast}
-            lightMode={lightMode}
-            compact={isCompactWidth || screen !== "LOCATION"}
-          />
-        ) : null}
-        {activeProfile && screen !== "STOP" && (
-          <View style={[styles.profileBar, lightMode && lightStyles.surface]}>
-            <Text style={[styles.profileName, lightMode && lightStyles.text]}>
-              {activeProfile.displayName}
-            </Text>
-            <PassengerDefaultsIcons
-              requirements={requirements}
-              lightMode={lightMode}
-              highContrast={appPreferences.highContrast}
-              compact
-            />
-          </View>
-        )}
-
-        {(screen === "AUTH" || (screen === "PROFILE" && !activeProfile)) && (
-          <View style={styles.section}>
-            <ProfileHeaderWithAppearance
-              eyebrow="Profile"
-              title="Your SG GoAssist profile"
-              themeMode={appPreferences.themeMode}
+        <ScrollView
+          style={[
+            styles.appScroll,
+            screen === "STOP" && styles.mapWorkspaceScroll,
+          ]}
+          scrollEnabled={screen !== "STOP"}
+          showsVerticalScrollIndicator={screen !== "STOP"}
+          contentContainerStyle={[
+            styles.container,
+            isCompactWidth && styles.compactContainer,
+            screen === "JOURNEY_IDLE" && styles.journeyEntryContainer,
+            screen === "STOP" && styles.mapWorkspaceContainer,
+          ]}
+        >
+          {screen !== "STOP" ? (
+            <BrandHeader
               highContrast={appPreferences.highContrast}
               lightMode={lightMode}
-              largeText={appPreferences.largeText}
-              compactLayout={isCompactWidth}
-              onSelectMode={(themeMode) =>
-                setAppPreferences((current) => ({
-                  ...current,
-                  themeMode,
-                }))
+              compact={
+                screen !== "JOURNEY_IDLE" || appPreferences.simplifiedJourney
               }
             />
-            <Text style={themedBodyStyle()}>
-              Save your assistance needs for easier, safer and more independent
-              bus journeys.
-            </Text>
-            <View style={themedPanelStyle()}>
-              <Text style={themedLabelStyle()}>
-                Designed for accessible journeys
-              </Text>
-              <Text style={themedValueStyle()}>Guided with care</Text>
-              <Text style={themedBodyStyle()}>
-                SG GoAssist helps less-abled passengers travel with confidence
-                by making bus journeys easier, safer and more independent.
-              </Text>
-              <Text style={themedBodyStyle()}>
-                Current app support: {appPreferencesLabel(appPreferences)}
-              </Text>
-            </View>
-            <View
-              style={[
-                styles.createProfilePanel,
-                lightMode && lightStyles.createProfilePanel,
-                highContrastDark && styles.highContrastControl,
-                highContrastLight && lightStyles.highContrastControl,
-              ]}
-            >
-              <Text style={themedHeadingStyle()}>Create Profile</Text>
-              <LabeledInput
-                label="Name"
-                value={authName}
-                onChangeText={setAuthName}
-                placeholder="Passenger name"
-                lightMode={lightMode}
-                highContrast={appPreferences.highContrast}
-              />
-              <LabeledInput
-                label="Email"
-                value={authEmail}
-                onChangeText={setAuthEmail}
-                placeholder="name@example.com"
-                keyboardType="email-address"
-                lightMode={lightMode}
-                highContrast={appPreferences.highContrast}
-              />
-              <PrimaryButton
-                label="Create profile"
-                onPress={createProfile}
-                lightMode={lightMode}
-                highContrast={appPreferences.highContrast}
-              />
-            </View>
-            <Text style={themedHeadingStyle()}>Saved Profiles</Text>
-            {profiles.map((profile) => (
-              <Pressable
-                key={profile.profileId}
-                accessibilityRole="button"
-                accessibilityLabel={`Sign in as ${profile.displayName}. Assistance defaults: ${requirementsLabel(
-                  profile.assistanceDefaults,
-                )}.`}
-                onPress={() => applyProfile(profile, "PROFILE")}
-                style={[styles.busCard, lightMode && lightStyles.surface]}
-              >
-                <Text style={[styles.busTitle, lightMode && lightStyles.text]}>
-                  {profile.displayName}
-                </Text>
-                <Text style={themedBodyStyle()}>{profile.email}</Text>
-                <Text style={themedBodyStyle()}>
-                  Verification: {verificationStatusLabel(profile)}
-                </Text>
-                <PassengerDefaultsIcons
-                  requirements={profile.assistanceDefaults}
-                  lightMode={lightMode}
-                  highContrast={appPreferences.highContrast}
-                />
-              </Pressable>
-            ))}
-          </View>
-        )}
-
-        {screen === "PROFILE" && activeProfile && (
-          <View style={styles.section}>
-            <ProfileHeaderWithAppearance
-              eyebrow="Profile"
-              title="My profile"
-              themeMode={appPreferences.themeMode}
-              highContrast={appPreferences.highContrast}
-              lightMode={lightMode}
-              largeText={appPreferences.largeText}
-              compactLayout={isCompactWidth}
-              onSelectMode={(themeMode) =>
-                setAppPreferences((current) => ({
-                  ...current,
-                  themeMode,
-                }))
-              }
-            />
-            {!isEditingProfileNeeds &&
-              activeProfile.verificationStatus !== "VERIFIED" && (
-                <View
-                  style={[styles.summaryRow, lightMode && lightStyles.surface]}
-                >
-                  <Text
-                    style={[
-                      styles.summaryLabel,
-                      lightMode && lightStyles.mutedText,
-                    ]}
-                  >
-                    Accessibility Verification
-                  </Text>
-                  <Text
-                    style={[styles.summaryValue, lightMode && lightStyles.text]}
-                  >
-                    Verify eligibility separately from your needs
-                  </Text>
-                  <Text style={themedBodyStyle()}>
-                    Demo verification accepts the built-in credential. Card
-                    numbers are mocked for the prototype.
-                  </Text>
-                  <VerificationMethodPicker
-                    selectedMethod={verificationMethod}
-                    onSelect={setVerificationMethod}
-                  />
-                  <LabeledInput
-                    label="Credential last 4 digits"
-                    value={credentialLast4}
-                    onChangeText={setCredentialLast4}
-                    placeholder="4821"
-                    lightMode={lightMode}
-                    highContrast={appPreferences.highContrast}
-                  />
-                  <PrimaryButton
-                    label="Verify accessibility profile"
-                    onPress={verifyActiveProfile}
-                    lightMode={lightMode}
-                    highContrast={appPreferences.highContrast}
-                  />
-                </View>
-              )}
-            <View style={themedPanelStyle()}>
-              <Text style={themedLabelStyle()}>Account</Text>
-              <Text style={themedValueStyle()}>
+          ) : null}
+          {activeProfile && screen !== "STOP" && (
+            <View style={[styles.profileBar, lightMode && lightStyles.surface]}>
+              <Text style={[styles.profileName, lightMode && lightStyles.text]}>
                 {activeProfile.displayName}
               </Text>
-              <Text style={themedBodyStyle()}>{activeProfile.email}</Text>
-              <Text style={themedBodyStyle()}>
-                Verification: {verificationStatusLabel(activeProfile)}
-              </Text>
               <PassengerDefaultsIcons
-                requirements={activeProfile.assistanceDefaults}
+                requirements={requirements}
                 lightMode={lightMode}
                 highContrast={appPreferences.highContrast}
+                compact
+              />
+            </View>
+          )}
+          {activeTab === "JOURNEY" &&
+          screen !== "STOP" &&
+          screen !== "ONBOARD" &&
+          (appPreferences.alwaysShowNextAction ||
+            appPreferences.simplifiedJourney ||
+            appPreferences.reduceMapDependence) ? (
+            <JourneyNextActionCard
+              action={journeyNextAction}
+              simplified={appPreferences.simplifiedJourney}
+              plainLanguage={appPreferences.plainLanguage}
+              reduceMapDependence={appPreferences.reduceMapDependence}
+              lightMode={lightMode}
+              highContrast={appPreferences.highContrast}
+            />
+          ) : null}
+          {screen === "JOURNEY_IDLE" ? (
+            <AccessibilityPreferenceSummary
+              preferences={appPreferences}
+              onEdit={() => {
+                setScreen("PROFILE");
+                setProfilePreferenceSection(null);
+                setIsEditingProfileNeeds(Boolean(activeProfile));
+              }}
+            />
+          ) : null}
+
+          {(screen === "AUTH" || (screen === "PROFILE" && !activeProfile)) && (
+            <View style={styles.section}>
+              <ProfileHeaderWithAppearance
+                eyebrow="Profile"
+                title="Your SG GoAssist profile"
+                themeMode={appPreferences.themeMode}
+                highContrast={appPreferences.highContrast}
+                lightMode={lightMode}
+                largeText={largeText}
+                compactLayout={isCompactWidth}
+                onSelectMode={(themeMode) =>
+                  setAppPreferences((current) => ({
+                    ...current,
+                    themeMode,
+                  }))
+                }
               />
               <Text style={themedBodyStyle()}>
-                App support: {appPreferencesLabel(activeProfile.appPreferences)}
+                Save your assistance needs for easier, safer and more
+                independent bus journeys.
               </Text>
-            </View>
-            {!isEditingProfileNeeds && (
-              <>
-                <PrimaryButton
-                  label="Edit accessibility preferences"
-                  icon={Settings}
-                  onPress={() => setIsEditingProfileNeeds(true)}
-                  lightMode={lightMode}
-                  highContrast={appPreferences.highContrast}
-                />
-              </>
-            )}
-            {isEditingProfileNeeds && (
-              <>
-                <Text style={themedHeadingStyle()}>Your usual assistance</Text>
-                <Text style={themedBodyStyle()}>
-                  These choices will be preselected when you start a journey.
-                  They do not send a request.
+              <View style={themedPanelStyle()}>
+                <Text style={themedLabelStyle()}>
+                  Designed for accessible journeys
                 </Text>
-                <AssistancePreferenceToggles
-                  requirements={requirements}
-                  appPreferences={appPreferences}
-                  resolvedThemeMode={resolvedThemeMode}
-                  setRequirements={setRequirements}
-                />
-                <Text style={themedHeadingStyle()}>
-                  Display and feedback preferences
+                <Text style={themedValueStyle()}>Guided with care</Text>
+                <Text style={themedBodyStyle()}>
+                  SG GoAssist helps less-abled passengers travel with confidence
+                  by making bus journeys easier, safer and more independent.
                 </Text>
                 <Text style={themedBodyStyle()}>
-                  Display and feedback settings apply throughout GoAssist.
+                  Current app support: {appPreferencesLabel(appPreferences)}
                 </Text>
-                <AppPreferenceToggles
-                  appPreferences={appPreferences}
-                  resolvedThemeMode={resolvedThemeMode}
-                  setAppPreferences={setAppPreferences}
-                />
-                <PrimaryButton
-                  label={hasUnsavedProfileNeeds ? "Save needs" : "Saved"}
-                  icon={CircleCheck}
-                  onPress={saveActiveProfile}
-                  disabled={!hasUnsavedProfileNeeds}
-                  lightMode={lightMode}
-                  highContrast={appPreferences.highContrast}
-                />
-                <SecondaryButton
-                  label="Cancel editing"
-                  lightMode={lightMode}
-                  highContrast={appPreferences.highContrast}
-                  onPress={cancelProfileNeedsEditing}
-                />
-              </>
-            )}
-            <SecondaryButton
-              label="Sign out"
-              onPress={signOut}
-              lightMode={lightMode}
-              highContrast={appPreferences.highContrast}
-            />
-            <View style={styles.profileBottomSpacer} />
-          </View>
-        )}
-
-        {screen === "LOCATION" && (
-          <View style={styles.section}>
-            <SectionHeader
-              eyebrow="Home"
-              title={
-                selectedBus || selectedStop ? "Active journey" : "Find your bus"
-              }
-              highContrast={appPreferences.highContrast}
-              lightMode={lightMode}
-            />
-            {selectedBus ||
-            selectedStop ||
-            requestId ||
-            journeyPhase === "ONBOARD" ||
-            journeyPhase === "DESTINATION_APPROACHING" ||
-            journeyPhase === "DESTINATION_NEXT" ||
-            journeyPhase === "DISEMBARKING" ||
-            journeyPhase === "ALIGHTING" ? (
-              <View
-                style={[styles.summaryRow, lightMode && lightStyles.surface]}
-              >
-                <Text
-                  style={[
-                    styles.summaryLabel,
-                    lightMode && lightStyles.mutedText,
-                  ]}
-                >
-                  Continue journey
-                </Text>
-                <Text
-                  style={[styles.summaryValue, lightMode && lightStyles.text]}
-                >
-                  {selectedBus
-                    ? `Service ${selectedBus.busService}`
-                    : selectedStop
-                      ? selectedStop.description
-                      : "Journey in progress"}
-                </Text>
-                {selectedArrival ? (
-                  <Text style={themedBodyStyle()}>
-                    Towards {selectedArrival.destination}, arriving in about{" "}
-                    {Math.ceil(selectedArrival.etaSeconds / 60)} min.
-                  </Text>
-                ) : null}
-                {requestId ? (
-                  <Text style={themedBodyStyle()}>
-                    Assistance: {requestStatusLabel(requestStatus)}.
-                  </Text>
-                ) : null}
-                <PrimaryButton
-                  label="Return to journey"
-                  icon={Route}
-                  onPress={returnToCurrentJourney}
-                  lightMode={lightMode}
-                  highContrast={appPreferences.highContrast}
-                />
-                {selectedBus ? (
-                  <SecondaryButton
-                    label="View assistance"
-                    icon={Accessibility}
-                    onPress={() => setScreen("ACCESSIBILITY")}
-                    lightMode={lightMode}
-                    highContrast={appPreferences.highContrast}
-                  />
-                ) : null}
               </View>
-            ) : null}
-            <Text style={themedBodyStyle()}>
-              Use your location to find nearby bus stops.
-            </Text>
-            <Text style={themedBodyStyle()}>
-              You will always choose the stop and bus yourself.
-            </Text>
-            <PrimaryButton
-              label="Use my location"
-              icon={LocateFixed}
-              accessibilityHint="Find nearby bus stops using your current location."
-              onPress={findMyBusStop}
-              disabled={isLoading}
-              lightMode={lightMode}
-              highContrast={appPreferences.highContrast}
-            />
-            <SecondaryButton
-              label="Select bus stop manually"
-              icon={List}
-              accessibilityHint="Opens a list of nearby bus stops."
-              onPress={loadManualStops}
-              disabled={isLoading}
-              lightMode={lightMode}
-              highContrast={appPreferences.highContrast}
-            />
-            <HomeDiscoveryInlineStatus
-              status={homeDiscovery}
-              onPrimaryAction={retryHomeDiscovery}
-              onSecondaryAction={loadManualStops}
-              lightMode={lightMode}
-              highContrast={appPreferences.highContrast}
-            />
-            <SecondaryButton
-              label="Repeat guidance"
-              icon={Volume2}
-              accessibilityHint={
-                selectedBus || selectedStop
-                  ? "Repeats the latest spoken journey information."
-                  : "No journey guidance is available yet."
-              }
-              onPress={announceCurrentJourney}
-              disabled={
-                !appPreferences.repeatAudio || (!selectedBus && !selectedStop)
-              }
-              lightMode={lightMode}
-              highContrast={appPreferences.highContrast}
-            />
-          </View>
-        )}
-
-        {screen === "STOP" && (
-          <MapFirstStopScreen
-            stops={visibleStops}
-            selectedStop={selectedStop}
-            selectedLandmark={selectedLandmark}
-            landmarks={visibleLandmarks}
-            currentLocation={currentLocation}
-            mapViewport={mapViewport}
-            mapCameraGeometry={mapCameraGeometry}
-            layers={mapLayers}
-            mapManuallyMoved={mapManuallyMoved}
-            searchThisAreaVisible={searchThisAreaVisible}
-            nearbyHeading={nearbySearchOrigin.label}
-            directionsActive={directionsActive}
-            followMode={followMode}
-            rotationEnabled={mapRotationEnabled}
-            hasSelectedService={Boolean(selectedBus)}
-            hasSelectedDestination={Boolean(selectedAlightingStop)}
-            journeyOrigin={effectiveJourneyOrigin}
-            journeyDestination={journeyPlanner.destination}
-            journeyAlternatives={journeyPlanner.alternatives}
-            selectedJourneyAlternative={selectedJourneyAlternative}
-            recentDestinations={journeyPlanner.recentDestinations}
-            mapPickMode={mapPickMode}
-            mapPickCandidate={mapPickCandidate}
-            headingDegrees={mapHeadingDegrees}
-            query={stopSearchQuery}
-            searchState={busStopSearch}
-            searchMode={transportSearchMode}
-            bottomSheetState={bottomSheetState}
-            bottomSheetContent={bottomSheetContent}
-            lastExpandedSheetState={lastExpandedSheetState}
-            nearbyStatus={transportDiscovery.nearbyStopsStatus}
-            locationStatus={transportDiscovery.location}
-            locationRequested={transportDiscovery.locationRequested}
-            connectivityStatus={transportDiscovery.connectivity}
-            largeText={appPreferences.largeText}
-            lightMode={lightMode}
-            highContrast={appPreferences.highContrast}
-            onChangeSearchQuery={(query) => {
-              openStopSearch(
-                query,
-                busStopSearch.isOpen ? transportSearchMode : "DISCOVERY",
-              );
-            }}
-            onOpenSearch={() => openStopSearch()}
-            onOpenDestinationSearch={() => openStopSearch("", "DESTINATION")}
-            onOpenOriginSearch={() => openStopSearch("", "ORIGIN")}
-            onSelectJourneyDestination={applyJourneyPlanDestination}
-            onSwapJourneyPoints={swapJourneyPoints}
-            onChooseDestinationOnMap={chooseDestinationOnMap}
-            onConfirmMapDestination={confirmMapDestination}
-            onSelectJourneyAlternative={selectJourneyAlternative}
-            onStartJourneyPlan={startSelectedJourneyPlan}
-            onCloseSearch={closeStopSearch}
-            onClearSearch={clearStopSearch}
-            onSelectSearchStop={selectSearchStop}
-            onSelectSearchPlace={selectSearchPlace}
-            onSelectSearchService={selectSearchService}
-            onSelectStop={selectStopForBoarding}
-            onSelectLandmark={selectLandmark}
-            onMapLayoutChange={handleMapLayoutChange}
-            onMoveMap={markMapMoved}
-            onProviderViewportChange={handleProviderViewportChange}
-            onFocusCluster={focusStopCluster}
-            onRecenter={recenterStopMap}
-            onLocateMap={locateCurrentPosition}
-            onOpenNearby={openNearbyStopsSheet}
-            onRefreshLocation={showNearbyStopsInArea}
-            onSearchForStop={() => openStopSearch()}
-            onShowRoute={showWholeRoute}
-            onRotateMap={rotateMap}
-            onResetMap={resetMapView}
-            onViewFullRoute={viewFullRoute}
-            onToggleFollow={toggleFollowMode}
-            onToggleLayer={(layer) =>
-              setMapLayers((current) => ({
-                ...current,
-                [layer]: !current[layer],
-              }))
-            }
-            onResetHeading={resetMapNorth}
-            onDirections={startDirections}
-            onStopDirections={() => setDirectionsActive(false)}
-            onClearSelectedStop={() => {
-              selectedStopCameraIntentRef.current += 1;
-              setSelectedStop(null);
-              setDirectionsActive(false);
-              setBottomSheetContent("NEARBY");
-              updateBottomSheetState(lastNearbySheetState);
-            }}
-            onExitMap={() => setScreen("LOCATION")}
-            onConfirm={confirmSelectedStop}
-            onHear={hearSelectedStop}
-            onHearDirections={hearDirections}
-            onSetBottomSheetState={updateBottomSheetState}
-          />
-        )}
-
-        {screen === "ACCESSIBILITY" && (
-          <View style={styles.section}>
-            <SectionHeader
-              eyebrow="Assistance"
-              title="Assist"
-              highContrast={appPreferences.highContrast}
-              lightMode={lightMode}
-            />
-            {!selectedBus ? (
-              <View
-                style={[styles.summaryRow, lightMode && lightStyles.surface]}
-              >
-                <Text
-                  style={[
-                    styles.summaryLabel,
-                    lightMode && lightStyles.mutedText,
-                  ]}
-                >
-                  Get assistance during your journey
-                </Text>
-                <Text
-                  style={[styles.summaryValue, lightMode && lightStyles.text]}
-                >
-                  {selectedStop
-                    ? `Boarding at ${selectedStop.description}`
-                    : "No bus selected yet"}
-                </Text>
-                <PassengerDefaultsIcons
-                  requirements={requirements}
-                  lightMode={lightMode}
-                  highContrast={appPreferences.highContrast}
-                />
-                <Text style={themedBodyStyle()}>
-                  {selectedStop
-                    ? "Choose a bus before requesting assistance. Your usual assistance will be ready when a bus is selected."
-                    : "Your saved assistance will be preselected when you choose a bus."}
-                </Text>
-                <PrimaryButton
-                  label={selectedStop ? "Choose a bus" : "Start a journey"}
-                  icon={Route}
-                  onPress={() =>
-                    selectedStop ? setScreen("BUS") : openTab("JOURNEY")
-                  }
-                  lightMode={lightMode}
-                  highContrast={appPreferences.highContrast}
-                />
-                <SecondaryButton
-                  label="Edit saved preferences"
-                  icon={Settings}
-                  onPress={() => {
-                    setIsEditingProfileNeeds(true);
-                    setScreen("PROFILE");
-                  }}
-                  lightMode={lightMode}
-                  highContrast={appPreferences.highContrast}
-                />
-              </View>
-            ) : selectedBus &&
-              (journeyPhase === "ONBOARD" ||
-                journeyPhase === "DESTINATION_APPROACHING" ||
-                journeyPhase === "DESTINATION_NEXT" ||
-                journeyPhase === "DISEMBARKING" ||
-                journeyPhase === "ALIGHTING") ? (
-              <View
-                style={[styles.summaryRow, lightMode && lightStyles.surface]}
-              >
-                <ServiceNumberWithAccessibility
-                  serviceNo={selectedBus.busService}
-                  accessible={selectedBus.isAccessible}
-                  prefix="On Service"
-                  textStyle={[
-                    styles.summaryLabel,
-                    lightMode && lightStyles.mutedText,
-                  ]}
-                  lightMode={lightMode}
-                  highContrast={appPreferences.highContrast}
-                  symbolSize="small"
-                />
-                <Text
-                  style={[styles.summaryValue, lightMode && lightStyles.text]}
-                >
-                  Destination:{" "}
-                  {selectedAlightingStop?.description ?? "Choose destination"}
-                </Text>
-                <Text style={themedBodyStyle()}>
-                  {stopsRemaining === null
-                    ? "Choose a destination to start disembarking guidance."
-                    : stopsRemaining === 0
-                      ? "This is your stop."
-                      : stopsRemaining === 1
-                        ? "Your stop is next."
-                        : `${stopsRemaining} stops remaining.`}
-                </Text>
-                <AssistanceSummaryList
-                  requirements={requirements}
-                  status={requestStatus}
-                  lightMode={lightMode}
-                  highContrast={appPreferences.highContrast}
-                />
-                <PrimaryButton
-                  label="Request disembarking assistance"
-                  icon={DoorOpen}
-                  onPress={requestDisembarkation}
-                  disabled={!selectedAlightingStop || isLoading}
-                  lightMode={lightMode}
-                  highContrast={appPreferences.highContrast}
-                />
-                <SecondaryButton
-                  label="Back to onboard journey"
-                  icon={BusFront}
-                  onPress={() => setScreen("ONBOARD")}
-                  lightMode={lightMode}
-                  highContrast={appPreferences.highContrast}
-                />
-              </View>
-            ) : requestId ? (
-              <View
-                style={[styles.summaryRow, lightMode && lightStyles.surface]}
-              >
-                <Text
-                  style={[
-                    styles.summaryLabel,
-                    lightMode && lightStyles.mutedText,
-                  ]}
-                >
-                  Current assistance
-                </Text>
-                <View style={styles.serviceAccessibilityRow}>
-                  <Text
-                    style={[styles.summaryValue, lightMode && lightStyles.text]}
-                  >
-                    {requestStatusLabel(requestStatus)} for Service{" "}
-                    {selectedBus.busService}
-                  </Text>
-                  {selectedBus.isAccessible ? (
-                    <WheelchairAccessibleSymbol
-                      lightMode={lightMode}
-                      highContrast={appPreferences.highContrast}
-                    />
-                  ) : null}
-                </View>
-                <AssistanceSummaryList
-                  requirements={journeyRequirements}
-                  status={requestStatus}
-                  lightMode={lightMode}
-                  highContrast={appPreferences.highContrast}
-                />
-                <Text style={themedBodyStyle()}>
-                  These are active request details for this journey, not saved
-                  profile settings.
-                </Text>
-                <SecondaryButton
-                  label="Repeat journey status"
-                  icon={Volume2}
-                  onPress={announceCurrentJourney}
-                  disabled={!appPreferences.repeatAudio}
-                  lightMode={lightMode}
-                  highContrast={appPreferences.highContrast}
-                />
-                <SecondaryButton
-                  label="View full status"
-                  icon={BadgeCheck}
-                  onPress={() => setScreen("STATUS")}
-                  lightMode={lightMode}
-                  highContrast={appPreferences.highContrast}
-                />
-              </View>
-            ) : activeProfile ? (
-              <>
-                <View
-                  style={[styles.summaryRow, lightMode && lightStyles.surface]}
-                >
-                  <Text
-                    style={[
-                      styles.summaryLabel,
-                      lightMode && lightStyles.mutedText,
-                    ]}
-                  >
-                    Selected bus
-                  </Text>
-                  <ServiceNumberWithAccessibility
-                    serviceNo={selectedBus.busService}
-                    accessible={selectedBus.isAccessible}
-                    textStyle={[
-                      styles.summaryValue,
-                      lightMode && lightStyles.text,
-                    ]}
-                    lightMode={lightMode}
-                    highContrast={appPreferences.highContrast}
-                  />
-                  <Text
-                    style={[styles.summaryValue, lightMode && lightStyles.text]}
-                  >
-                    {selectedStop?.description ?? selectedBus.currentStop}
-                  </Text>
-                  {selectedArrival ? (
-                    <Text style={themedBodyStyle()}>
-                      Arriving in about{" "}
-                      {Math.ceil(selectedArrival.etaSeconds / 60)} min.
-                    </Text>
-                  ) : null}
-                </View>
-                <Text style={themedHeadingStyle()}>
-                  Assistance for this bus
-                </Text>
-                <AssistancePreferenceToggles
-                  requirements={journeyRequirements}
-                  appPreferences={appPreferences}
-                  resolvedThemeMode={resolvedThemeMode}
-                  setRequirements={setJourneyRequirements}
-                />
-                <Text style={themedBodyStyle()}>
-                  Using your saved preferences. Changes here apply only to this
-                  journey unless you save them.
-                </Text>
-                <SecondaryButton
-                  label="Use my usual assistance"
-                  icon={RefreshCw}
-                  onPress={useUsualAssistanceForJourney}
-                  lightMode={lightMode}
-                  highContrast={appPreferences.highContrast}
-                />
-                <SecondaryButton
-                  label="Save these choices for future journeys"
-                  icon={CircleCheck}
-                  onPress={saveJourneyAssistanceAsDefault}
-                  lightMode={lightMode}
-                  highContrast={appPreferences.highContrast}
-                />
-                <PrimaryButton
-                  label="Request assistance"
-                  icon={CircleCheck}
-                  onPress={submitRequest}
-                  disabled={assistanceTypes.length === 0 || isLoading}
-                  lightMode={lightMode}
-                  highContrast={appPreferences.highContrast}
-                />
-              </>
-            ) : (
-              <View
-                style={[styles.summaryRow, lightMode && lightStyles.surface]}
-              >
-                <Text
-                  style={[
-                    styles.summaryLabel,
-                    lightMode && lightStyles.mutedText,
-                  ]}
-                >
-                  Bus Assistance
-                </Text>
-                <Text
-                  style={[styles.summaryValue, lightMode && lightStyles.text]}
-                >
-                  Profile required
-                </Text>
-                <Text style={themedBodyStyle()}>
-                  Create or sign in to a profile before requesting bus-side
-                  assistance.
-                </Text>
-                <SecondaryButton
-                  label="Go to profile"
-                  onPress={() => setScreen("PROFILE")}
-                  lightMode={lightMode}
-                  highContrast={appPreferences.highContrast}
-                />
-              </View>
-            )}
-          </View>
-        )}
-
-        {screen === "BUS" && (
-          <View style={styles.section}>
-            <SectionHeader
-              eyebrow="Journey"
-              title="Choose your bus"
-              highContrast={appPreferences.highContrast}
-              lightMode={lightMode}
-            />
-            {selectedStop && (
               <View
                 style={[
-                  styles.compactBoardingCard,
-                  lightMode && lightStyles.surface,
+                  styles.createProfilePanel,
+                  lightMode && lightStyles.createProfilePanel,
+                  highContrastDark && styles.highContrastControl,
+                  highContrastLight && lightStyles.highContrastControl,
                 ]}
               >
-                <Text
-                  style={[
-                    styles.summaryLabel,
-                    lightMode && lightStyles.mutedText,
-                  ]}
-                >
-                  BOARDING AT
-                </Text>
-                <Text
-                  style={[styles.summaryValue, lightMode && lightStyles.text]}
-                >
-                  {selectedStop.description}
-                </Text>
-                <Text style={themedBodyStyle()}>
-                  Bus Stop {selectedStop.busStopCode}
-                </Text>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="Change boarding stop"
-                  onPress={() => {
-                    setJourneySetupState("SELECTING_STOP");
-                    setSelectedArrival(null);
-                    setSelectedServiceOption(null);
-                    setSelectedBus(null);
-                    setScreen("STOP");
-                    updateBottomSheetState("MEDIUM");
-                  }}
-                  style={styles.inlineSecondaryAction}
-                >
-                  <Text
-                    style={[
-                      styles.inlineSecondaryActionText,
-                      lightMode && lightStyles.secondaryButtonText,
-                    ]}
-                  >
-                    Change stop -&gt;
-                  </Text>
-                </Pressable>
-              </View>
-            )}
-            <Text style={themedBodyStyle()}>Which bus are you taking?</Text>
-            {isLoading && serviceOptions.length === 0 ? (
-              <View
-                style={[styles.feedbackPanel, lightMode && lightStyles.surface]}
-              >
-                <ActivityIndicator
-                  color={controlIconColor({
-                    active: true,
-                    lightMode,
-                    highContrast: appPreferences.highContrast,
-                  })}
-                />
-                <Text style={themedBodyStyle()}>
-                  Finding buses serving this stop...
-                </Text>
-              </View>
-            ) : null}
-            {serviceOptions.map((service) => (
-              <BusArrivalCard
-                key={service.serviceNo}
-                service={service}
-                selected={
-                  selectedServiceOption?.serviceNo === service.serviceNo
-                }
-                onPress={() => selectService(service)}
-                lightMode={lightMode}
-                highContrast={appPreferences.highContrast}
-              />
-            ))}
-            {!isLoading && serviceOptions.length === 0 ? (
-              <View
-                style={[styles.feedbackPanel, lightMode && lightStyles.surface]}
-              >
-                <Text style={themedBodyStyle()}>
-                  No bus services were found for this stop.
-                </Text>
-                {selectedStop ? (
-                  <SecondaryButton
-                    label="Refresh buses"
-                    icon={RefreshCw}
-                    onPress={() => confirmBusStop(selectedStop)}
-                    lightMode={lightMode}
-                    highContrast={appPreferences.highContrast}
-                  />
-                ) : null}
-              </View>
-            ) : null}
-            {selectedServiceOption && selectedBus ? (
-              <>
-                <SecondaryButton
-                  label="Repeat bus information"
-                  icon={Volume2}
-                  onPress={announceCurrentJourney}
-                  disabled={!appPreferences.repeatAudio}
+                <Text style={themedHeadingStyle()}>Create Profile</Text>
+                <LabeledInput
+                  label="Name"
+                  value={authName}
+                  onChangeText={setAuthName}
+                  placeholder="Passenger name"
                   lightMode={lightMode}
                   highContrast={appPreferences.highContrast}
                 />
-                <View
-                  style={[styles.summaryRow, lightMode && lightStyles.surface]}
-                >
-                  <View style={styles.iconTitleRow}>
-                    <MapPinned
-                      size={22}
-                      color={controlIconColor({
-                        active: true,
-                        lightMode,
-                        highContrast: appPreferences.highContrast,
-                      })}
-                      strokeWidth={2.75}
-                      accessibilityElementsHidden
-                      importantForAccessibility="no"
-                    />
-                    <Text style={themedLabelStyle()}>
-                      Where are you getting off?
-                    </Text>
-                  </View>
-                  <View style={styles.stopSearchInputFrame}>
-                    <Search
-                      size={20}
-                      color={controlIconColor({
-                        lightMode,
-                        highContrast: appPreferences.highContrast,
-                      })}
-                      strokeWidth={2.5}
-                      accessibilityElementsHidden
-                      importantForAccessibility="no"
-                    />
-                    <TextInput
-                      accessibilityLabel="Search destination on selected service"
-                      placeholder="Search destination"
-                      placeholderTextColor={
-                        lightMode ? lightTheme.textSecondary : colors.metadata
-                      }
-                      value={destinationSearchQuery}
-                      onChangeText={setDestinationSearchQuery}
-                      style={[
-                        styles.stopSearchInput,
-                        lightMode && lightStyles.textInputField,
-                        appPreferences.largeText && styles.largeStopSearchInput,
-                      ]}
-                    />
-                  </View>
-                  <Text
-                    style={[
-                      styles.summaryLabel,
-                      lightMode && lightStyles.mutedText,
-                    ]}
-                  >
-                    Upcoming stops
-                  </Text>
-                  {availableDestinationStops.map((stop) => (
-                    <AlightingStopRow
-                      key={`bus-destination-${stop.sequence}-${stop.busStopCode}`}
-                      stop={stop}
-                      selected={
-                        selectedAlightingStop?.sequence === stop.sequence
-                      }
-                      onPress={() => chooseAlightingStop(stop)}
-                      lightMode={lightMode}
-                      highContrast={appPreferences.highContrast}
-                    />
-                  ))}
-                  {availableDestinationStops.length === 0 ? (
-                    <Text style={themedBodyStyle()}>
-                      No upcoming stops match this search.
-                    </Text>
-                  ) : null}
-                  <SecondaryButton
-                    label="View route on map"
-                    icon={MapIcon}
-                    onPress={() => updateBottomSheetState("EXPANDED")}
-                    lightMode={lightMode}
-                    highContrast={appPreferences.highContrast}
-                  />
-                </View>
+                <LabeledInput
+                  label="Email"
+                  value={authEmail}
+                  onChangeText={setAuthEmail}
+                  placeholder="name@example.com"
+                  keyboardType="email-address"
+                  lightMode={lightMode}
+                  highContrast={appPreferences.highContrast}
+                />
                 <PrimaryButton
-                  label="Review journey"
-                  icon={ArrowRight}
-                  onPress={continueToJourneyReview}
-                  disabled={!selectedAlightingStop}
+                  label="Create profile"
+                  onPress={createProfile}
                   lightMode={lightMode}
                   highContrast={appPreferences.highContrast}
                 />
-              </>
-            ) : null}
-          </View>
-        )}
-
-        {screen === "CONFIRM" && selectedBus && (
-          <View style={styles.section}>
-            <SectionHeader
-              eyebrow="Journey preview"
-              title="Your journey"
-              highContrast={appPreferences.highContrast}
-              lightMode={lightMode}
-            />
-            <SummaryRow
-              label="Service"
-              value={selectedBus.busService}
-              valueAccessory={
-                selectedBus.isAccessible ? (
-                  <WheelchairAccessibleSymbol
+              </View>
+              <Text style={themedHeadingStyle()}>Saved Profiles</Text>
+              {profiles.map((profile) => (
+                <Pressable
+                  key={profile.profileId}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Sign in as ${profile.displayName}. Assistance defaults: ${requirementsLabel(
+                    accessibilityRequirementsFromPreferences(
+                      accessibilityPreferencesForProfile(profile),
+                    ),
+                  )}.`}
+                  onPress={() => applyProfile(profile, "PROFILE")}
+                  style={[styles.busCard, lightMode && lightStyles.surface]}
+                >
+                  <Text
+                    style={[styles.busTitle, lightMode && lightStyles.text]}
+                  >
+                    {profile.displayName}
+                  </Text>
+                  <Text style={themedBodyStyle()}>{profile.email}</Text>
+                  <Text style={themedBodyStyle()}>
+                    Verification: {verificationStatusLabel(profile)}
+                  </Text>
+                  <PassengerDefaultsIcons
+                    requirements={accessibilityRequirementsFromPreferences(
+                      accessibilityPreferencesForProfile(profile),
+                    )}
                     lightMode={lightMode}
                     highContrast={appPreferences.highContrast}
                   />
-                ) : null
-              }
-              lightMode={lightMode}
-              highContrast={appPreferences.highContrast}
-            />
-            <SummaryRow
-              label="Boarding stop"
-              value={
-                selectedStop
-                  ? `${selectedStop.busStopCode} - ${selectedStop.description}, ${selectedStop.roadName}`
-                  : boardingStop
-              }
-              lightMode={lightMode}
-              highContrast={appPreferences.highContrast}
-            />
-            <SummaryRow
-              label="Get off"
-              value={
-                selectedAlightingStop
-                  ? `${selectedAlightingStop.description}, Bus Stop ${selectedAlightingStop.busStopCode}`
-                  : "Choose destination"
-              }
-              lightMode={lightMode}
-              highContrast={appPreferences.highContrast}
-            />
-            <SummaryRow
-              label="Stops"
-              value={
-                selectedAlightingStopIndex > 0
-                  ? `${selectedAlightingStopIndex} stops after boarding`
-                  : "Destination not selected"
-              }
-              lightMode={lightMode}
-              highContrast={appPreferences.highContrast}
-            />
-            <View style={[styles.summaryRow, lightMode && lightStyles.surface]}>
-              <View style={styles.iconTitleRow}>
-                <MapIcon
-                  size={22}
-                  color={controlIconColor({
-                    active: true,
-                    lightMode,
-                    highContrast: appPreferences.highContrast,
-                  })}
-                  strokeWidth={2.75}
-                  accessibilityElementsHidden
-                  importantForAccessibility="no"
-                />
-                <Text style={themedLabelStyle()}>Route preview</Text>
-              </View>
-              <Text style={themedBodyStyle()}>
-                Board at {selectedStop?.description ?? selectedBus.currentStop},
-                follow Service {selectedBus.busService}, then get off at{" "}
-                {selectedAlightingStop?.description ??
-                  "your selected destination"}
-                .
-              </Text>
-              <RouteProgressList
-                routeStops={plannedRouteStops}
-                currentStopIndex={0}
-                destinationStopIndex={selectedAlightingStopIndex}
-                lightMode={lightMode}
-                highContrast={appPreferences.highContrast}
-              />
+                </Pressable>
+              ))}
             </View>
-            {activeProfile ? (
-              <View
-                style={[styles.summaryRow, lightMode && lightStyles.surface]}
-              >
-                <View style={styles.serviceAccessibilityRow}>
+          )}
+
+          {screen === "PROFILE" && activeProfile && (
+            <View style={styles.section}>
+              <ProfileHeaderWithAppearance
+                eyebrow="Profile"
+                title="My profile"
+                themeMode={appPreferences.themeMode}
+                highContrast={appPreferences.highContrast}
+                lightMode={lightMode}
+                largeText={largeText}
+                compactLayout={isCompactWidth}
+                onSelectMode={(themeMode) =>
+                  setAppPreferences((current) => ({
+                    ...current,
+                    themeMode,
+                  }))
+                }
+              />
+              {!isEditingProfileNeeds &&
+                activeProfile.verificationStatus !== "VERIFIED" && (
+                  <View
+                    style={[
+                      styles.summaryRow,
+                      lightMode && lightStyles.surface,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.summaryLabel,
+                        lightMode && lightStyles.mutedText,
+                      ]}
+                    >
+                      Accessibility Verification
+                    </Text>
+                    <Text
+                      style={[
+                        styles.summaryValue,
+                        lightMode && lightStyles.text,
+                      ]}
+                    >
+                      Verify eligibility separately from your needs
+                    </Text>
+                    <Text style={themedBodyStyle()}>
+                      Demo verification accepts the built-in credential. Card
+                      numbers are mocked for the prototype.
+                    </Text>
+                    <VerificationMethodPicker
+                      selectedMethod={verificationMethod}
+                      onSelect={setVerificationMethod}
+                    />
+                    <LabeledInput
+                      label="Credential last 4 digits"
+                      value={credentialLast4}
+                      onChangeText={setCredentialLast4}
+                      placeholder="4821"
+                      lightMode={lightMode}
+                      highContrast={appPreferences.highContrast}
+                    />
+                    <PrimaryButton
+                      label="Verify accessibility profile"
+                      onPress={verifyActiveProfile}
+                      lightMode={lightMode}
+                      highContrast={appPreferences.highContrast}
+                    />
+                  </View>
+                )}
+              <View style={themedPanelStyle()}>
+                <Text style={themedLabelStyle()}>Account</Text>
+                <Text style={themedValueStyle()}>
+                  {activeProfile.displayName}
+                </Text>
+                <Text style={themedBodyStyle()}>{activeProfile.email}</Text>
+                <Text style={themedBodyStyle()}>
+                  Verification: {verificationStatusLabel(activeProfile)}
+                </Text>
+                <PassengerDefaultsIcons
+                  requirements={accessibilityRequirementsFromPreferences(
+                    accessibilityPreferencesForProfile(activeProfile),
+                  )}
+                  lightMode={lightMode}
+                  highContrast={appPreferences.highContrast}
+                />
+                <Text style={themedBodyStyle()}>
+                  App support:{" "}
+                  {appPreferencesLabel(
+                    accessibilityPreferencesForProfile(activeProfile),
+                  )}
+                </Text>
+              </View>
+              {!isEditingProfileNeeds && (
+                <View
+                  style={[styles.summaryRow, lightMode && lightStyles.surface]}
+                >
+                  <FeatureIllustration
+                    source={illustrations.physicalButton}
+                    size="medium"
+                    accessibilityLabel="Illustration of a physical assistance button at a bus stop"
+                  />
                   <Text
                     style={[
                       styles.summaryLabel,
                       lightMode && lightStyles.mutedText,
                     ]}
                   >
-                    Need assistance for Service {selectedBus.busService}?
+                    Boarding without the app
                   </Text>
-                  {selectedBus.isAccessible ? (
-                    <WheelchairAccessibleSymbol
-                      lightMode={lightMode}
-                      highContrast={appPreferences.highContrast}
-                      size="small"
-                    />
-                  ) : null}
-                </View>
-                <Text style={themedBodyStyle()}>
-                  Your usual assistance is loaded for this journey only. Change
-                  it in Assist if needed.
-                </Text>
-                <AssistanceSummaryList
-                  requirements={journeyRequirements}
-                  status={requestStatus}
-                  lightMode={lightMode}
-                  highContrast={appPreferences.highContrast}
-                />
-              </View>
-            ) : null}
-            <SecondaryButton
-              label="Repeat journey summary"
-              icon={Volume2}
-              onPress={announceCurrentJourney}
-              disabled={!appPreferences.repeatAudio}
-              lightMode={lightMode}
-              highContrast={appPreferences.highContrast}
-            />
-            {activeProfile && assistanceTypes.length > 0 ? (
-              <PrimaryButton
-                label="Request assistance"
-                icon={CircleCheck}
-                onPress={submitRequest}
-                disabled={isLoading || !selectedAlightingStop}
-                lightMode={lightMode}
-                highContrast={appPreferences.highContrast}
-              />
-            ) : null}
-            <PrimaryButton
-              label={
-                activeProfile && assistanceTypes.length > 0
-                  ? "Skip assistance and start"
-                  : "Start this journey"
-              }
-              icon={ArrowRight}
-              onPress={startJourneyWithoutAssistance}
-              disabled={isLoading || !selectedAlightingStop}
-              lightMode={lightMode}
-              highContrast={appPreferences.highContrast}
-            />
-          </View>
-        )}
-
-        {screen === "STATUS" && selectedBus && (
-          <View style={styles.section}>
-            <SectionHeader
-              eyebrow="Status"
-              title={
-                journeyPhase === "WALKING_TO_STOP"
-                  ? "Walking to your stop"
-                  : vehicleStatus === "ARRIVED"
-                    ? "Your bus is here"
-                    : "Waiting for bus"
-              }
-              highContrast={appPreferences.highContrast}
-              lightMode={lightMode}
-            />
-            <View
-              style={[
-                styles.statusPanel,
-                lightMode && lightStyles.surface,
-                highContrastDark && styles.highContrastControl,
-                highContrastLight && lightStyles.highContrastControl,
-                (vehicleStatus === "APPROACHING" ||
-                  vehicleStatus === "ARRIVED") &&
-                  styles.journeyAlertPanel,
-              ]}
-              accessible
-              accessibilityLabel={`Assistance status ${requestStatusLabel(
-                requestStatus,
-              )}. ${vehicleStatusLabel(vehicleStatus)}.`}
-            >
-              <View style={styles.iconTitleRow}>
-                <BadgeCheck
-                  size={24}
-                  color={controlIconColor({
-                    active: requestStatus === "ACKNOWLEDGED",
-                    lightMode,
-                    highContrast: appPreferences.highContrast,
-                  })}
-                  strokeWidth={2.75}
-                  accessibilityElementsHidden
-                  importantForAccessibility="no"
-                />
-                <Text style={themedLabelStyle()}>
-                  {requestId ? "Assistance" : "Journey"}
-                </Text>
-              </View>
-              <Text style={themedValueStyle()}>
-                {requestStatusLabel(requestStatus)}
-              </Text>
-              <View style={styles.serviceAccessibilityRow}>
-                <ServiceNumberWithAccessibility
-                  serviceNo={selectedBus.busService}
-                  accessible={selectedBus.isAccessible}
-                  textStyle={themedBodyStyle()}
-                  lightMode={lightMode}
-                  highContrast={appPreferences.highContrast}
-                  symbolSize="small"
-                />
-                <Text style={themedBodyStyle()}>
-                  {selectedArrival
-                    ? formatEta(selectedArrival.etaSeconds).toLowerCase()
-                    : "live arrival unavailable"}
-                  .
-                </Text>
-              </View>
-              {selectedStop ? (
-                <Text style={themedBodyStyle()}>
-                  {journeyPhase === "WALKING_TO_STOP"
-                    ? `Walk to ${selectedStop.description}, Stop ${selectedStop.busStopCode}.`
-                    : `Board at ${selectedStop.description}, Stop ${selectedStop.busStopCode}.`}
-                </Text>
-              ) : null}
-              {selectedAlightingStop ? (
-                <Text style={themedBodyStyle()}>
-                  Destination: {selectedAlightingStop.description}.{" "}
-                  {selectedAlightingStopIndex > 0
-                    ? `${selectedAlightingStopIndex} stops after boarding.`
-                    : ""}
-                </Text>
-              ) : null}
-              {requestId ? (
-                <Text style={themedBodyStyle()}>
-                  {selectedNeeds} requested for this journey.
-                </Text>
-              ) : null}
-              {requestStatus === "ACKNOWLEDGED" && (
-                <Text
-                  style={[
-                    styles.confirmationText,
-                    lightMode && lightStyles.text,
-                  ]}
-                >
-                  The bus has received your request. No further action is
-                  required.
-                </Text>
-              )}
-              <Text style={themedBodyStyle()}>
-                Every spoken update is also displayed on this screen.
-              </Text>
-              <Text style={themedBodyStyle()}>
-                {appPreferences.hapticAlerts
-                  ? "Haptic alerts are enabled."
-                  : "Haptic alerts are off."}
-              </Text>
-              <View style={styles.iconTitleRow}>
-                <BusFront
-                  size={24}
-                  color={controlIconColor({
-                    active:
-                      vehicleStatus === "APPROACHING" ||
-                      vehicleStatus === "ARRIVED",
-                    lightMode,
-                    highContrast: appPreferences.highContrast,
-                  })}
-                  strokeWidth={2.75}
-                  accessibilityElementsHidden
-                  importantForAccessibility="no"
-                />
-                <Text style={themedLabelStyle()}>Bus</Text>
-              </View>
-              <Text style={themedValueStyle()}>
-                {vehicleStatusLabel(vehicleStatus)}
-              </Text>
-            </View>
-
-            {requestStatus === "ACKNOWLEDGED" &&
-              (confirmingCancelRequest ? (
-                <View
-                  style={[styles.summaryRow, lightMode && lightStyles.surface]}
-                >
                   <Text
                     style={[styles.summaryValue, lightMode && lightStyles.text]}
                   >
-                    Cancel assistance request?
+                    No phone? You can still request help.
                   </Text>
                   <Text style={themedBodyStyle()}>
-                    Only cancel if you no longer need this assistance.
+                    Press the assistance button at the bus stop to request
+                    boarding help. On board, use the matching control when you
+                    need assistance to alight.
                   </Text>
-                  <SecondaryButton
-                    label="Keep request"
-                    icon={CircleCheck}
-                    onPress={() => setConfirmingCancelRequest(false)}
-                    disabled={isLoading}
-                    lightMode={lightMode}
-                    highContrast={appPreferences.highContrast}
-                  />
-                  <SecondaryButton
-                    label="Yes, cancel request"
-                    icon={CircleX}
-                    onPress={cancelRequest}
-                    disabled={isLoading}
-                    lightMode={lightMode}
-                    highContrast={appPreferences.highContrast}
-                  />
                 </View>
-              ) : (
-                <SecondaryButton
-                  label="Cancel request"
-                  icon={CircleX}
-                  onPress={askToCancelRequest}
-                  disabled={isLoading}
+              )}
+              {!isEditingProfileNeeds && (
+                <>
+                  <PrimaryButton
+                    label="Edit accessibility preferences"
+                    icon={Settings}
+                    onPress={() => {
+                      setProfilePreferenceSection(null);
+                      setIsEditingProfileNeeds(true);
+                    }}
+                    lightMode={lightMode}
+                    highContrast={appPreferences.highContrast}
+                  />
+                </>
+              )}
+              {isEditingProfileNeeds && (
+                <>
+                  {profilePreferenceSection ? (
+                    <>
+                      <SecondaryButton
+                        label="Back to accessibility"
+                        icon={ArrowLeft}
+                        onPress={() => setProfilePreferenceSection(null)}
+                        lightMode={lightMode}
+                        highContrast={appPreferences.highContrast}
+                      />
+                      <AccessibilityCategorySettings
+                        section={profilePreferenceSection}
+                        preferences={appPreferences}
+                        hapticsSupported={hapticsSupported}
+                        setPreferences={setAppPreferences}
+                      />
+                    </>
+                  ) : (
+                    <>
+                      <Text style={themedHeadingStyle()}>Accessibility</Text>
+                      <Text style={themedBodyStyle()}>
+                        Choose capabilities that help you travel. Every setting
+                        remains individually editable, and no request is sent
+                        until you start a journey.
+                      </Text>
+                      <AccessibilityPreferencesOverview
+                        preferences={appPreferences}
+                        onApplyPreset={(preset) =>
+                          setAppPreferences((current) =>
+                            applyAccessibilityPreset(current, preset),
+                          )
+                        }
+                        onOpenSection={setProfilePreferenceSection}
+                      />
+                    </>
+                  )}
+                  <Text style={themedHeadingStyle()}>Preferences</Text>
+                  <Text style={themedBodyStyle()}>
+                    Save these accessibility, display and guidance choices to
+                    this profile.
+                  </Text>
+                  <PrimaryButton
+                    label={hasUnsavedProfileNeeds ? "Save needs" : "Saved"}
+                    icon={CircleCheck}
+                    onPress={saveActiveProfile}
+                    disabled={!hasUnsavedProfileNeeds}
+                    lightMode={lightMode}
+                    highContrast={appPreferences.highContrast}
+                  />
+                  <SecondaryButton
+                    label="Cancel editing"
+                    lightMode={lightMode}
+                    highContrast={appPreferences.highContrast}
+                    onPress={cancelProfileNeedsEditing}
+                  />
+                </>
+              )}
+              <SecondaryButton
+                label="Sign out"
+                onPress={signOut}
+                lightMode={lightMode}
+                highContrast={appPreferences.highContrast}
+              />
+              <View style={styles.profileBottomSpacer} />
+            </View>
+          )}
+
+          {screen === "JOURNEY_IDLE" && (
+            <View style={styles.section}>
+              <SectionHeader
+                eyebrow="Journey"
+                title="Find your bus"
+                highContrast={appPreferences.highContrast}
+                lightMode={lightMode}
+              />
+              <FindBusPanel
+                state={findBusPanelState}
+                interactionBusy={isJourneyEntryLoading}
+                stacked={shouldStackJourneyIntro}
+                largeText={largeText}
+                lightMode={lightMode}
+                highContrast={appPreferences.highContrast}
+                canRepeatGuidance={canRepeatJourneyGuidance}
+                onUseLocation={() => {
+                  void findMyBusStop();
+                }}
+                onSelectManually={() => {
+                  void loadManualStops();
+                }}
+                onRetry={() => {
+                  void retryJourneyDiscovery();
+                }}
+                onRepeatGuidance={announceCurrentJourney}
+              />
+            </View>
+          )}
+
+          {screen === "STOP" && (
+            <MapFirstStopScreen
+              stops={visibleMapStops}
+              nearbyStops={visibleNearbyStops}
+              accessibleStopRoutes={accessibleStopRoutes}
+              accessibleRoutesOnly={accessibleRoutesOnly}
+              recommendedStopCode={recommendedAccessibleStopCode}
+              selectedStop={selectedStop}
+              selectedLandmark={selectedLandmark}
+              landmarks={visibleLandmarks}
+              currentLocation={currentLocation}
+              mapViewport={mapViewport}
+              mapCameraGeometry={mapCameraGeometry}
+              layers={mapLayers}
+              mapManuallyMoved={mapManuallyMoved}
+              searchThisAreaVisible={searchThisAreaVisible}
+              nearbyHeading={nearbySearchOrigin.label}
+              directionsActive={directionsActive}
+              followState={followState}
+              directionsStatus={directionsStatus}
+              directionsError={directionsError}
+              mobilityMode={mobilityMode}
+              wheelchairRoutingPreferred={appPreferences.wheelchairRouting}
+              wheelchairRoutingAvailable={
+                routingProviderRef.current.capabilities.wheelchair
+              }
+              walkingRoute={walkingRoute}
+              walkingRouteProgress={walkingRouteProgress}
+              walkingRouteOffRoute={walkingRouteOffRoute}
+              walkingLocationAccuracyLimited={walkingLocationAccuracyLimited}
+              canRepeatWalkingGuidance={Boolean(
+                latestSpokenGuidance &&
+                spokenGuidanceSupported &&
+                appPreferences.spokenGuidance,
+              )}
+              guidanceStatus={guidanceStatus}
+              routeFitKey={routeFitKey}
+              locationPulseKey={locationPulseKey}
+              reducedMotion={reducedMotion}
+              rotationEnabled={mapRotationEnabled}
+              hasSelectedService={Boolean(selectedBus)}
+              hasSelectedDestination={Boolean(selectedAlightingStop)}
+              journeyOrigin={effectiveJourneyOrigin}
+              journeyDestination={journeyPlanner.destination}
+              journeyAlternatives={journeyPlanner.alternatives}
+              selectedJourneyAlternative={selectedJourneyAlternative}
+              recentDestinations={journeyPlanner.recentDestinations}
+              mapPickMode={mapPickMode}
+              mapPickCandidate={mapPickCandidate}
+              headingDegrees={mapHeadingDegrees}
+              query={stopSearchQuery}
+              searchState={busStopSearch}
+              searchMode={transportSearchMode}
+              bottomSheetState={bottomSheetState}
+              bottomSheetContent={bottomSheetContent}
+              nearbyOpen={nearbyOpen}
+              lastExpandedSheetState={lastExpandedSheetState}
+              nearbyStatus={transportDiscovery.nearbyStopsStatus}
+              locationStatus={transportDiscovery.location}
+              locationRequested={transportDiscovery.locationRequested}
+              connectivityStatus={transportDiscovery.connectivity}
+              regionalStopsStatus={regionalStopsStatus}
+              staticServicesStatus={staticServicesStatus}
+              onRetryRegionalStops={() =>
+                setRegionalStopsRetryKey((current) => current + 1)
+              }
+              onRetryStopServices={() => {
+                if (selectedStop) {
+                  void loadStaticStopDetails(selectedStop, true);
+                }
+              }}
+              largeText={largeText}
+              lightMode={lightMode}
+              highContrast={appPreferences.highContrast}
+              onChangeSearchQuery={(query) => {
+                openStopSearch(
+                  query,
+                  busStopSearch.isOpen ? transportSearchMode : "DISCOVERY",
+                );
+              }}
+              onOpenSearch={() =>
+                openStopSearch(
+                  "",
+                  !selectedBus && !selectedStop && !directionsActive
+                    ? "DESTINATION"
+                    : "DISCOVERY",
+                )
+              }
+              onOpenDestinationSearch={() => openStopSearch("", "DESTINATION")}
+              onOpenOriginSearch={() => openStopSearch("", "ORIGIN")}
+              onSelectJourneyDestination={applyJourneyPlanDestination}
+              onSwapJourneyPoints={swapJourneyPoints}
+              onChooseDestinationOnMap={chooseDestinationOnMap}
+              onConfirmMapDestination={confirmMapDestination}
+              onSelectJourneyAlternative={selectJourneyAlternative}
+              onStartJourneyPlan={startSelectedJourneyPlan}
+              onCloseSearch={closeStopSearch}
+              onClearSearch={clearStopSearch}
+              onSelectSearchStop={selectSearchStop}
+              onSelectSearchPlace={selectSearchPlace}
+              onSelectSearchService={selectSearchService}
+              onSelectStop={selectStopForBoarding}
+              onSelectLandmark={selectLandmark}
+              onMapLayoutChange={handleMapLayoutChange}
+              onMoveMap={markMapMoved}
+              onProviderViewportChange={handleProviderViewportChange}
+              onFocusCluster={focusStopCluster}
+              onRecenter={recenterStopMap}
+              onLocateMap={locateCurrentPosition}
+              onOpenNearby={toggleNearbyStopsSheet}
+              onToggleAccessibleRoutesOnly={() =>
+                setAccessibleRoutesOnly((current) => !current)
+              }
+              onRefreshLocation={showNearbyStopsInArea}
+              onSearchForStop={() => openStopSearch()}
+              onShowRoute={showWholeRoute}
+              onRotateMap={rotateMap}
+              onResetMap={resetMapView}
+              onViewFullRoute={viewFullRoute}
+              onToggleFollow={toggleFollowMode}
+              onToggleLayer={(layer) =>
+                setMapLayers((current) => ({
+                  ...current,
+                  [layer]: !current[layer],
+                }))
+              }
+              onResetHeading={resetMapNorth}
+              onDirections={startDirections}
+              onRetryDirections={startDirections}
+              onChangeMobilityMode={changeDirectionsMobilityMode}
+              onStartGuidance={startWalkingGuidance}
+              onRecalculateDirections={recalculateWalkingDirections}
+              onContinueWithoutRerouting={() =>
+                setWalkingOffRouteDismissed(true)
+              }
+              onRepeatWalkingGuidance={repeatLatestGuidance}
+              onUseLocationForDirections={() => {
+                void locateCurrentPosition();
+              }}
+              onStopDirections={exitGuidance}
+              onClearSelectedStop={() => {
+                selectedStopCameraIntentRef.current += 1;
+                setSelectedStop(null);
+                setGuidanceMode("INACTIVE");
+                setBottomSheetContent("NEARBY");
+                setNearbyOpen(true);
+                updateBottomSheetState(lastNearbySheetState);
+              }}
+              onExitMap={() => {
+                if (focusedAssistSelectingStopRef.current) {
+                  focusedAssistSelectingStopRef.current = false;
+                  setSelectedStop(focusedAssistPreviousSelectedStopRef.current);
+                  focusedAssistPreviousSelectedStopRef.current = null;
+                  setScreen("ACCESSIBILITY");
+                  return;
+                }
+                setScreen("JOURNEY_IDLE");
+              }}
+              onConfirm={confirmSelectedStop}
+              onSelectService={selectServiceFromSelectedStop}
+              onHear={hearSelectedStop}
+              onHearDirections={hearDirections}
+              onSetBottomSheetState={updateBottomSheetState}
+            />
+          )}
+
+          {screen === "ACCESSIBILITY" && (
+            <View style={styles.section}>
+              <SectionHeader
+                eyebrow="Assistance"
+                title="Assist"
+                highContrast={appPreferences.highContrast}
+                lightMode={lightMode}
+              />
+              <FocusedAssistScreen
+                context={focusedAssistContext}
+                controller={focusedAssistController}
+                contextError={focusedAssistContextError}
+                selectedServiceNo={selectedBus?.busService ?? null}
+                requestPhase={requestPhase}
+                appPreferences={appPreferences}
+                lightMode={lightMode}
+                highContrast={appPreferences.highContrast}
+                onChooseStop={chooseFocusedAssistBusStop}
+                onOpenJourney={() => openTab("JOURNEY")}
+              />
+              <VoiceAssistantPanel
+                controller={voiceAssistantControllerRef.current!}
+                recognitionProvider={speechRecognitionProviderRef.current}
+                guidanceSpeaking={guidanceSpeaking}
+                prominent={
+                  appPreferences.spokenGuidance ||
+                  appPreferences.screenReaderOptimised
+                }
+                lightMode={lightMode}
+                highContrast={appPreferences.highContrast}
+              />
+            </View>
+          )}
+
+          {screen === "BUS" && (
+            <View style={styles.section}>
+              <SectionHeader
+                eyebrow="Journey"
+                title="Choose your bus"
+                highContrast={appPreferences.highContrast}
+                lightMode={lightMode}
+              />
+              {selectedStop && (
+                <View
+                  style={[
+                    styles.compactBoardingCard,
+                    lightMode && lightStyles.surface,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.summaryLabel,
+                      lightMode && lightStyles.mutedText,
+                    ]}
+                  >
+                    BOARDING AT
+                  </Text>
+                  <Text
+                    style={[styles.summaryValue, lightMode && lightStyles.text]}
+                  >
+                    {selectedStop.description}
+                  </Text>
+                  <Text style={themedBodyStyle()}>
+                    Bus Stop {selectedStop.busStopCode}
+                  </Text>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Change boarding stop"
+                    onPress={() => {
+                      setJourneySetupState("SELECTING_STOP");
+                      setSelectedArrival(null);
+                      setSelectedServiceOption(null);
+                      setSelectedBus(null);
+                      setScreen("STOP");
+                      updateBottomSheetState("MEDIUM");
+                    }}
+                    style={styles.inlineSecondaryAction}
+                  >
+                    <Text
+                      style={[
+                        styles.inlineSecondaryActionText,
+                        lightMode && lightStyles.secondaryButtonText,
+                      ]}
+                    >
+                      Change stop -&gt;
+                    </Text>
+                  </Pressable>
+                </View>
+              )}
+              {canRepeatJourneyGuidance ? (
+                <TertiaryButton
+                  label="Repeat guidance"
+                  icon={Volume2}
+                  onPress={announceCurrentJourney}
+                  lightMode={lightMode}
+                  highContrast={appPreferences.highContrast}
+                />
+              ) : null}
+              <Text style={themedBodyStyle()}>Which bus are you taking?</Text>
+              {isLoading && serviceOptions.length === 0 ? (
+                <View
+                  style={[
+                    styles.feedbackPanel,
+                    lightMode && lightStyles.surface,
+                  ]}
+                >
+                  <ActivityIndicator
+                    color={controlIconColor({
+                      active: true,
+                      lightMode,
+                      highContrast: appPreferences.highContrast,
+                    })}
+                  />
+                  <Text style={themedBodyStyle()}>
+                    Finding buses serving this stop...
+                  </Text>
+                </View>
+              ) : null}
+              {serviceOptions.map((service) => (
+                <BusArrivalCard
+                  key={service.serviceNo}
+                  service={service}
+                  selected={
+                    selectedServiceOption?.serviceNo === service.serviceNo
+                  }
+                  onPress={() => selectService(service)}
+                  arrivalsLoading={arrivalsStatus === "LOADING"}
                   lightMode={lightMode}
                   highContrast={appPreferences.highContrast}
                 />
               ))}
-
-            {(vehicleStatus === "ARRIVED" ||
-              requestStatus === "ACKNOWLEDGED" ||
-              journeySetupState === "WAITING_FOR_BUS") && (
-              <PrimaryButton
-                label="I'm onboard"
-                icon={BusFront}
-                accessibilityHint="Enter onboard journey mode after boarding."
-                onPress={enterOnboardMode}
-                disabled={isLoading}
-                lightMode={lightMode}
-                highContrast={appPreferences.highContrast}
-              />
-            )}
-
-            <SecondaryButton
-              label="Repeat journey status"
-              icon={Volume2}
-              onPress={announceCurrentJourney}
-              disabled={!appPreferences.repeatAudio}
-              lightMode={lightMode}
-              highContrast={appPreferences.highContrast}
-            />
-
-            {requestStatus === "FAILED" && (
-              <PrimaryButton
-                label="Retry"
-                icon={RefreshCw}
-                onPress={submitRequest}
-                disabled={isLoading}
-                lightMode={lightMode}
-                highContrast={appPreferences.highContrast}
-              />
-            )}
-
-            {events.map((event) => (
-              <View
-                key={`${event.type}-${event.timestamp}`}
-                style={[styles.eventRow, lightMode && lightStyles.surface]}
-              >
-                <Text
-                  style={[styles.eventStatus, lightMode && lightStyles.text]}
+              {!selectedServiceOption && arrivalsStatus === "ERROR" ? (
+                <View
+                  style={[
+                    styles.feedbackPanel,
+                    lightMode && lightStyles.surface,
+                  ]}
                 >
-                  {eventLabel(event)}
-                </Text>
-                <Text style={themedBodyStyle()}>
-                  {new Date(event.timestamp).toLocaleTimeString()}
-                </Text>
-              </View>
-            ))}
-          </View>
-        )}
+                  <Text style={themedLabelStyle()}>
+                    Arrival info unavailable
+                  </Text>
+                  <Text style={themedBodyStyle()}>
+                    Static services remain available. Select a service to choose
+                    your destination and view its route.
+                  </Text>
+                  {selectedStop ? (
+                    <SecondaryButton
+                      label="Retry live arrivals"
+                      icon={RefreshCw}
+                      onPress={() => void loadArrivalsForStop(selectedStop)}
+                      lightMode={lightMode}
+                      highContrast={appPreferences.highContrast}
+                    />
+                  ) : null}
+                </View>
+              ) : null}
+              {selectedServiceOption && arrivalsStatus === "ERROR" ? (
+                <View
+                  style={[
+                    styles.feedbackPanel,
+                    lightMode && lightStyles.surface,
+                  ]}
+                  accessible
+                  accessibilityLabel={`Service ${selectedServiceOption.serviceNo}. Live arrival temporarily unavailable. You can still choose your destination and view the route.`}
+                >
+                  <Text style={themedLabelStyle()}>
+                    Service {selectedServiceOption.serviceNo}
+                  </Text>
+                  <Text style={themedBodyStyle()}>
+                    Live arrival temporarily unavailable.
+                  </Text>
+                  <Text style={themedBodyStyle()}>
+                    You can still choose your destination and view the route.
+                  </Text>
+                  {selectedStop ? (
+                    <SecondaryButton
+                      label="Retry live arrivals"
+                      icon={RefreshCw}
+                      onPress={() => void loadArrivalsForStop(selectedStop)}
+                      lightMode={lightMode}
+                      highContrast={appPreferences.highContrast}
+                    />
+                  ) : null}
+                </View>
+              ) : null}
+              {!isLoading && serviceOptions.length === 0 ? (
+                <View
+                  style={[
+                    styles.feedbackPanel,
+                    lightMode && lightStyles.surface,
+                  ]}
+                >
+                  <Text style={themedBodyStyle()}>
+                    No bus services were found for this stop.
+                  </Text>
+                  {selectedStop ? (
+                    <SecondaryButton
+                      label="Refresh buses"
+                      icon={RefreshCw}
+                      onPress={() => confirmBusStop(selectedStop)}
+                      lightMode={lightMode}
+                      highContrast={appPreferences.highContrast}
+                    />
+                  ) : null}
+                </View>
+              ) : null}
+              {selectedServiceOption && selectedBus ? (
+                <>
+                  {routeDetailsStatus === "LOADING" ? (
+                    <View
+                      style={[
+                        styles.feedbackPanel,
+                        lightMode && lightStyles.surface,
+                      ]}
+                    >
+                      <ActivityIndicator
+                        color={controlIconColor({
+                          active: true,
+                          lightMode,
+                          highContrast: appPreferences.highContrast,
+                        })}
+                      />
+                      <Text style={themedBodyStyle()}>
+                        Loading route and destination details...
+                      </Text>
+                    </View>
+                  ) : null}
+                  {routeDetailsStatus === "ERROR" && selectedStop ? (
+                    <View
+                      style={[
+                        styles.feedbackPanel,
+                        lightMode && lightStyles.surface,
+                      ]}
+                    >
+                      <Text style={themedBodyStyle()}>
+                        Route details are temporarily unavailable. Live arrival
+                        status does not affect this service.
+                      </Text>
+                      <SecondaryButton
+                        label="Retry route details"
+                        icon={RefreshCw}
+                        onPress={() =>
+                          void loadRouteDetails(
+                            selectedStop,
+                            selectedServiceOption,
+                            selectedArrival,
+                          )
+                        }
+                        lightMode={lightMode}
+                        highContrast={appPreferences.highContrast}
+                      />
+                    </View>
+                  ) : null}
+                  <SecondaryButton
+                    label="Repeat bus information"
+                    icon={Volume2}
+                    onPress={announceCurrentJourney}
+                    disabled={!appPreferences.repeatAudio}
+                    lightMode={lightMode}
+                    highContrast={appPreferences.highContrast}
+                  />
+                  <View
+                    style={[
+                      styles.summaryRow,
+                      lightMode && lightStyles.surface,
+                    ]}
+                  >
+                    <View style={styles.iconTitleRow}>
+                      <MapPinned
+                        size={22}
+                        color={controlIconColor({
+                          active: true,
+                          lightMode,
+                          highContrast: appPreferences.highContrast,
+                        })}
+                        strokeWidth={2.75}
+                        accessibilityElementsHidden
+                        importantForAccessibility="no"
+                      />
+                      <Text style={themedLabelStyle()}>
+                        Where are you getting off?
+                      </Text>
+                    </View>
+                    <View style={styles.stopSearchInputFrame}>
+                      <Search
+                        size={20}
+                        color={controlIconColor({
+                          lightMode,
+                          highContrast: appPreferences.highContrast,
+                        })}
+                        strokeWidth={2.5}
+                        accessibilityElementsHidden
+                        importantForAccessibility="no"
+                      />
+                      <TextInput
+                        accessibilityLabel="Search destination on selected service"
+                        placeholder="Search destination"
+                        placeholderTextColor={
+                          lightMode ? lightTheme.textSecondary : colors.metadata
+                        }
+                        value={destinationSearchQuery}
+                        onChangeText={setDestinationSearchQuery}
+                        style={[
+                          styles.stopSearchInput,
+                          lightMode && lightStyles.textInputField,
+                          largeText && styles.largeStopSearchInput,
+                          extraLargeText && styles.extraLargeStopSearchInput,
+                        ]}
+                      />
+                    </View>
+                    <Text
+                      style={[
+                        styles.summaryLabel,
+                        lightMode && lightStyles.mutedText,
+                      ]}
+                    >
+                      Upcoming stops
+                    </Text>
+                    {availableDestinationStops.map((stop) => (
+                      <AlightingStopRow
+                        key={`bus-destination-${stop.sequence}-${stop.busStopCode}`}
+                        stop={stop}
+                        selected={
+                          selectedAlightingStop?.sequence === stop.sequence
+                        }
+                        onPress={() => chooseAlightingStop(stop)}
+                        lightMode={lightMode}
+                        highContrast={appPreferences.highContrast}
+                      />
+                    ))}
+                    {availableDestinationStops.length === 0 ? (
+                      <Text style={themedBodyStyle()}>
+                        No upcoming stops match this search.
+                      </Text>
+                    ) : null}
+                    <SecondaryButton
+                      label="View route on map"
+                      icon={MapIcon}
+                      onPress={() => updateBottomSheetState("EXPANDED")}
+                      lightMode={lightMode}
+                      highContrast={appPreferences.highContrast}
+                    />
+                  </View>
+                  <PrimaryButton
+                    label="Review journey"
+                    icon={ArrowRight}
+                    onPress={continueToJourneyReview}
+                    disabled={!selectedAlightingStop}
+                    lightMode={lightMode}
+                    highContrast={appPreferences.highContrast}
+                  />
+                </>
+              ) : null}
+            </View>
+          )}
 
-        {screen === "ONBOARD" && selectedBus && (
-          <OnboardJourneyScreen
-            appPreferences={appPreferences}
-            selectedBus={selectedBus}
-            destination={selectedArrival?.destination ?? selectedBus.nextStop}
-            currentStop={currentRouteStop}
-            nextStop={nextRouteStop}
-            routeStops={routeStops}
-            currentStopIndex={currentStopIndex}
-            selectedAlightingStop={selectedAlightingStop}
-            selectedAlightingStopIndex={selectedAlightingStopIndex}
-            stopsRemaining={stopsRemaining}
-            destinationApproaching={destinationApproaching}
-            alightingAssistanceTypes={alightingAssistanceTypes}
-            selectedStopIsNext={selectedStopIsNext}
-            selectedStopReached={selectedStopReached}
-            journeyPhase={journeyPhase}
-            onChangeStop={() => setScreen("ALIGHTING_STOP")}
-            onSetDestination={chooseAlightingStop}
-            onRequestDisembarkation={requestDisembarkation}
-            onRepeat={announceCurrentJourney}
-            onSimulateNextStop={simulateNextStop}
-            onEndJourney={endJourney}
-          />
-        )}
-
-        {screen === "ALIGHTING_STOP" && (
-          <View style={styles.section}>
-            <SectionHeader
-              eyebrow="On board"
-              title="Choose where to get off"
-              highContrast={appPreferences.highContrast}
-              lightMode={lightMode}
-            />
-            {routeStops.slice(currentStopIndex + 1).map((stop) => (
-              <AlightingStopRow
-                key={stop.busStopCode}
-                stop={stop}
-                selected={
-                  selectedAlightingStop?.busStopCode === stop.busStopCode
+          {screen === "CONFIRM" && selectedBus && (
+            <View style={styles.section}>
+              <SectionHeader
+                eyebrow="Journey preview"
+                title="Your journey"
+                highContrast={appPreferences.highContrast}
+                lightMode={lightMode}
+              />
+              <SummaryRow
+                label="Service"
+                value={selectedBus.busService}
+                valueAccessory={
+                  selectedBus.isAccessible ? (
+                    <WheelchairAccessibleSymbol
+                      lightMode={lightMode}
+                      highContrast={appPreferences.highContrast}
+                    />
+                  ) : null
                 }
-                onPress={() => chooseAlightingStop(stop)}
                 lightMode={lightMode}
                 highContrast={appPreferences.highContrast}
               />
-            ))}
-            <SecondaryButton
-              label="Back to onboard journey"
-              onPress={() => setScreen("ONBOARD")}
-              lightMode={lightMode}
-              highContrast={appPreferences.highContrast}
-            />
-          </View>
-        )}
-
-        {screen === "COMPLETED" && (
-          <View style={styles.section}>
-            <SectionHeader
-              eyebrow="Journey"
-              title="Journey completed"
-              highContrast={appPreferences.highContrast}
-              lightMode={lightMode}
-            />
-            <View style={themedPanelStyle()}>
-              <Text style={themedLabelStyle()}>You have arrived</Text>
-              <Text style={themedValueStyle()}>
-                {selectedAlightingStop?.description ?? "Destination"}
-              </Text>
-              <Text style={themedBodyStyle()}>Your journey has ended.</Text>
+              <SummaryRow
+                label="Boarding stop"
+                value={
+                  selectedStop
+                    ? `${selectedStop.busStopCode} - ${selectedStop.description}, ${selectedStop.roadName}`
+                    : boardingStop
+                }
+                lightMode={lightMode}
+                highContrast={appPreferences.highContrast}
+              />
+              <SummaryRow
+                label="Get off"
+                value={
+                  selectedAlightingStop
+                    ? `${selectedAlightingStop.description}, Bus Stop ${selectedAlightingStop.busStopCode}`
+                    : "Choose destination"
+                }
+                lightMode={lightMode}
+                highContrast={appPreferences.highContrast}
+              />
+              <SummaryRow
+                label="Stops"
+                value={
+                  selectedAlightingStopIndex > 0
+                    ? `${selectedAlightingStopIndex} stops after boarding`
+                    : "Destination not selected"
+                }
+                lightMode={lightMode}
+                highContrast={appPreferences.highContrast}
+              />
+              <View
+                style={[styles.summaryRow, lightMode && lightStyles.surface]}
+              >
+                <View style={styles.iconTitleRow}>
+                  <MapIcon
+                    size={22}
+                    color={controlIconColor({
+                      active: true,
+                      lightMode,
+                      highContrast: appPreferences.highContrast,
+                    })}
+                    strokeWidth={2.75}
+                    accessibilityElementsHidden
+                    importantForAccessibility="no"
+                  />
+                  <Text style={themedLabelStyle()}>Route preview</Text>
+                </View>
+                <Text style={themedBodyStyle()}>
+                  Board at{" "}
+                  {selectedStop?.description ?? selectedBus.currentStop}, follow
+                  Service {selectedBus.busService}, then get off at{" "}
+                  {selectedAlightingStop?.description ??
+                    "your selected destination"}
+                  .
+                </Text>
+                <RouteProgressList
+                  routeStops={plannedRouteStops}
+                  currentStopIndex={0}
+                  destinationStopIndex={selectedAlightingStopIndex}
+                  lightMode={lightMode}
+                  highContrast={appPreferences.highContrast}
+                />
+              </View>
+              {activeProfile ? (
+                <View
+                  style={[styles.summaryRow, lightMode && lightStyles.surface]}
+                >
+                  <View style={styles.serviceAccessibilityRow}>
+                    <Text
+                      style={[
+                        styles.summaryLabel,
+                        lightMode && lightStyles.mutedText,
+                      ]}
+                    >
+                      Need assistance for Service {selectedBus.busService}?
+                    </Text>
+                    {selectedBus.isAccessible ? (
+                      <WheelchairAccessibleSymbol
+                        lightMode={lightMode}
+                        highContrast={appPreferences.highContrast}
+                        size="small"
+                      />
+                    ) : null}
+                  </View>
+                  <Text style={themedBodyStyle()}>
+                    Your usual assistance is loaded for this journey only.
+                    Change it in Assist if needed.
+                  </Text>
+                  <AssistanceSummaryList
+                    requirements={journeyRequirements}
+                    status={requestStatus}
+                    lightMode={lightMode}
+                    highContrast={appPreferences.highContrast}
+                  />
+                </View>
+              ) : null}
+              <SecondaryButton
+                label="Back to destination"
+                icon={ArrowLeft}
+                onPress={() => {
+                  setJourneySetupState("SELECTING_DESTINATION");
+                  setScreen("BUS");
+                }}
+                lightMode={lightMode}
+                highContrast={appPreferences.highContrast}
+              />
+              <SecondaryButton
+                label="Repeat journey summary"
+                icon={Volume2}
+                onPress={announceCurrentJourney}
+                disabled={!appPreferences.repeatAudio}
+                lightMode={lightMode}
+                highContrast={appPreferences.highContrast}
+              />
+              {activeProfile && assistanceTypes.length > 0 ? (
+                <PrimaryButton
+                  label="Request assistance"
+                  icon={CircleCheck}
+                  onPress={() => void submitRequest()}
+                  disabled={isLoading || !selectedAlightingStop}
+                  lightMode={lightMode}
+                  highContrast={appPreferences.highContrast}
+                />
+              ) : null}
+              <PrimaryButton
+                label={
+                  activeProfile && assistanceTypes.length > 0
+                    ? "Skip assistance and start"
+                    : "Start this journey"
+                }
+                icon={ArrowRight}
+                onPress={startJourneyWithoutAssistance}
+                disabled={isLoading || !selectedAlightingStop}
+                lightMode={lightMode}
+                highContrast={appPreferences.highContrast}
+              />
             </View>
-            <PrimaryButton
-              label="Find another bus"
-              onPress={() => {
-                setJourneyPhase("DISCOVERY");
-                setRequestId(null);
-                setRequestStatus(null);
-                setVehicleStatus(null);
-                setSelectedBus(null);
-                setSelectedArrival(null);
-                setSelectedAlightingStop(null);
-                setRouteStops([]);
-                setCurrentStopIndex(0);
-                setScreen("LOCATION");
-              }}
+          )}
+
+          {screen === "STATUS" && selectedBus && (
+            <View style={styles.section}>
+              <SectionHeader
+                eyebrow="Status"
+                title={
+                  journeyPhase === "WALKING_TO_STOP"
+                    ? "Walking to your stop"
+                    : vehicleStatus === "ARRIVED"
+                      ? "Your bus is here"
+                      : "Waiting for bus"
+                }
+                highContrast={appPreferences.highContrast}
+                lightMode={lightMode}
+              />
+              {journeyPhase === "WALKING_TO_STOP" ? (
+                <>
+                  <View
+                    style={[
+                      styles.statusPanel,
+                      lightMode && lightStyles.surface,
+                      highContrastDark && styles.highContrastControl,
+                      highContrastLight && lightStyles.highContrastControl,
+                      (vehicleStatus === "APPROACHING" ||
+                        vehicleStatus === "ARRIVED") &&
+                        styles.journeyAlertPanel,
+                    ]}
+                    accessible
+                    accessibilityLabel={`Assistance status ${requestStatusLabel(
+                      requestStatus,
+                    )}. ${vehicleStatusLabel(vehicleStatus)}.`}
+                  >
+                    <View style={styles.iconTitleRow}>
+                      <BadgeCheck
+                        size={24}
+                        color={controlIconColor({
+                          active: requestStatus === "ACKNOWLEDGED",
+                          lightMode,
+                          highContrast: appPreferences.highContrast,
+                        })}
+                        strokeWidth={2.75}
+                        accessibilityElementsHidden
+                        importantForAccessibility="no"
+                      />
+                      <Text style={themedLabelStyle()}>
+                        {requestId ? "Assistance" : "Journey"}
+                      </Text>
+                    </View>
+                    <AssistanceStatusVisual
+                      assistanceTypes={assistanceTypes}
+                      journeyPhase={journeyPhase}
+                      lightMode={lightMode}
+                      highContrast={appPreferences.highContrast}
+                    />
+                    <Text style={themedValueStyle()}>
+                      {requestStatusLabel(requestStatus)}
+                    </Text>
+                    <View style={styles.serviceAccessibilityRow}>
+                      <ServiceNumberWithAccessibility
+                        serviceNo={selectedBus.busService}
+                        accessible={selectedBus.isAccessible}
+                        textStyle={themedBodyStyle()}
+                        lightMode={lightMode}
+                        highContrast={appPreferences.highContrast}
+                        symbolSize="small"
+                      />
+                      <Text style={themedBodyStyle()}>
+                        {selectedArrival
+                          ? formatEta(selectedArrival.etaSeconds).toLowerCase()
+                          : "live arrival unavailable"}
+                        .
+                      </Text>
+                    </View>
+                    {selectedStop ? (
+                      <Text style={themedBodyStyle()}>
+                        {journeyPhase === "WALKING_TO_STOP"
+                          ? `Walk to ${selectedStop.description}, Stop ${selectedStop.busStopCode}.`
+                          : `Board at ${selectedStop.description}, Stop ${selectedStop.busStopCode}.`}
+                      </Text>
+                    ) : null}
+                    {selectedAlightingStop ? (
+                      <Text style={themedBodyStyle()}>
+                        Destination: {selectedAlightingStop.description}.{" "}
+                        {selectedAlightingStopIndex > 0
+                          ? `${selectedAlightingStopIndex} stops after boarding.`
+                          : ""}
+                      </Text>
+                    ) : null}
+                    {requestId ? (
+                      <Text style={themedBodyStyle()}>
+                        {selectedNeeds} requested for this journey.
+                      </Text>
+                    ) : null}
+                    {requestStatus === "ACKNOWLEDGED" && (
+                      <Text
+                        style={[
+                          styles.confirmationText,
+                          lightMode && lightStyles.text,
+                        ]}
+                      >
+                        The bus has received your request. This confirms the
+                        request, not that boarding equipment is ready.
+                      </Text>
+                    )}
+                    {vehicleStatus === "ARRIVED" &&
+                    assistanceTypes.includes("WHEELCHAIR_RAMP") ? (
+                      <Text
+                        style={[
+                          styles.confirmationText,
+                          lightMode && lightStyles.text,
+                        ]}
+                      >
+                        Your bus has arrived. Please wait until the ramp is
+                        fully deployed before boarding.
+                      </Text>
+                    ) : null}
+                    <Text style={themedBodyStyle()}>
+                      Every spoken update is also displayed on this screen.
+                    </Text>
+                    <Text style={themedBodyStyle()}>
+                      {appPreferences.vibrationAlerts === "OFF"
+                        ? "Vibration alerts are off."
+                        : `Vibration alerts: ${appPreferences.vibrationAlerts.toLowerCase()}.`}
+                    </Text>
+                    <View style={styles.iconTitleRow}>
+                      <BusFront
+                        size={24}
+                        color={controlIconColor({
+                          active:
+                            vehicleStatus === "APPROACHING" ||
+                            vehicleStatus === "ARRIVED",
+                          lightMode,
+                          highContrast: appPreferences.highContrast,
+                        })}
+                        strokeWidth={2.75}
+                        accessibilityElementsHidden
+                        importantForAccessibility="no"
+                      />
+                      <Text style={themedLabelStyle()}>Bus</Text>
+                    </View>
+                    <Text style={themedValueStyle()}>
+                      {vehicleStatusLabel(vehicleStatus)}
+                    </Text>
+                  </View>
+
+                  {requestStatus === "ACKNOWLEDGED" &&
+                    (confirmingCancelRequest ? (
+                      <View
+                        style={[
+                          styles.summaryRow,
+                          lightMode && lightStyles.surface,
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.summaryValue,
+                            lightMode && lightStyles.text,
+                          ]}
+                        >
+                          Cancel assistance request?
+                        </Text>
+                        <Text style={themedBodyStyle()}>
+                          Only cancel if you no longer need this assistance.
+                        </Text>
+                        <SecondaryButton
+                          label="Keep request"
+                          icon={CircleCheck}
+                          onPress={() => setConfirmingCancelRequest(false)}
+                          disabled={isLoading}
+                          lightMode={lightMode}
+                          highContrast={appPreferences.highContrast}
+                        />
+                        <SecondaryButton
+                          label="Yes, cancel request"
+                          icon={CircleX}
+                          onPress={cancelRequest}
+                          disabled={isLoading}
+                          lightMode={lightMode}
+                          highContrast={appPreferences.highContrast}
+                        />
+                      </View>
+                    ) : (
+                      <SecondaryButton
+                        label="Cancel request"
+                        icon={CircleX}
+                        onPress={askToCancelRequest}
+                        disabled={isLoading}
+                        lightMode={lightMode}
+                        highContrast={appPreferences.highContrast}
+                      />
+                    ))}
+
+                  {(vehicleStatus === "ARRIVED" ||
+                    requestStatus === "ACKNOWLEDGED" ||
+                    journeySetupState === "WAITING_FOR_BUS") && (
+                    <View style={styles.boardingConfirmationGroup}>
+                      <Text style={themedBodyStyle()}>
+                        Choose this only after you have safely boarded the bus.
+                      </Text>
+                      <PrimaryButton
+                        label="I'm onboard"
+                        icon={BusFront}
+                        accessibilityHint="Enter onboard journey mode after you have safely boarded."
+                        onPress={enterOnboardMode}
+                        disabled={isLoading}
+                        lightMode={lightMode}
+                        highContrast={appPreferences.highContrast}
+                      />
+                    </View>
+                  )}
+
+                  {appPreferences.repeatAudio &&
+                  hasSpokenGuidanceInCurrentFlow ? (
+                    <SecondaryButton
+                      label="Repeat journey status"
+                      icon={Volume2}
+                      onPress={announceCurrentJourney}
+                      lightMode={lightMode}
+                      highContrast={appPreferences.highContrast}
+                    />
+                  ) : null}
+
+                  {requestStatus === "FAILED" && (
+                    <PrimaryButton
+                      label="Retry"
+                      icon={RefreshCw}
+                      onPress={() => void submitRequest()}
+                      disabled={isLoading}
+                      lightMode={lightMode}
+                      highContrast={appPreferences.highContrast}
+                    />
+                  )}
+
+                  {events.map((event) => (
+                    <View
+                      key={`${event.type}-${event.timestamp}`}
+                      style={[
+                        styles.eventRow,
+                        lightMode && lightStyles.surface,
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.eventStatus,
+                          lightMode && lightStyles.text,
+                        ]}
+                      >
+                        {eventLabel(event)}
+                      </Text>
+                      <Text style={themedBodyStyle()}>
+                        {new Date(event.timestamp).toLocaleTimeString()}
+                      </Text>
+                    </View>
+                  ))}
+                </>
+              ) : (
+                <WaitingForBusStatus
+                  serviceNo={selectedBus.busService}
+                  accessibleBus={selectedBus.isAccessible}
+                  etaSeconds={selectedArrival?.etaSeconds ?? null}
+                  boardingStop={selectedStop}
+                  destinationStop={selectedAlightingStop}
+                  stopsAfterBoarding={selectedAlightingStopIndex}
+                  assistanceTypes={assistanceTypes}
+                  requestStatus={requestStatus}
+                  isLoading={isLoading}
+                  lightMode={lightMode}
+                  highContrast={appPreferences.highContrast}
+                  onRequestRamp={() => void requestRampWhileWaiting()}
+                  onBoard={enterOnboardMode}
+                />
+              )}
+            </View>
+          )}
+
+          {screen === "ONBOARD" && selectedBus && (
+            <OnboardJourneyScreen
+              appPreferences={appPreferences}
+              selectedBus={selectedBus}
+              currentStop={currentRouteStop}
+              nextStop={nextRouteStop}
+              routeStops={routeStops}
+              currentStopIndex={currentStopIndex}
+              selectedAlightingStop={selectedAlightingStop}
+              selectedAlightingStopIndex={selectedAlightingStopIndex}
+              stopsRemaining={stopsRemaining}
+              alightingAssistanceTypes={alightingAssistanceTypes}
+              alightingRequestStatus={
+                requestPhase === "ALIGHTING" ? requestStatus : null
+              }
+              selectedStopIsNext={selectedStopIsNext}
+              selectedStopReached={selectedStopReached}
+              journeyPhase={journeyPhase}
+              hasMeaningfulAnnouncement={
+                appPreferences.repeatAudio && hasSpokenGuidanceInCurrentFlow
+              }
+              isRequestLoading={isLoading}
+              onChangeStop={requestDestinationChange}
+              onSetDestination={chooseAlightingStop}
+              onRequestDisembarkation={requestDisembarkation}
+              onRepeat={announceCurrentJourney}
+              onSimulateNextStop={simulateNextStop}
+              onOpenAccessibility={() => openTab("ASSISTANCE")}
+              onRequestEndJourney={requestEndJourney}
+              onFinishJourney={finishJourney}
+              journeyEndInProgress={journeyEndInProgress}
+            />
+          )}
+
+          {screen === "ALIGHTING_STOP" && (
+            <View style={styles.section}>
+              <SectionHeader
+                eyebrow="On board"
+                title="Choose where to get off"
+                highContrast={appPreferences.highContrast}
+                lightMode={lightMode}
+              />
+              {routeStops.slice(currentStopIndex + 1).map((stop) => (
+                <AlightingStopRow
+                  key={stop.busStopCode}
+                  stop={stop}
+                  selected={
+                    selectedAlightingStop?.busStopCode === stop.busStopCode
+                  }
+                  onPress={() => chooseAlightingStop(stop)}
+                  lightMode={lightMode}
+                  highContrast={appPreferences.highContrast}
+                />
+              ))}
+              <SecondaryButton
+                label="Back to onboard journey"
+                onPress={() => setScreen("ONBOARD")}
+                lightMode={lightMode}
+                highContrast={appPreferences.highContrast}
+              />
+            </View>
+          )}
+
+          <JourneyEndConfirmationDialog
+            visible={confirmingJourneyEnd === "ENDED_EARLY"}
+            serviceNo={selectedBus?.busService ?? null}
+            destinationName={selectedAlightingStop?.description ?? null}
+            busy={journeyEndInProgress}
+            lightMode={lightMode}
+            highContrast={appPreferences.highContrast}
+            onKeep={() => setConfirmingJourneyEnd(null)}
+            onConfirm={() => void endJourney("ENDED_EARLY")}
+          />
+
+          {isLoading && screen !== "STOP" && !isJourneyEntryLoading && (
+            <LoadingState
+              message={loadingMessage ?? "Loading..."}
               lightMode={lightMode}
               highContrast={appPreferences.highContrast}
             />
-          </View>
-        )}
-
-        {isLoading && screen !== "STOP" && (
-          <LoadingState
-            message={loadingMessage ?? "Loading..."}
-            lightMode={lightMode}
-            highContrast={appPreferences.highContrast}
-          />
-        )}
-        {error && screen !== "STOP" && (
-          <ErrorState
-            title={screen === "BUS" ? "Arrival info unavailable" : undefined}
-            message={error}
-            primaryActionLabel={
-              screen === "LOCATION" || screen === "BUS"
-                ? "Try again"
-                : undefined
-            }
-            onPrimaryAction={
-              screen === "LOCATION"
-                ? findMyBusStop
-                : screen === "BUS" && selectedStop
-                  ? () => confirmBusStop(selectedStop)
+          )}
+          {error && screen !== "STOP" && (
+            <ErrorState
+              title={screen === "BUS" ? "Arrival info unavailable" : undefined}
+              message={error}
+              primaryActionLabel={
+                screen === "JOURNEY_IDLE" || screen === "BUS"
+                  ? "Try again"
                   : undefined
-            }
-            secondaryActionLabel={
-              screen === "LOCATION" ? "Select stop manually" : undefined
-            }
-            onSecondaryAction={
-              screen === "LOCATION" ? loadManualStops : undefined
-            }
-            lightMode={lightMode}
+              }
+              onPrimaryAction={
+                screen === "JOURNEY_IDLE"
+                  ? () => {
+                      void findMyBusStop();
+                    }
+                  : screen === "BUS" && selectedStop
+                    ? () => confirmBusStop(selectedStop)
+                    : undefined
+              }
+              secondaryActionLabel={
+                screen === "JOURNEY_IDLE" ? "Select stop manually" : undefined
+              }
+              onSecondaryAction={
+                screen === "JOURNEY_IDLE"
+                  ? () => {
+                      void loadManualStops();
+                    }
+                  : undefined
+              }
+              lightMode={lightMode}
+              highContrast={appPreferences.highContrast}
+            />
+          )}
+        </ScrollView>
+        {visualAlert ? (
+          <StatusToast
+            message={visualAlert}
             highContrast={appPreferences.highContrast}
+            lightMode={lightMode}
+            largeText={largeText}
+            onDismiss={() => setVisualAlert(null)}
           />
-        )}
-      </ScrollView>
-      {visualAlert ? (
-        <StatusToast
-          message={visualAlert}
-          highContrast={appPreferences.highContrast}
+        ) : null}
+        <TabBar
+          activeTab={activeTab}
+          journeyStateDescription={
+            selectedBus
+              ? "active journey"
+              : screen === "STOP"
+                ? "map ready"
+                : selectedStop
+                  ? "stop selected"
+                  : "find bus ready"
+          }
+          hasRequest={Boolean(requestId || focusedAssistRequest.requestId)}
           lightMode={lightMode}
-          largeText={appPreferences.largeText}
-          onDismiss={() => setVisualAlert(null)}
+          highContrast={appPreferences.highContrast}
+          compact={isCompactWidth}
+          onSelect={openTab}
         />
-      ) : null}
-      <TabBar
-        activeTab={activeTab}
-        hasSelectedBus={Boolean(selectedBus)}
-        hasRequest={Boolean(requestId)}
-        lightMode={lightMode}
-        highContrast={appPreferences.highContrast}
-        compact={isCompactWidth}
-        onSelect={openTab}
-      />
-    </SafeAreaView>
+      </SafeAreaView>
+    </AccessibilityRuntimeContext.Provider>
   );
 }
 
@@ -5256,12 +8331,16 @@ const ToggleRow = memo(function ToggleRow({
   label,
   description,
   enabled,
+  disabled = false,
   highContrast = false,
   largeText = false,
   lightMode = false,
   variant = "default",
   iconSource,
   iconSize,
+  illustrationSource,
+  illustrationSize,
+  illustration,
   preserveIconColors = false,
   customIcon,
   onPress,
@@ -5269,18 +8348,27 @@ const ToggleRow = memo(function ToggleRow({
   label: string;
   description: string;
   enabled: boolean;
+  disabled?: boolean;
   highContrast?: boolean;
   largeText?: boolean;
   lightMode?: boolean;
   variant?: "default" | "assistance" | "phone";
   iconSource?: ImageSourcePropType;
   iconSize?: number;
+  illustrationSource?: ImageSourcePropType;
+  illustrationSize?: "small" | "medium" | "large";
+  illustration?: React.ReactNode;
   preserveIconColors?: boolean;
   customIcon?: React.ReactNode;
   onPress: () => void;
 }) {
+  const runtimeAccessibility = useContext(AccessibilityRuntimeContext);
+  const { fontScale, width } = useWindowDimensions();
   const isAssistance = variant === "assistance";
   const isPhone = variant === "phone";
+  const shouldStackIllustration =
+    Boolean(illustration || illustrationSource) &&
+    shouldStackFeatureIllustration({ width, fontScale, largeText });
   const theme = resolveVisualTheme(lightMode, highContrast);
   const selectedForeground = theme.colors.iconSelected;
   const rowForeground = enabled ? selectedForeground : theme.colors.textPrimary;
@@ -5312,10 +8400,11 @@ const ToggleRow = memo(function ToggleRow({
     ? `${label}, ${enabled ? "selected" : "not selected"}`
     : label;
   const accessibilityState = isAssistance
-    ? { checked: enabled, selected: enabled }
-    : { checked: enabled };
+    ? { checked: enabled, disabled, selected: enabled }
+    : { checked: enabled, disabled };
 
   function handlePress() {
+    if (disabled) return;
     onPress();
     AccessibilityInfo.announceForAccessibility(
       `${label} turned ${enabled ? "off" : "on"}.`,
@@ -5328,6 +8417,7 @@ const ToggleRow = memo(function ToggleRow({
       accessibilityState={accessibilityState}
       accessibilityLabel={accessibilityLabel}
       accessibilityHint={description}
+      disabled={disabled}
       onPress={handlePress}
       style={[
         styles.toggleRow,
@@ -5348,6 +8438,8 @@ const ToggleRow = memo(function ToggleRow({
           lightMode &&
           enabled &&
           lightStyles.highContrastSelectedControl,
+        disabled && styles.disabledButton,
+        runtimeAccessibility.largerControls && styles.largerControl,
         {
           backgroundColor: rowSurface,
           borderColor: rowBorderColor,
@@ -5355,7 +8447,12 @@ const ToggleRow = memo(function ToggleRow({
         },
       ]}
     >
-      <View style={styles.toggleHeaderRow}>
+      <View
+        style={[
+          styles.toggleHeaderRow,
+          shouldStackIllustration && styles.stackedToggleHeaderRow,
+        ]}
+      >
         <View style={styles.optionVisualGroup}>
           <View
             style={[
@@ -5425,6 +8522,8 @@ const ToggleRow = memo(function ToggleRow({
               style={[
                 styles.toggleText,
                 largeText && styles.largeBody,
+                runtimeAccessibility.textSize === "EXTRA_LARGE" &&
+                  styles.extraLargeBody,
                 lightMode && lightStyles.text,
                 highContrast && !lightMode && styles.highContrastText,
                 highContrast && lightMode && lightStyles.highContrastText,
@@ -5459,6 +8558,8 @@ const ToggleRow = memo(function ToggleRow({
             style={[
               styles.bodyText,
               largeText && styles.largeBody,
+              runtimeAccessibility.textSize === "EXTRA_LARGE" &&
+                styles.extraLargeBody,
               lightMode && lightStyles.bodyText,
               highContrast && !lightMode && styles.highContrastMutedText,
               highContrast && lightMode && lightStyles.highContrastMutedText,
@@ -5468,6 +8569,29 @@ const ToggleRow = memo(function ToggleRow({
             {description}
           </Text>
         </View>
+        {illustration ? (
+          <View
+            style={[
+              styles.toggleIllustrationSlot,
+              shouldStackIllustration && styles.stackedToggleIllustrationSlot,
+            ]}
+          >
+            {illustration}
+          </View>
+        ) : illustrationSource ? (
+          <View
+            style={[
+              styles.toggleIllustrationSlot,
+              shouldStackIllustration && styles.stackedToggleIllustrationSlot,
+            ]}
+          >
+            <FeatureIllustration
+              source={illustrationSource}
+              size={illustrationSize ?? "medium"}
+              decorative
+            />
+          </View>
+        ) : null}
       </View>
     </Pressable>
   );
@@ -5588,11 +8712,13 @@ const PassengerDefaultsIcons = memo(function PassengerDefaultsIcons({
 function AssistanceSummaryList({
   requirements,
   status,
+  phase = "BOARDING",
   lightMode,
   highContrast,
 }: {
   requirements: AccessibilityRequirements;
   status: AssistanceRequestStatus | null;
+  phase?: AssistancePhase;
   lightMode: boolean;
   highContrast: boolean;
 }) {
@@ -5609,7 +8735,8 @@ function AssistanceSummaryList({
       icon: optionIcons.busIdentification,
     },
     EXTENDED_DWELL_TIME: {
-      label: "More boarding time",
+      label:
+        phase === "ALIGHTING" ? "Extra alighting time" : "More boarding time",
       icon: optionIcons.increasedDuration,
     },
   };
@@ -5672,6 +8799,1654 @@ function AssistanceSummaryList({
   );
 }
 
+function loadingMessageForAssistance(types: AssistanceType[]) {
+  if (types.includes("WHEELCHAIR_RAMP")) {
+    return "Sending your ramp request...";
+  }
+  if (types.includes("EXTENDED_DWELL_TIME")) {
+    return "Asking the bus for extra boarding time...";
+  }
+  if (types.includes("BUS_AUDIO_IDENTIFICATION")) {
+    return "Preparing audio identification...";
+  }
+  return "Sending assistance request...";
+}
+
+type LoadingVisualKind =
+  "location" | "request" | "audio" | "journey" | "generic";
+
+function loadingVisualKindForMessage(message: string): LoadingVisualKind {
+  const normalized = message.toLowerCase();
+
+  if (
+    normalized.includes("location") ||
+    normalized.includes("nearby") ||
+    normalized.includes("stops")
+  ) {
+    return "location";
+  }
+  if (
+    normalized.includes("audio") ||
+    normalized.includes("identification") ||
+    normalized.includes("announcement")
+  ) {
+    return "audio";
+  }
+  if (
+    normalized.includes("journey") ||
+    normalized.includes("alight") ||
+    normalized.includes("disembark")
+  ) {
+    return "journey";
+  }
+  if (
+    normalized.includes("ramp") ||
+    normalized.includes("extra") ||
+    normalized.includes("boarding time") ||
+    normalized.includes("sending") ||
+    normalized.includes("request") ||
+    normalized.includes("cancelling")
+  ) {
+    return "request";
+  }
+
+  return "generic";
+}
+
+function loadingDescriptionForKind(kind: LoadingVisualKind) {
+  switch (kind) {
+    case "location":
+      return "This should only take a moment.";
+    case "request":
+      return "Sending a simple signal to the bus.";
+    case "audio":
+      return "Preparing the announcement signal.";
+    case "journey":
+      return "Updating your journey status.";
+    default:
+      return "Still working if this takes a moment.";
+  }
+}
+
+function useDelayedLoadingVisibility(
+  active: boolean,
+  showDelayMs = 180,
+  minimumVisibleMs = 320,
+) {
+  const [visible, setVisible] = useState(false);
+  const shownAtRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (active) {
+      if (visible) {
+        return undefined;
+      }
+      const showTimer = setTimeout(() => {
+        shownAtRef.current = Date.now();
+        setVisible(true);
+      }, showDelayMs);
+      return () => clearTimeout(showTimer);
+    }
+
+    if (!visible) {
+      shownAtRef.current = null;
+      return undefined;
+    }
+
+    const elapsed = Date.now() - (shownAtRef.current ?? Date.now());
+    const hideTimer = setTimeout(
+      () => {
+        shownAtRef.current = null;
+        setVisible(false);
+      },
+      Math.max(0, minimumVisibleMs - elapsed),
+    );
+    return () => clearTimeout(hideTimer);
+  }, [active, minimumVisibleMs, showDelayMs, visible]);
+
+  return visible;
+}
+
+function useDelayedFlag(active: boolean, delayMs: number) {
+  const [visible, setVisible] = useState(false);
+
+  useEffect(() => {
+    if (!active) {
+      setVisible(false);
+      return undefined;
+    }
+    const timer = setTimeout(() => setVisible(true), delayMs);
+    return () => clearTimeout(timer);
+  }, [active, delayMs]);
+
+  return visible;
+}
+
+function usePulseAnimation() {
+  const runtimeAccessibility = useContext(AccessibilityRuntimeContext);
+  const pulse = useRef(new Animated.Value(0)).current;
+  const [reduceMotion, setReduceMotion] = useState(false);
+  const animationsDisabled =
+    reduceMotion ||
+    runtimeAccessibility.reducedMotion ||
+    Boolean(process.env.JEST_WORKER_ID);
+
+  useEffect(() => {
+    let mounted = true;
+    const readReduceMotion = AccessibilityInfo.isReduceMotionEnabled;
+    if (typeof readReduceMotion === "function") {
+      const result = readReduceMotion();
+      if (result && typeof result.then === "function") {
+        result
+          .then((enabled) => {
+            if (mounted) {
+              setReduceMotion(enabled);
+            }
+          })
+          .catch(() => undefined);
+      }
+    }
+
+    const subscription = AccessibilityInfo.addEventListener?.(
+      "reduceMotionChanged",
+      setReduceMotion,
+    );
+    return () => {
+      mounted = false;
+      subscription?.remove?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (animationsDisabled) {
+      pulse.setValue(0);
+      return undefined;
+    }
+
+    const animation = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, {
+          duration: 900,
+          toValue: 1,
+          useNativeDriver: true,
+        }),
+        Animated.timing(pulse, {
+          duration: 900,
+          toValue: 0,
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+    animation.start();
+    return () => animation.stop();
+  }, [animationsDisabled, pulse]);
+
+  return {
+    opacity: pulse.interpolate({
+      inputRange: [0, 1],
+      outputRange: [0.35, 0.85],
+    }),
+    transform: [
+      {
+        scale: pulse.interpolate({
+          inputRange: [0, 1],
+          outputRange: [0.96, 1.08],
+        }),
+      },
+    ],
+  };
+}
+
+function FindBusPanel({
+  state,
+  interactionBusy,
+  stacked,
+  largeText,
+  lightMode,
+  highContrast,
+  canRepeatGuidance,
+  onUseLocation,
+  onSelectManually,
+  onRetry,
+  onRepeatGuidance,
+}: {
+  state: FindBusPanelState;
+  interactionBusy: boolean;
+  stacked: boolean;
+  largeText: boolean;
+  lightMode: boolean;
+  highContrast: boolean;
+  canRepeatGuidance: boolean;
+  onUseLocation: () => void;
+  onSelectManually: () => void;
+  onRetry: () => void;
+  onRepeatGuidance: () => void;
+}) {
+  const showManualEscape = useDelayedFlag(state.kind === "LOCATING", 4000);
+
+  if (state.kind === "LOCATING" || state.kind === "MAP_LOADING") {
+    return (
+      <LocationLoadingPanel
+        message={state.message}
+        showManualEscape={state.kind === "LOCATING" ? showManualEscape : false}
+        lightMode={lightMode}
+        highContrast={highContrast}
+        onSelectManually={onSelectManually}
+      />
+    );
+  }
+
+  if (state.kind === "LOCATION_ERROR" || state.kind === "DISCOVERY_ERROR") {
+    return (
+      <JourneyDiscoveryInlineStatus
+        status={state.status}
+        interactionBusy={interactionBusy}
+        onPrimaryAction={onRetry}
+        onSecondaryAction={onSelectManually}
+        lightMode={lightMode}
+        highContrast={highContrast}
+      />
+    );
+  }
+
+  return (
+    <>
+      <FeatureHero
+        title="Choose a nearby stop and the bus you want to board."
+        illustration={<JourneyFindBusIllustration />}
+        stacked={stacked}
+        largeText={largeText}
+        lightMode={lightMode}
+        highContrast={highContrast}
+      />
+      <View style={styles.journeyFindBusActions}>
+        <PrimaryButton
+          label="Use my location"
+          icon={LocateFixed}
+          accessibilityHint="Find nearby bus stops using your current location."
+          onPress={onUseLocation}
+          disabled={interactionBusy}
+          lightMode={lightMode}
+          highContrast={highContrast}
+        />
+        <SecondaryButton
+          label="Select bus stop manually"
+          icon={List}
+          accessibilityHint="Opens a list of nearby bus stops."
+          onPress={onSelectManually}
+          disabled={interactionBusy}
+          lightMode={lightMode}
+          highContrast={highContrast}
+        />
+      </View>
+      {state.kind === "NOTICE" ? (
+        <JourneyDiscoveryInlineStatus
+          status={state.status}
+          interactionBusy={interactionBusy}
+          onPrimaryAction={onRetry}
+          onSecondaryAction={onSelectManually}
+          lightMode={lightMode}
+          highContrast={highContrast}
+        />
+      ) : null}
+      {canRepeatGuidance ? (
+        <TertiaryButton
+          label="Repeat guidance"
+          icon={Volume2}
+          accessibilityHint="Repeats the latest spoken journey information."
+          onPress={onRepeatGuidance}
+          lightMode={lightMode}
+          highContrast={highContrast}
+        />
+      ) : null}
+    </>
+  );
+}
+
+function LocationLoadingPanel({
+  message,
+  showManualEscape,
+  lightMode,
+  highContrast,
+  onSelectManually,
+}: {
+  message: string;
+  showManualEscape: boolean;
+  lightMode: boolean;
+  highContrast: boolean;
+  onSelectManually: () => void;
+}) {
+  const theme = resolveVisualTheme(lightMode, highContrast);
+  const panelSurface =
+    lightMode && !highContrast ? "#DDF4EC" : theme.colors.backgroundSecondary;
+
+  return (
+    <View
+      testID="journey-location-loading-panel"
+      style={[
+        styles.journeyLocationLoadingPanel,
+        {
+          backgroundColor: panelSurface,
+          borderColor: highContrast ? theme.colors.borderStrong : "transparent",
+          borderWidth: highContrast ? 2 : 0,
+        },
+      ]}
+    >
+      <View
+        style={styles.journeyLocationLoadingStatus}
+        accessible
+        accessibilityRole="progressbar"
+        accessibilityLabel={`${message} This should only take a moment.`}
+        accessibilityState={{ busy: true }}
+        accessibilityLiveRegion="polite"
+      >
+        <FeatureIllustration
+          source={illustrations.locationLoading}
+          size="large"
+          testID="location-loading-artwork"
+          decorative
+        />
+        <Text
+          style={[
+            styles.journeyLocationLoadingTitle,
+            { color: theme.colors.textPrimary },
+          ]}
+        >
+          {message}
+        </Text>
+        <Text
+          style={[
+            styles.journeyLocationLoadingSupport,
+            { color: theme.colors.textSecondary },
+          ]}
+        >
+          This should only take a moment.
+        </Text>
+        <View
+          style={styles.locationLoadingDots}
+          accessibilityElementsHidden
+          importantForAccessibility="no"
+        >
+          {[0, 1, 2].map((dot) => (
+            <View
+              key={dot}
+              style={[
+                styles.locationLoadingDot,
+                {
+                  backgroundColor: theme.colors.statusInformation,
+                  opacity: 1 - dot * 0.24,
+                },
+              ]}
+            />
+          ))}
+        </View>
+      </View>
+      {showManualEscape ? (
+        <View style={styles.journeyLocationLongWaitActions}>
+          <Text
+            style={[styles.summaryLabel, { color: theme.colors.textSecondary }]}
+          >
+            Taking longer than expected?
+          </Text>
+          <SecondaryButton
+            label="Select bus stop manually"
+            icon={List}
+            accessibilityHint="Stops waiting for location and opens manual bus stop selection."
+            onPress={onSelectManually}
+            lightMode={lightMode}
+            highContrast={highContrast}
+          />
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+function FeatureHero({
+  title,
+  illustration,
+  stacked,
+  largeText,
+  lightMode,
+  highContrast,
+}: {
+  title: string;
+  illustration: React.ReactNode;
+  stacked: boolean;
+  largeText: boolean;
+  lightMode: boolean;
+  highContrast: boolean;
+}) {
+  const highContrastDark = highContrast && !lightMode;
+  const highContrastLight = highContrast && lightMode;
+  const artwork = (
+    <View
+      style={[
+        styles.journeyIntroArtwork,
+        stacked && styles.stackedJourneyIntroArtwork,
+      ]}
+    >
+      {illustration}
+    </View>
+  );
+  const copy = (
+    <View
+      style={[
+        styles.journeyIntroTextGroup,
+        stacked && styles.stackedJourneyIntroTextGroup,
+      ]}
+    >
+      <Text
+        accessibilityRole="header"
+        style={[
+          styles.journeyIntroCopy,
+          largeText && styles.largeJourneyIntroCopy,
+          lightMode && lightStyles.bodyText,
+          highContrastDark && styles.highContrastMutedText,
+          highContrastLight && lightStyles.highContrastMutedText,
+        ]}
+      >
+        {title}
+      </Text>
+    </View>
+  );
+
+  return (
+    <View
+      testID="journey-feature-hero"
+      style={[
+        styles.journeyIntroPanel,
+        stacked && styles.stackedJourneyIntroPanel,
+        lightMode && lightStyles.journeyIntroPanel,
+        highContrastDark && styles.highContrastControl,
+        highContrastLight && lightStyles.highContrastControl,
+      ]}
+    >
+      {stacked ? (
+        <>
+          {artwork}
+          {copy}
+        </>
+      ) : (
+        <>
+          {copy}
+          {artwork}
+        </>
+      )}
+    </View>
+  );
+}
+
+function JourneyFindBusIllustration() {
+  return (
+    <FeatureIllustration
+      testID="journey-hero-artwork"
+      source={illustrations.homeFindBus}
+      size="hero"
+      decorative
+    />
+  );
+}
+
+function StatusConceptVisual({
+  kind,
+  lightMode,
+  highContrast,
+  compact = false,
+}: {
+  kind: LoadingVisualKind;
+  lightMode: boolean;
+  highContrast: boolean;
+  compact?: boolean;
+}) {
+  const theme = resolveVisualTheme(lightMode, highContrast);
+  const pulseStyle = usePulseAnimation();
+  const iconColor = theme.colors.iconPrimary;
+  const accentColor = theme.colors.statusInformation;
+  const surfaceColor = lightMode
+    ? lightTheme.surfaceSecondary
+    : colors.surfaceSecondary;
+
+  if (kind === "location") {
+    return (
+      <View
+        style={[
+          styles.statusConceptVisual,
+          compact && styles.compactStatusConceptVisual,
+        ]}
+        accessibilityElementsHidden
+        importantForAccessibility="no"
+      >
+        <Animated.View
+          style={[
+            styles.locationPulseRing,
+            { borderColor: accentColor },
+            pulseStyle,
+          ]}
+        />
+        <MapPin
+          size={compact ? 38 : 46}
+          color={iconColor}
+          strokeWidth={3}
+          accessible={false}
+        />
+        <View style={styles.statusGroundRow}>
+          <View
+            style={[
+              styles.statusBusStopSign,
+              {
+                backgroundColor: accentColor,
+                borderColor: theme.colors.borderStrong,
+              },
+            ]}
+          />
+          <BusFront
+            size={compact ? 28 : 34}
+            color={iconColor}
+            strokeWidth={2.75}
+            accessible={false}
+          />
+        </View>
+      </View>
+    );
+  }
+
+  if (kind === "audio") {
+    return (
+      <View
+        style={[
+          styles.statusConceptVisual,
+          compact && styles.compactStatusConceptVisual,
+        ]}
+        accessibilityElementsHidden
+        importantForAccessibility="no"
+      >
+        <BusFront
+          size={compact ? 38 : 48}
+          color={iconColor}
+          strokeWidth={2.75}
+          accessible={false}
+        />
+        <Animated.View style={[styles.audioWaveGroup, pulseStyle]}>
+          <View style={[styles.audioWave, { borderColor: accentColor }]} />
+          <View style={[styles.audioWaveWide, { borderColor: accentColor }]} />
+        </Animated.View>
+        <Volume2
+          size={compact ? 24 : 30}
+          color={accentColor}
+          strokeWidth={3}
+          accessible={false}
+        />
+      </View>
+    );
+  }
+
+  if (kind === "journey") {
+    return (
+      <View
+        style={[
+          styles.statusConceptVisual,
+          compact && styles.compactStatusConceptVisual,
+        ]}
+        accessibilityElementsHidden
+        importantForAccessibility="no"
+      >
+        <View style={styles.journeyProgressVisual}>
+          <View
+            style={[
+              styles.journeyProgressDot,
+              { backgroundColor: accentColor },
+            ]}
+          />
+          <View
+            style={[styles.journeyProgressLine, { backgroundColor: iconColor }]}
+          />
+          <Animated.View style={pulseStyle}>
+            <BusFront
+              size={compact ? 30 : 36}
+              color={iconColor}
+              strokeWidth={2.75}
+              accessible={false}
+            />
+          </Animated.View>
+          <View
+            style={[styles.journeyProgressLine, { backgroundColor: iconColor }]}
+          />
+          <View
+            style={[
+              styles.journeyProgressDotOpen,
+              { borderColor: accentColor },
+            ]}
+          />
+        </View>
+      </View>
+    );
+  }
+
+  return (
+    <View
+      style={[
+        styles.statusConceptVisual,
+        compact && styles.compactStatusConceptVisual,
+      ]}
+      accessibilityElementsHidden
+      importantForAccessibility="no"
+    >
+      <View
+        style={[
+          styles.requestSignalDisc,
+          {
+            backgroundColor: surfaceColor,
+            borderColor: theme.colors.borderDefault,
+          },
+        ]}
+      >
+        {kind === "request" ? (
+          <Animated.View style={pulseStyle}>
+            <Accessibility
+              size={compact ? 28 : 34}
+              color={accentColor}
+              strokeWidth={3}
+              accessible={false}
+            />
+          </Animated.View>
+        ) : (
+          <Clock
+            size={compact ? 28 : 34}
+            color={accentColor}
+            strokeWidth={3}
+            accessible={false}
+          />
+        )}
+      </View>
+      <View style={styles.statusSignalMarks}>
+        <View
+          style={[styles.statusSignalMark, { backgroundColor: accentColor }]}
+        />
+        <View
+          style={[
+            styles.statusSignalMark,
+            styles.statusSignalMarkWide,
+            { backgroundColor: accentColor },
+          ]}
+        />
+      </View>
+      <BusFront
+        size={compact ? 32 : 40}
+        color={iconColor}
+        strokeWidth={2.75}
+        accessible={false}
+      />
+    </View>
+  );
+}
+
+function LargeTextConceptVisual({
+  lightMode,
+  highContrast,
+}: {
+  lightMode: boolean;
+  highContrast: boolean;
+}) {
+  const theme = resolveVisualTheme(lightMode, highContrast);
+  return (
+    <View
+      style={styles.featureConceptVisual}
+      accessibilityElementsHidden
+      importantForAccessibility="no"
+    >
+      <Text style={[styles.smallAaText, { color: theme.colors.textSecondary }]}>
+        Aa
+      </Text>
+      <ArrowRight
+        size={18}
+        color={theme.colors.iconSecondary}
+        strokeWidth={3}
+        accessible={false}
+      />
+      <Text style={[styles.largeAaText, { color: theme.colors.iconPrimary }]}>
+        Aa
+      </Text>
+    </View>
+  );
+}
+
+function HighContrastConceptVisual({
+  lightMode,
+  highContrast,
+}: {
+  lightMode: boolean;
+  highContrast: boolean;
+}) {
+  const theme = resolveVisualTheme(lightMode, highContrast);
+  return (
+    <View
+      style={[
+        styles.featureConceptVisual,
+        styles.contrastConceptVisual,
+        { borderColor: theme.colors.borderStrong },
+      ]}
+      accessibilityElementsHidden
+      importantForAccessibility="no"
+    >
+      <View style={[styles.contrastHalf, { backgroundColor: "#FFFFFF" }]}>
+        <BusFront
+          size={26}
+          color="#111111"
+          strokeWidth={3}
+          accessible={false}
+        />
+      </View>
+      <View style={[styles.contrastHalf, { backgroundColor: "#111111" }]}>
+        <BusFront
+          size={26}
+          color="#FFFFFF"
+          strokeWidth={3}
+          accessible={false}
+        />
+      </View>
+    </View>
+  );
+}
+
+function FocusedAssistScreen({
+  context,
+  controller,
+  contextError,
+  selectedServiceNo,
+  requestPhase,
+  appPreferences,
+  lightMode,
+  highContrast,
+  onChooseStop,
+  onOpenJourney,
+}: {
+  context: FocusedAssistContext;
+  controller: FocusedAssistController;
+  contextError: string | null;
+  selectedServiceNo: string | null;
+  requestPhase: AssistancePhase | null;
+  appPreferences: AccessibilityPreferences;
+  lightMode: boolean;
+  highContrast: boolean;
+  onChooseStop: () => void;
+  onOpenJourney: () => void;
+}) {
+  const largeText = isLargeText(appPreferences);
+  const extraLargeText = appPreferences.textSize === "EXTRA_LARGE";
+  const bodyStyle = [
+    styles.bodyText,
+    largeText && styles.largeBody,
+    extraLargeText && styles.extraLargeBody,
+    lightMode && lightStyles.bodyText,
+    highContrast && !lightMode && styles.highContrastMutedText,
+    highContrast && lightMode && lightStyles.highContrastMutedText,
+  ];
+  const headingStyle = [
+    styles.summaryValue,
+    largeText && styles.largeHeading,
+    extraLargeText && styles.extraLargeHeading,
+    lightMode && lightStyles.text,
+    highContrast && !lightMode && styles.highContrastText,
+    highContrast && lightMode && lightStyles.highContrastText,
+  ];
+  const panelStyle = [
+    styles.focusedAssistPanel,
+    lightMode && lightStyles.surface,
+    highContrast && !lightMode && styles.highContrastControl,
+    highContrast && lightMode && lightStyles.highContrastControl,
+  ];
+  const requestActive =
+    context.request.status === AssistanceRequestStatus.SENDING ||
+    context.request.status === AssistanceRequestStatus.ACKNOWLEDGED;
+
+  if (context.state === "LOCATING") {
+    return (
+      <View
+        style={panelStyle}
+        accessible
+        accessibilityLabel="Finding your bus stop. Checking nearby stops and buses."
+      >
+        <ActivityIndicator size="large" color="#0B6670" />
+        <Text style={headingStyle}>Finding your bus stop...</Text>
+        <Text style={bodyStyle}>Checking nearby stops and buses.</Text>
+      </View>
+    );
+  }
+
+  if (context.state === "NO_STOP") {
+    const uncertain = context.stopResolution.reason === "POOR_ACCURACY";
+    return (
+      <View style={panelStyle}>
+        <Text style={styles.focusedAssistEyebrow}>IMMEDIATE ASSISTANCE</Text>
+        <Text style={headingStyle} accessibilityRole="header">
+          {uncertain
+            ? "We're not sure which bus stop you're at."
+            : "We can't identify your bus stop yet."}
+        </Text>
+        {contextError ? (
+          <Text style={bodyStyle} accessibilityRole="alert">
+            {contextError}
+          </Text>
+        ) : null}
+        <PrimaryButton
+          label="Use my location"
+          icon={LocateFixed}
+          onPress={() => void controller.refreshContext()}
+          lightMode={lightMode}
+          highContrast={highContrast}
+        />
+        <SecondaryButton
+          label="Choose bus stop"
+          icon={MapPin}
+          onPress={onChooseStop}
+          lightMode={lightMode}
+          highContrast={highContrast}
+        />
+      </View>
+    );
+  }
+
+  if (context.state === "ONBOARD") {
+    const acknowledged =
+      requestPhase === "ALIGHTING" &&
+      context.request.status === AssistanceRequestStatus.ACKNOWLEDGED;
+    const requested =
+      requestPhase === "ALIGHTING" &&
+      context.request.status === AssistanceRequestStatus.SENDING;
+    return (
+      <View style={panelStyle}>
+        <Text style={styles.focusedAssistEyebrow}>
+          {context.destinationIsNext ? "YOUR STOP IS NEXT" : "ONBOARD ASSIST"}
+        </Text>
+        <Text
+          style={styles.focusedAssistOnboardService}
+          accessibilityRole="header"
+        >
+          ON SERVICE {selectedServiceNo ?? ""}
+        </Text>
+        <Text style={headingStyle}>
+          Destination: {context.destinationName ?? "Choose destination"}
+        </Text>
+        <View style={styles.focusedAssistHelpLabel} accessible>
+          <Accessibility size={28} color="#0B6670" />
+          <Text style={headingStyle}>Alighting assistance</Text>
+        </View>
+        {acknowledged || requested ? (
+          <FocusedAssistStatus
+            tone={acknowledged ? "success" : "pending"}
+            title={
+              acknowledged ? "REQUEST RECEIVED" : "ASSISTANCE REQUEST SENT"
+            }
+            message={
+              acknowledged
+                ? "The bus received your request. Please wait until the bus stops and assistance is ready."
+                : "Waiting for the bus to confirm."
+            }
+            lightMode={lightMode}
+            highContrast={highContrast}
+          />
+        ) : (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Request help to disembark from Service ${selectedServiceNo ?? "selected bus"}`}
+            accessibilityHint="Sends an alighting assistance request. It does not directly operate bus hardware."
+            onPress={() => void controller.requestAlightingAssistance()}
+            style={({ pressed }) => [
+              styles.focusedAssistAlightingAction,
+              pressed && styles.buttonPressed,
+              highContrast && styles.focusedAssistHighContrastAction,
+            ]}
+          >
+            <DoorOpen size={38} color="#FFFFFF" />
+            <Text style={styles.focusedAssistActionLabel}>
+              REQUEST HELP TO DISEMBARK
+            </Text>
+          </Pressable>
+        )}
+      </View>
+    );
+  }
+
+  if (context.state === "AT_STOP_NO_BUS") {
+    return (
+      <View style={panelStyle}>
+        <Text style={styles.focusedAssistEyebrow}>YOU'RE AT</Text>
+        <Text style={headingStyle}>{context.stop?.description}</Text>
+        <Text style={bodyStyle}>Stop {context.stop?.busStopCode}</Text>
+        <Text style={bodyStyle}>
+          {contextError ?? "No bus is currently detected at the stop."}
+        </Text>
+        <SecondaryButton
+          label="Check again"
+          icon={RefreshCw}
+          onPress={() => void controller.refreshContext()}
+          lightMode={lightMode}
+          highContrast={highContrast}
+        />
+      </View>
+    );
+  }
+
+  if (context.state === "MULTIPLE_BUSES_PRESENT") {
+    return (
+      <View style={panelStyle}>
+        <Text style={styles.focusedAssistEyebrow}>ASSIST</Text>
+        <Text style={headingStyle} accessibilityRole="header">
+          Which bus do you need?
+        </Text>
+        <Text style={bodyStyle}>
+          {context.stop?.description} · Stop {context.stop?.busStopCode}
+        </Text>
+        {context.buses.map((bus) => (
+          <Pressable
+            key={bus.id}
+            accessibilityRole="button"
+            accessibilityLabel={`Choose Service ${bus.serviceNo}${bus.destination ? ` towards ${bus.destination}` : ""}`}
+            onPress={() => controller.selectBus(bus.id)}
+            style={({ pressed }) => [
+              styles.focusedAssistBusChoice,
+              lightMode && lightStyles.surface,
+              pressed && styles.buttonPressed,
+              highContrast && styles.focusedAssistHighContrastChoice,
+            ]}
+          >
+            <Text style={styles.focusedAssistBusChoiceService}>
+              Service {bus.serviceNo}
+            </Text>
+            {bus.destination ? (
+              <Text style={bodyStyle}>Towards {bus.destination}</Text>
+            ) : null}
+            <Text style={bodyStyle}>
+              {bus.confidence === "HIGH"
+                ? "Detected at this stop"
+                : "Appears to be arriving"}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
+    );
+  }
+
+  const bus = context.selectedBus;
+  if (!bus) {
+    return (
+      <View style={panelStyle}>
+        <Text style={headingStyle}>Immediate assistance</Text>
+        <Text style={bodyStyle} accessibilityRole="alert">
+          {context.request.error ??
+            contextError ??
+            "We cannot confirm which bus needs assistance yet."}
+        </Text>
+        <SecondaryButton
+          label="Check again"
+          icon={RefreshCw}
+          onPress={() => void controller.refreshContext()}
+          lightMode={lightMode}
+          highContrast={highContrast}
+        />
+      </View>
+    );
+  }
+
+  const simplified = appPreferences.simplifiedJourney;
+  const oneTouch = context.state === "ONE_BUS_PRESENT";
+  const statusContent = focusedAssistStatusContent(context, simplified);
+  return (
+    <View style={panelStyle}>
+      <Text style={styles.focusedAssistEyebrow} accessibilityRole="header">
+        {simplified
+          ? oneTouch
+            ? "BUS HERE"
+            : "BUS COMING"
+          : oneTouch
+            ? "BUS AT YOUR STOP"
+            : bus.activeJourneyMatch
+              ? "YOUR BUS IS APPROACHING"
+              : "BUS APPEARS TO BE ARRIVING"}
+      </Text>
+      <Text style={styles.focusedAssistServicePrefix}>SERVICE</Text>
+      <Text
+        style={[
+          styles.focusedAssistServiceNumber,
+          extraLargeText && styles.focusedAssistServiceNumberExtraLarge,
+        ]}
+        accessibilityLabel={`Service ${bus.serviceNo}`}
+      >
+        {bus.serviceNo}
+      </Text>
+      {!oneTouch && bus.etaSeconds !== undefined ? (
+        <Text style={headingStyle}>{formatEta(bus.etaSeconds)}</Text>
+      ) : null}
+      {bus.wheelchairAccessible ? (
+        <View
+          style={styles.focusedAssistAccessibleRow}
+          accessible
+          accessibilityLabel="Wheelchair-accessible vehicle."
+        >
+          <Accessibility size={30} color="#0B6670" />
+          <Text style={headingStyle}>
+            {simplified ? "Wheelchair accessible" : "Wheelchair-accessible bus"}
+          </Text>
+        </View>
+      ) : null}
+
+      {statusContent ? (
+        <>
+          <FocusedAssistStatus
+            {...statusContent}
+            lightMode={lightMode}
+            highContrast={highContrast}
+          />
+          {context.state === "ERROR" ? (
+            <PrimaryButton
+              label="Try again"
+              icon={RefreshCw}
+              onPress={() => void controller.requestRamp()}
+              lightMode={lightMode}
+              highContrast={highContrast}
+            />
+          ) : null}
+        </>
+      ) : context.state === "RAMP_UNAVAILABLE" ? (
+        <>
+          <FocusedAssistStatus
+            tone="error"
+            title="RAMP UNAVAILABLE"
+            message="Ramp assistance is unavailable on this bus."
+            lightMode={lightMode}
+            highContrast={highContrast}
+          />
+          <SecondaryButton
+            label="Find another bus"
+            icon={BusFront}
+            onPress={onOpenJourney}
+            lightMode={lightMode}
+            highContrast={highContrast}
+          />
+        </>
+      ) : (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`${oneTouch ? "Request ramp" : bus.activeJourneyMatch ? "Request ramp in advance" : "Confirm bus and request ramp"} for Service ${bus.serviceNo}`}
+          accessibilityHint="Sends a boarding assistance request. Bus safety systems remain responsible for ramp operation."
+          disabled={requestActive || context.request.submitting}
+          onPress={() => void controller.requestRamp()}
+          style={({ pressed }) => [
+            styles.focusedAssistRampAction,
+            (largeText || appPreferences.largerControls) &&
+              styles.focusedAssistRampActionLarge,
+            pressed && styles.buttonPressed,
+            highContrast && styles.focusedAssistHighContrastAction,
+          ]}
+        >
+          <Accessibility size={48} color="#FFFFFF" />
+          <Text style={styles.focusedAssistActionLabel}>
+            {simplified
+              ? "RAMP"
+              : oneTouch
+                ? "REQUEST RAMP"
+                : bus.activeJourneyMatch
+                  ? "REQUEST IN ADVANCE"
+                  : "CONFIRM AND REQUEST RAMP"}
+          </Text>
+          <Text style={styles.focusedAssistActionService}>
+            SERVICE {bus.serviceNo}
+          </Text>
+        </Pressable>
+      )}
+
+      <View style={styles.focusedAssistStopSummary}>
+        <Text style={headingStyle}>{context.stop?.description}</Text>
+        <Text style={bodyStyle}>Stop {context.stop?.busStopCode}</Text>
+      </View>
+      {context.isDemoPresence ? (
+        <Text
+          testID="focused-assist-demo-diagnostic"
+          style={styles.focusedAssistDiagnostic}
+          accessibilityElementsHidden
+          importantForAccessibility="no"
+        >
+          Demo bus-presence provider
+        </Text>
+      ) : null}
+    </View>
+  );
+}
+
+function FocusedAssistStatus({
+  tone,
+  title,
+  message,
+  lightMode,
+  highContrast,
+}: {
+  tone: "pending" | "success" | "error";
+  title: string;
+  message: string;
+  lightMode: boolean;
+  highContrast: boolean;
+}) {
+  return (
+    <View
+      accessibilityRole="alert"
+      accessibilityLabel={`${title}. ${message}`}
+      style={[
+        styles.focusedAssistStatus,
+        tone === "pending" && styles.focusedAssistStatusPending,
+        tone === "success" && styles.focusedAssistStatusSuccess,
+        tone === "error" && styles.focusedAssistStatusError,
+        lightMode && styles.focusedAssistStatusLight,
+        highContrast && styles.focusedAssistStatusHighContrast,
+      ]}
+    >
+      {tone === "pending" ? (
+        <ActivityIndicator size="large" color="#7A4D00" />
+      ) : tone === "error" ? (
+        <CircleX size={38} color="#B42318" />
+      ) : (
+        <CheckCircle2 size={38} color="#08783F" />
+      )}
+      <Text style={styles.focusedAssistStatusTitle}>{title}</Text>
+      <Text style={styles.focusedAssistStatusMessage}>{message}</Text>
+    </View>
+  );
+}
+
+function focusedAssistStatusContent(
+  context: FocusedAssistContext,
+  simplified: boolean,
+): {
+  tone: "pending" | "success" | "error";
+  title: string;
+  message: string;
+} | null {
+  const extraTime = context.request.assistanceType === "EXTENDED_DWELL_TIME";
+  if (context.state === "REQUESTING") {
+    return {
+      tone: "pending",
+      title: "SENDING YOUR REQUEST",
+      message: extraTime
+        ? "Requesting more boarding time. Please wait."
+        : "Please wait. Do not press again.",
+    };
+  }
+  if (context.state === "REQUESTED") {
+    return {
+      tone: "pending",
+      title: extraTime
+        ? "MORE TIME REQUEST SENT"
+        : simplified
+          ? "REQUEST SENT"
+          : "RAMP REQUEST SENT",
+      message: extraTime
+        ? "Waiting for the bus to confirm."
+        : simplified
+          ? "Wait for the ramp."
+          : "Waiting for the bus to confirm. Do not press again.",
+    };
+  }
+  if (context.state === "ACKNOWLEDGED") {
+    return {
+      tone: "success",
+      title: "REQUEST RECEIVED",
+      message: extraTime
+        ? "The bus has received your request for more boarding time."
+        : simplified
+          ? "The bus received your request. Wait for the ramp."
+          : "The bus has received your ramp request. Please wait while boarding assistance is prepared.",
+    };
+  }
+  if (context.state === "PREPARING_RAMP") {
+    return {
+      tone: "pending",
+      title: "PREPARING THE RAMP",
+      message: "Please wait.",
+    };
+  }
+  if (context.state === "RAMP_READY") {
+    return {
+      tone: "success",
+      title: "RAMP READY",
+      message: "Please board when the path is clear.",
+    };
+  }
+  if (context.state === "ERROR") {
+    return {
+      tone: "error",
+      title: "REQUEST NOT COMPLETED",
+      message:
+        context.request.error ?? "We couldn't complete the ramp request.",
+    };
+  }
+  return null;
+}
+
+function AssistanceStatusVisual({
+  assistanceTypes,
+  journeyPhase,
+  lightMode,
+  highContrast,
+}: {
+  assistanceTypes: AssistanceType[];
+  journeyPhase: JourneyPhase;
+  lightMode: boolean;
+  highContrast: boolean;
+}) {
+  const kind =
+    journeyPhase === "DISEMBARKING" || journeyPhase === "ALIGHTING"
+      ? "journey"
+      : assistanceTypes.includes("BUS_AUDIO_IDENTIFICATION")
+        ? "audio"
+        : "request";
+
+  return (
+    <StatusConceptVisual
+      kind={kind}
+      compact
+      lightMode={lightMode}
+      highContrast={highContrast}
+    />
+  );
+}
+
+type WaitingRampStatus = "Not requested" | "Requested" | "Acknowledged";
+
+function waitingRampStatus(
+  assistanceTypes: AssistanceType[],
+  requestStatus: AssistanceRequestStatus | null,
+): WaitingRampStatus {
+  if (
+    !assistanceTypes.includes("WHEELCHAIR_RAMP") ||
+    requestStatus === null ||
+    requestStatus === "CANCELLED" ||
+    requestStatus === "FAILED"
+  ) {
+    return "Not requested";
+  }
+  return requestStatus === "ACKNOWLEDGED" ? "Acknowledged" : "Requested";
+}
+
+function isActiveAssistanceRequest(
+  requestStatus: AssistanceRequestStatus | null,
+) {
+  return requestStatus === "SENDING" || requestStatus === "ACKNOWLEDGED";
+}
+
+function WaitingForBusStatus({
+  serviceNo,
+  accessibleBus,
+  etaSeconds,
+  boardingStop,
+  destinationStop,
+  stopsAfterBoarding,
+  assistanceTypes,
+  requestStatus,
+  isLoading,
+  lightMode,
+  highContrast,
+  onRequestRamp,
+  onBoard,
+}: {
+  serviceNo: string;
+  accessibleBus: boolean;
+  etaSeconds: number | null;
+  boardingStop: NearbyBusStop | null;
+  destinationStop: RouteStop | null;
+  stopsAfterBoarding: number;
+  assistanceTypes: AssistanceType[];
+  requestStatus: AssistanceRequestStatus | null;
+  isLoading: boolean;
+  lightMode: boolean;
+  highContrast: boolean;
+  onRequestRamp: () => void;
+  onBoard: () => void;
+}) {
+  const runtimeAccessibility = useContext(AccessibilityRuntimeContext);
+  const scaledTextStyle = [
+    runtimeAccessibility.textSize !== "STANDARD" && styles.largeBody,
+    runtimeAccessibility.textSize === "EXTRA_LARGE" && styles.extraLargeBody,
+  ];
+  const theme = resolveVisualTheme(lightMode, highContrast);
+  const rampStatus = waitingRampStatus(assistanceTypes, requestStatus);
+  const audioIdentificationOn =
+    assistanceTypes.includes("BUS_AUDIO_IDENTIFICATION") &&
+    isActiveAssistanceRequest(requestStatus);
+  const rampStatusColor =
+    rampStatus === "Acknowledged"
+      ? theme.colors.statusSuccess
+      : rampStatus === "Requested"
+        ? theme.colors.statusInformation
+        : theme.colors.textSecondary;
+  const arrivalLabel =
+    etaSeconds === null
+      ? "Arriving information unavailable"
+      : etaSeconds <= 45
+        ? "Arriving now"
+        : `Arriving in about ${Math.ceil(etaSeconds / 60)} min`;
+  const stopCountLabel = `${stopsAfterBoarding} ${
+    stopsAfterBoarding === 1 ? "stop" : "stops"
+  } after boarding`;
+  const rampRequestUnavailable = !accessibleBus;
+  const rampRequestDisabled =
+    isLoading || rampStatus !== "Not requested" || rampRequestUnavailable;
+
+  return (
+    <View style={styles.waitingScreen} testID="waiting-for-bus-status">
+      <View
+        style={[
+          styles.waitingJourneyCard,
+          { backgroundColor: theme.colors.surfacePrimary },
+          { borderColor: theme.colors.borderStrong },
+        ]}
+      >
+        <View
+          accessible
+          accessibilityRole="summary"
+          accessibilityLabel={`Service ${serviceNo}. ${arrivalLabel}. ${
+            accessibleBus ? "Wheelchair accessible bus." : ""
+          }`}
+        >
+          <View style={styles.waitingServiceRow}>
+            <Text
+              style={[
+                styles.waitingServiceNumber,
+                ...scaledTextStyle,
+                { color: theme.colors.textPrimary },
+              ]}
+              accessible={false}
+            >
+              Service {serviceNo}
+            </Text>
+            {accessibleBus ? (
+              <Accessibility
+                size={iconSizes.standard}
+                color={theme.colors.statusSuccess}
+                strokeWidth={2.75}
+                accessibilityElementsHidden
+                importantForAccessibility="no"
+              />
+            ) : null}
+          </View>
+          <Text
+            style={[
+              styles.waitingArrivalText,
+              ...scaledTextStyle,
+              { color: theme.colors.textSecondary },
+            ]}
+            accessible={false}
+          >
+            {arrivalLabel}
+          </Text>
+        </View>
+
+        {boardingStop ? (
+          <View style={styles.waitingDetailGroup}>
+            <Text
+              style={[
+                styles.waitingDetailLabel,
+                { color: theme.colors.textMuted },
+              ]}
+            >
+              Boarding at:
+            </Text>
+            <Text
+              style={[
+                styles.waitingDetailValue,
+                ...scaledTextStyle,
+                { color: theme.colors.textPrimary },
+              ]}
+            >
+              {boardingStop.description}, Stop {boardingStop.busStopCode}
+            </Text>
+          </View>
+        ) : null}
+
+        {destinationStop ? (
+          <View style={styles.waitingDetailGroup}>
+            <Text
+              style={[
+                styles.waitingDetailLabel,
+                { color: theme.colors.textMuted },
+              ]}
+            >
+              Destination:
+            </Text>
+            <Text
+              style={[
+                styles.waitingDetailValue,
+                ...scaledTextStyle,
+                { color: theme.colors.textPrimary },
+              ]}
+            >
+              {destinationStop.description}
+            </Text>
+            <Text
+              style={[
+                styles.waitingStopCount,
+                { color: theme.colors.textSecondary },
+              ]}
+            >
+              {stopCountLabel}
+            </Text>
+          </View>
+        ) : null}
+      </View>
+
+      <View
+        style={[
+          styles.waitingDivider,
+          { backgroundColor: theme.colors.borderDefault },
+        ]}
+      />
+
+      <View style={styles.waitingSection}>
+        <Text
+          accessibilityRole="header"
+          style={[
+            styles.waitingSectionTitle,
+            ...scaledTextStyle,
+            { color: theme.colors.textPrimary },
+          ]}
+        >
+          Boarding assistance
+        </Text>
+        <View
+          style={[
+            styles.waitingAssistancePanel,
+            { backgroundColor: theme.colors.surfacePrimary },
+            { borderColor: theme.colors.borderDefault },
+          ]}
+        >
+          <View
+            style={styles.waitingAssistanceRow}
+            accessible
+            accessibilityLabel={`Ramp request: ${rampStatus}`}
+            accessibilityLiveRegion="polite"
+          >
+            <View style={styles.waitingAssistanceCopy}>
+              <Text
+                style={[
+                  styles.waitingAssistanceLabel,
+                  ...scaledTextStyle,
+                  { color: theme.colors.textPrimary },
+                ]}
+                accessible={false}
+              >
+                Ramp request
+              </Text>
+            </View>
+            <View
+              style={[
+                styles.waitingStatusBadge,
+                { backgroundColor: theme.colors.surfaceRaised },
+                { borderColor: rampStatusColor },
+              ]}
+            >
+              <Text
+                style={[styles.waitingStatusText, { color: rampStatusColor }]}
+                accessible={false}
+              >
+                {rampStatus}
+              </Text>
+            </View>
+          </View>
+
+          <View
+            style={[
+              styles.waitingAssistanceRow,
+              styles.waitingAssistanceRowBorder,
+              { borderTopColor: theme.colors.borderDefault },
+            ]}
+            accessible
+            accessibilityLabel={`Audio identification: ${
+              audioIdentificationOn ? "On" : "Off"
+            }`}
+            accessibilityLiveRegion="polite"
+          >
+            <View style={styles.waitingAssistanceCopy}>
+              <Text
+                style={[
+                  styles.waitingAssistanceLabel,
+                  ...scaledTextStyle,
+                  { color: theme.colors.textPrimary },
+                ]}
+                accessible={false}
+              >
+                Audio identification
+              </Text>
+            </View>
+            <View
+              style={[
+                styles.waitingStatusBadge,
+                { backgroundColor: theme.colors.surfaceRaised },
+                {
+                  borderColor: audioIdentificationOn
+                    ? theme.colors.statusSuccess
+                    : theme.colors.textSecondary,
+                },
+              ]}
+            >
+              <Text
+                style={[
+                  styles.waitingStatusText,
+                  {
+                    color: audioIdentificationOn
+                      ? theme.colors.statusSuccess
+                      : theme.colors.textSecondary,
+                  },
+                ]}
+                accessible={false}
+              >
+                {audioIdentificationOn ? "On" : "Off"}
+              </Text>
+            </View>
+          </View>
+        </View>
+        {rampRequestUnavailable ? (
+          <Text
+            style={[
+              styles.waitingAssistanceNote,
+              { color: theme.colors.textSecondary },
+            ]}
+          >
+            Ramp requests are unavailable for this bus.
+          </Text>
+        ) : null}
+      </View>
+
+      <View
+        style={[
+          styles.waitingDivider,
+          { backgroundColor: theme.colors.borderDefault },
+        ]}
+      />
+
+      <View style={styles.waitingSection}>
+        <Text
+          accessibilityRole="header"
+          style={[
+            styles.waitingSectionTitle,
+            ...scaledTextStyle,
+            { color: theme.colors.textPrimary },
+          ]}
+        >
+          What to do
+        </Text>
+        <View style={styles.waitingInstructionList}>
+          {[
+            "Wait near the boarding point",
+            "Listen for bus identification",
+            "Board when the bus arrives and assistance is ready",
+          ].map((instruction, index) => (
+            <View
+              key={instruction}
+              style={styles.waitingInstructionRow}
+              accessible
+              accessibilityLabel={`Step ${index + 1} of 3. ${instruction}`}
+            >
+              <View
+                style={[
+                  styles.waitingInstructionNumber,
+                  { backgroundColor: theme.colors.surfaceRaised },
+                  { borderColor: theme.colors.borderStrong },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.waitingInstructionNumberText,
+                    { color: theme.colors.textPrimary },
+                  ]}
+                  accessible={false}
+                >
+                  {index + 1}
+                </Text>
+              </View>
+              <Text
+                style={[
+                  styles.waitingInstructionText,
+                  ...scaledTextStyle,
+                  { color: theme.colors.textPrimary },
+                ]}
+                accessible={false}
+              >
+                {instruction}
+              </Text>
+            </View>
+          ))}
+        </View>
+      </View>
+
+      <View style={styles.waitingActions}>
+        <SecondaryButton
+          label="Request ramp"
+          icon={Accessibility}
+          accessibilityHint={
+            rampRequestUnavailable
+              ? "This bus is not marked as wheelchair accessible."
+              : rampStatus === "Not requested"
+                ? "Send a wheelchair ramp request to this bus."
+                : `Ramp request is ${rampStatus.toLowerCase()}.`
+          }
+          onPress={onRequestRamp}
+          disabled={rampRequestDisabled}
+          lightMode={lightMode}
+          highContrast={highContrast}
+        />
+        <PrimaryButton
+          label="I'm onboard"
+          icon={BusFront}
+          accessibilityHint="Enter onboard journey mode after you have safely boarded."
+          onPress={onBoard}
+          disabled={isLoading}
+          lightMode={lightMode}
+          highContrast={highContrast}
+        />
+      </View>
+    </View>
+  );
+}
+
 function BoardingTimeIcon({
   selected,
   highContrast,
@@ -5726,13 +10501,13 @@ function AppearanceSwitch({
   largeText,
   onSelectMode,
 }: {
-  themeMode: AppAccessibilityPreferences["themeMode"];
+  themeMode: AccessibilityPreferences["themeMode"];
   highContrast: boolean;
   largeText: boolean;
-  onSelectMode: (themeMode: AppAccessibilityPreferences["themeMode"]) => void;
+  onSelectMode: (themeMode: AccessibilityPreferences["themeMode"]) => void;
 }) {
   const lightMode = themeMode === "light";
-  const selectMode = (nextMode: AppAccessibilityPreferences["themeMode"]) => {
+  const selectMode = (nextMode: AccessibilityPreferences["themeMode"]) => {
     if (nextMode !== themeMode) {
       onSelectMode(nextMode);
       AccessibilityInfo.announceForAccessibility(`${nextMode} mode selected.`);
@@ -5792,7 +10567,7 @@ function AppearanceToggleOption({
   Icon,
   onPress,
 }: {
-  mode: AppAccessibilityPreferences["themeMode"];
+  mode: AccessibilityPreferences["themeMode"];
   selected: boolean;
   highContrast: boolean;
   lightMode: boolean;
@@ -5866,7 +10641,7 @@ function AssistancePreferenceToggles({
   setRequirements,
 }: {
   requirements: AccessibilityRequirements;
-  appPreferences: AppAccessibilityPreferences;
+  appPreferences: AccessibilityPreferences;
   resolvedThemeMode: "light" | "dark";
   setRequirements: React.Dispatch<
     React.SetStateAction<AccessibilityRequirements>
@@ -5875,15 +10650,16 @@ function AssistancePreferenceToggles({
   return (
     <>
       <ToggleRow
-        label="Mobility Assistance"
-        description="Request wheelchair ramp"
+        label="Wheelchair ramp"
+        description="Request a ramp before boarding."
         enabled={requirements.wheelchairRamp}
         highContrast={appPreferences.highContrast}
-        largeText={appPreferences.largeText}
+        largeText={isLargeText(appPreferences)}
         lightMode={resolvedThemeMode === "light"}
         variant="assistance"
         iconSource={optionIcons.wheelchairAssistance}
         iconSize={30}
+        illustrationSource={illustrations.wheelchairRamp}
         onPress={() =>
           setRequirements((current) => ({
             ...current,
@@ -5892,15 +10668,16 @@ function AssistancePreferenceToggles({
         }
       />
       <ToggleRow
-        label="More Boarding Time"
-        description="Request additional time to board"
+        label="Extra boarding time"
+        description="Ask the bus to wait a little longer while you board."
         enabled={requirements.extendedDwellTime}
         highContrast={appPreferences.highContrast}
-        largeText={appPreferences.largeText}
+        largeText={isLargeText(appPreferences)}
         lightMode={resolvedThemeMode === "light"}
         variant="assistance"
         iconSource={optionIcons.increasedDuration}
         iconSize={30}
+        illustrationSource={illustrations.extraBoardingTime}
         onPress={() =>
           setRequirements((current) => ({
             ...current,
@@ -5909,15 +10686,16 @@ function AssistancePreferenceToggles({
         }
       />
       <ToggleRow
-        label="Bus Identification Assistance"
-        description="Receive assistance identifying the correct approaching bus"
+        label="Hear your bus"
+        description="Have the approaching bus announce its service number."
         enabled={requirements.busAudioIdentification}
         highContrast={appPreferences.highContrast}
-        largeText={appPreferences.largeText}
+        largeText={isLargeText(appPreferences)}
         lightMode={resolvedThemeMode === "light"}
         variant="assistance"
         iconSource={optionIcons.busIdentification}
         iconSize={30}
+        illustrationSource={illustrations.audioIdentification}
         onPress={() =>
           setRequirements((current) => ({
             ...current,
@@ -5929,25 +10707,848 @@ function AssistancePreferenceToggles({
   );
 }
 
+function JourneyNextActionCard({
+  action,
+  simplified,
+  plainLanguage,
+  reduceMapDependence,
+  lightMode,
+  highContrast,
+}: {
+  action: JourneyNextAction;
+  simplified: boolean;
+  plainLanguage: boolean;
+  reduceMapDependence: boolean;
+  lightMode: boolean;
+  highContrast: boolean;
+}) {
+  const runtimeAccessibility = useContext(AccessibilityRuntimeContext);
+  const displayedTitle = plainLanguage
+    ? action.title
+    : `Next action: ${action.title}`;
+  const displayedDetail = plainLanguage
+    ? action.detail
+    : `Current journey guidance: ${action.detail}`;
+  return (
+    <View
+      accessible
+      accessibilityRole="summary"
+      accessibilityLabel={`Step ${action.step}. ${displayedTitle}. ${displayedDetail}`}
+      style={[
+        styles.nextActionCard,
+        simplified && styles.simplifiedNextActionCard,
+        lightMode && lightStyles.surface,
+        highContrast && !lightMode && styles.highContrastControl,
+        highContrast && lightMode && lightStyles.highContrastControl,
+      ]}
+    >
+      <Text
+        style={[styles.nextActionEyebrow, lightMode && lightStyles.mutedText]}
+      >
+        {simplified ? `STEP ${action.step}` : "NEXT"}
+      </Text>
+      <Text
+        style={[
+          styles.nextActionTitle,
+          simplified && styles.simplifiedNextActionTitle,
+          runtimeAccessibility.textSize !== "STANDARD" && styles.largeHeading,
+          runtimeAccessibility.textSize === "EXTRA_LARGE" &&
+            styles.extraLargeHeading,
+          lightMode && lightStyles.text,
+        ]}
+      >
+        {displayedTitle}
+      </Text>
+      <Text
+        style={[
+          styles.nextActionDetail,
+          runtimeAccessibility.textSize !== "STANDARD" && styles.largeBody,
+          runtimeAccessibility.textSize === "EXTRA_LARGE" &&
+            styles.extraLargeBody,
+          lightMode && lightStyles.bodyText,
+        ]}
+      >
+        {displayedDetail}
+      </Text>
+      {reduceMapDependence ? (
+        <Text
+          style={[styles.nextActionTextStatus, lightMode && lightStyles.text]}
+        >
+          Text journey status is on. You can follow this instruction without
+          reading the map.
+        </Text>
+      ) : null}
+    </View>
+  );
+}
+
+function AccessibilityPreferenceSummary({
+  preferences,
+  onEdit,
+}: {
+  preferences: AccessibilityPreferences;
+  onEdit: () => void;
+}) {
+  const { width } = useWindowDimensions();
+  const lightMode = preferences.themeMode === "light";
+  const stack = shouldStackAccessibilityChoices({
+    width,
+    textSize: preferences.textSize,
+  });
+  const highlights = [
+    preferences.wheelchairAssistance ? "Wheelchair assistance" : null,
+    preferences.wheelchairRouting ? "Wheelchair routing" : null,
+    preferences.textSize === "EXTRA_LARGE"
+      ? "Extra large text"
+      : preferences.textSize === "LARGE"
+        ? "Large text"
+        : null,
+    preferences.spokenGuidance ? "Spoken guidance" : null,
+    preferences.visualJourneyAlerts ? "Visual alerts" : null,
+    preferences.simplifiedJourney ? "Simplified journey" : null,
+  ].filter((value): value is string => Boolean(value));
+  return (
+    <View
+      style={[
+        styles.preferenceSummaryCard,
+        stack && styles.stackedPreferenceSummaryCard,
+        lightMode && lightStyles.surface,
+        preferences.highContrast &&
+          (lightMode
+            ? lightStyles.highContrastControl
+            : styles.highContrastControl),
+      ]}
+      accessibilityLabel={`Accessibility preferences. ${highlights.slice(0, 3).join(", ") || "Standard settings"}.`}
+    >
+      <View style={styles.preferenceCategoryCopy}>
+        <Text style={[styles.summaryLabel, lightMode && lightStyles.mutedText]}>
+          Accessibility preferences
+        </Text>
+        <Text style={[styles.summaryValue, lightMode && lightStyles.text]}>
+          {highlights.slice(0, 3).join(" · ") || "Standard settings"}
+        </Text>
+      </View>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Edit accessibility preferences"
+        onPress={onEdit}
+        style={[
+          styles.preferenceSummaryEdit,
+          preferences.largerControls && styles.largerTertiaryControl,
+        ]}
+      >
+        <Text
+          style={[
+            styles.preferenceSummaryEditText,
+            lightMode && lightStyles.text,
+          ]}
+        >
+          Edit
+        </Text>
+      </Pressable>
+    </View>
+  );
+}
+
+function AccessibilityPreferencesOverview({
+  preferences,
+  onApplyPreset,
+  onOpenSection,
+}: {
+  preferences: AccessibilityPreferences;
+  onApplyPreset: (preset: AccessibilityPreset) => void;
+  onOpenSection: (section: AccessibilityPreferenceSection) => void;
+}) {
+  const { width } = useWindowDimensions();
+  const lightMode = preferences.themeMode === "light";
+  const stackChoices = shouldStackAccessibilityChoices({
+    width,
+    textSize: preferences.textSize,
+  });
+  const presets: Array<{ label: string; value: AccessibilityPreset }> = [
+    { label: "Wheelchair", value: "WHEELCHAIR" },
+    { label: "Low vision", value: "LOW_VISION" },
+    { label: "Hearing assistance", value: "HEARING_ASSISTANCE" },
+    { label: "Simplified journey", value: "SIMPLIFIED_JOURNEY" },
+  ];
+  const sections: Array<{
+    title: string;
+    description: string;
+    value: AccessibilityPreferenceSection;
+  }> = [
+    {
+      title: "Mobility",
+      description:
+        "Wheelchair-aware routes, boarding time and accessible stops",
+      value: "MOBILITY",
+    },
+    {
+      title: "Vision",
+      description: "Text size, contrast, spoken guidance and map alternatives",
+      value: "VISION",
+    },
+    {
+      title: "Hearing",
+      description: "Visual, vibration and written announcement equivalents",
+      value: "HEARING",
+    },
+    {
+      title: "Journey support",
+      description: "Next actions, simple language, confirmations and warnings",
+      value: "JOURNEY_SUPPORT",
+    },
+    {
+      title: "Interaction",
+      description: "Larger controls, message duration and reduced motion",
+      value: "INTERACTION",
+    },
+  ];
+
+  return (
+    <View style={styles.preferenceOverview}>
+      <Text style={[styles.summaryValue, lightMode && lightStyles.text]}>
+        Quick setup
+      </Text>
+      <Text style={[styles.summaryLabel, lightMode && lightStyles.mutedText]}>
+        Presets turn on a useful group of settings. You can still change every
+        setting below.
+      </Text>
+      <View
+        style={[
+          styles.preferencePresetGrid,
+          stackChoices && styles.stackedPreferenceChoiceRow,
+        ]}
+      >
+        {presets.map((preset) => (
+          <Pressable
+            key={preset.value}
+            accessibilityRole="button"
+            accessibilityLabel={`Apply ${preset.label} preset`}
+            onPress={() => onApplyPreset(preset.value)}
+            style={[
+              styles.preferencePresetButton,
+              lightMode && lightStyles.secondaryButton,
+              preferences.highContrast &&
+                (lightMode
+                  ? lightStyles.highContrastControl
+                  : styles.highContrastControl),
+              preferences.largerControls && styles.largerControl,
+            ]}
+          >
+            <Text
+              style={[
+                styles.preferencePresetText,
+                lightMode && lightStyles.text,
+              ]}
+            >
+              {preset.label}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
+      <View style={styles.preferenceCategoryList}>
+        {sections.map((section) => (
+          <Pressable
+            key={section.value}
+            accessibilityRole="button"
+            accessibilityLabel={`${section.title} accessibility settings`}
+            accessibilityHint={section.description}
+            onPress={() => onOpenSection(section.value)}
+            style={[
+              styles.preferenceCategoryCard,
+              lightMode && lightStyles.surface,
+              preferences.highContrast &&
+                (lightMode
+                  ? lightStyles.highContrastControl
+                  : styles.highContrastControl),
+              preferences.largerControls && styles.largerControl,
+            ]}
+          >
+            <View style={styles.preferenceCategoryCopy}>
+              <Text
+                style={[
+                  styles.preferenceCategoryTitle,
+                  isLargeText(preferences) && styles.largeBody,
+                  preferences.textSize === "EXTRA_LARGE" &&
+                    styles.extraLargeBody,
+                  lightMode && lightStyles.text,
+                ]}
+              >
+                {section.title}
+              </Text>
+              <Text
+                style={[
+                  styles.preferenceCategoryDescription,
+                  lightMode && lightStyles.mutedText,
+                ]}
+              >
+                {section.description}
+              </Text>
+            </View>
+            <ChevronDown
+              accessibilityElementsHidden
+              importantForAccessibility="no"
+              color={lightMode ? colors.text : "#ffffff"}
+              size={22}
+              style={styles.preferenceCategoryChevron}
+            />
+          </Pressable>
+        ))}
+      </View>
+    </View>
+  );
+}
+
+type BooleanAccessibilityPreference = Exclude<
+  keyof AccessibilityPreferences,
+  "textSize" | "vibrationAlerts" | "themeMode"
+>;
+
+function AccessibilityCategorySettings({
+  section,
+  preferences,
+  hapticsSupported,
+  setPreferences,
+}: {
+  section: AccessibilityPreferenceSection;
+  preferences: AccessibilityPreferences;
+  hapticsSupported: boolean;
+  setPreferences: React.Dispatch<
+    React.SetStateAction<AccessibilityPreferences>
+  >;
+}) {
+  const lightMode = preferences.themeMode === "light";
+  const toggle = (key: BooleanAccessibilityPreference) =>
+    setPreferences((current) => ({ ...current, [key]: !current[key] }));
+  const SectionIcon =
+    section === "MOBILITY"
+      ? Accessibility
+      : section === "VISION"
+        ? Volume2
+        : section === "HEARING"
+          ? Bell
+          : section === "JOURNEY_SUPPORT"
+            ? Route
+            : Settings;
+  const row = (
+    key: BooleanAccessibilityPreference,
+    label: string,
+    description: string,
+    disabled = false,
+  ) => (
+    <ToggleRow
+      key={key}
+      label={label}
+      description={description}
+      enabled={preferences[key]}
+      disabled={disabled}
+      highContrast={preferences.highContrast}
+      largeText={isLargeText(preferences)}
+      lightMode={lightMode}
+      variant="phone"
+      customIcon={
+        <SectionIcon
+          size={28}
+          accessibilityElementsHidden
+          importantForAccessibility="no"
+        />
+      }
+      onPress={() => toggle(key)}
+    />
+  );
+
+  return (
+    <View style={styles.preferenceCategorySettings}>
+      <Text style={[styles.heading, lightMode && lightStyles.text]}>
+        {section === "JOURNEY_SUPPORT"
+          ? "Journey support"
+          : section.charAt(0) + section.slice(1).toLowerCase()}
+      </Text>
+      {section === "MOBILITY" && (
+        <>
+          <ToggleRow
+            label="Wheelchair assistance"
+            description="Request ramp support when boarding"
+            enabled={preferences.wheelchairAssistance}
+            highContrast={preferences.highContrast}
+            largeText={isLargeText(preferences)}
+            lightMode={lightMode}
+            variant="phone"
+            customIcon={
+              <Accessibility
+                size={28}
+                accessibilityElementsHidden
+                importantForAccessibility="no"
+              />
+            }
+            onPress={() =>
+              setPreferences((current) => ({
+                ...current,
+                wheelchairAssistance: !current.wheelchairAssistance,
+                wheelchairRouting: current.wheelchairAssistance
+                  ? current.wheelchairRouting
+                  : true,
+              }))
+            }
+          />
+          {row(
+            "wheelchairRouting",
+            "Wheelchair-friendly routing",
+            "Use step-free walking routes and keep avoid-steps enabled",
+          )}
+          <View
+            style={styles.textPreviewPanel}
+            accessible
+            accessibilityLabel="Avoid steps, always on"
+          >
+            <Text style={[styles.summaryValue, lightMode && lightStyles.text]}>
+              Avoid steps · Always on
+            </Text>
+          </View>
+          {row(
+            "avoidSteepSlopes",
+            "Avoid steep slopes",
+            preferences.wheelchairRouting
+              ? "Avoid mapped inclines above six percent"
+              : "Turn on wheelchair-friendly routing to use this setting",
+            !preferences.wheelchairRouting,
+          )}
+          {row(
+            "preferSmoothSurfaces",
+            "Prefer smooth surfaces",
+            preferences.wheelchairRouting
+              ? "Prefer mapped paved and smooth paths"
+              : "Turn on wheelchair-friendly routing to use this setting",
+            !preferences.wheelchairRouting,
+          )}
+          {row(
+            "extraBoardingTime",
+            "Extra boarding time",
+            "Ask the bus to wait longer while you board",
+          )}
+          {row(
+            "alightingAssistance",
+            "Alighting assistance",
+            "Show help and prompts before you leave the bus",
+          )}
+          {row(
+            "preferAccessibleStops",
+            "Prefer accessible stops",
+            "Rank accessible nearby stops more highly",
+          )}
+        </>
+      )}
+      {section === "VISION" && (
+        <>
+          <TextSizeSelector
+            preferences={preferences}
+            setPreferences={setPreferences}
+          />
+          {row(
+            "highContrast",
+            "High contrast",
+            "Use stronger contrast for alerts and controls",
+          )}
+          {row(
+            "spokenGuidance",
+            "Spoken guidance",
+            "Speak walking, bus and destination updates",
+          )}
+          {row(
+            "audioBusIdentification",
+            "Audio bus identification",
+            "Announce the approaching bus service",
+          )}
+          {row(
+            "reduceMapDependence",
+            "Reduce map dependence",
+            "Keep route status and next actions available as text",
+          )}
+          {row(
+            "screenReaderOptimised",
+            "Screen-reader optimised",
+            "Use descriptive labels and announcements",
+          )}
+          {row(
+            "repeatAudio",
+            "Repeat audio",
+            "Keep repeat controls available when speech is on",
+            !preferences.spokenGuidance,
+          )}
+        </>
+      )}
+      {section === "HEARING" && (
+        <>
+          {row(
+            "visualJourneyAlerts",
+            "Visual journey alerts",
+            "Show approaching bus and destination warnings on screen",
+          )}
+          <VibrationAlertSelector
+            supported={hapticsSupported}
+            preferences={preferences}
+            setPreferences={setPreferences}
+          />
+          {row(
+            "textAnnouncementEquivalent",
+            "Text announcement equivalents",
+            "Show written text for spoken guidance",
+          )}
+        </>
+      )}
+      {section === "JOURNEY_SUPPORT" && (
+        <>
+          {row(
+            "simplifiedJourney",
+            "Simplified journey",
+            "Keep one prominent next action visible",
+          )}
+          {row(
+            "alwaysShowNextAction",
+            "Always show next action",
+            "Keep the current journey instruction near the top",
+          )}
+          {row(
+            "plainLanguage",
+            "Plain language",
+            "Use short direct journey instructions",
+          )}
+          {row(
+            "confirmImportantActions",
+            "Confirm important actions",
+            "Confirm cancellation, destination changes and journey ending",
+          )}
+          <PreferenceSectionHeading
+            label="Journey warnings"
+            lightMode={lightMode}
+          />
+          {row(
+            "warnBusApproaching",
+            "Bus approaching",
+            "Warn when your selected bus is close",
+          )}
+          {row(
+            "warnBusArrives",
+            "Bus arrives",
+            "Warn when your selected bus reaches the stop",
+          )}
+          {row(
+            "warnTwoStopsBeforeDestination",
+            "Two stops before destination",
+            "Warn two stops before you need to alight",
+          )}
+          {row(
+            "warnDestinationNext",
+            "Destination is next",
+            "Warn when the next stop is your destination",
+          )}
+        </>
+      )}
+      {section === "INTERACTION" && (
+        <>
+          {row(
+            "largerControls",
+            "Larger controls",
+            "Increase shared button and preference touch targets",
+          )}
+          {row(
+            "longerMessageDuration",
+            "Longer message duration",
+            "Keep temporary status messages visible longer",
+          )}
+          {row(
+            "reducedMotion",
+            "Reduced motion",
+            "Reduce map and interface animation",
+          )}
+        </>
+      )}
+    </View>
+  );
+}
+
+function PreferenceSectionHeading({
+  label,
+  lightMode,
+}: {
+  label: string;
+  lightMode: boolean;
+}) {
+  return (
+    <Text
+      style={[styles.preferenceSectionHeading, lightMode && lightStyles.text]}
+    >
+      {label}
+    </Text>
+  );
+}
+
+function TextSizeSelector({
+  preferences,
+  setPreferences,
+}: {
+  preferences: AccessibilityPreferences;
+  setPreferences: React.Dispatch<
+    React.SetStateAction<AccessibilityPreferences>
+  >;
+}) {
+  const { width } = useWindowDimensions();
+  const lightMode = preferences.themeMode === "light";
+  const sizes: Array<{ label: string; value: AccessibilityTextSize }> = [
+    { label: "Standard", value: "STANDARD" },
+    { label: "Large", value: "LARGE" },
+    { label: "Extra large", value: "EXTRA_LARGE" },
+  ];
+  return (
+    <View
+      style={[
+        styles.preferenceChoiceSection,
+        lightMode && lightStyles.surface,
+        preferences.highContrast &&
+          (lightMode
+            ? lightStyles.highContrastControl
+            : styles.highContrastControl),
+      ]}
+    >
+      <PreferenceSectionHeading label="Text size" lightMode={lightMode} />
+      <View
+        style={[
+          styles.preferenceChoiceRow,
+          shouldStackAccessibilityChoices({
+            width,
+            textSize: preferences.textSize,
+          }) && styles.stackedPreferenceChoiceRow,
+        ]}
+      >
+        {sizes.map((size) => {
+          const selected = preferences.textSize === size.value;
+          return (
+            <Pressable
+              key={size.value}
+              accessibilityRole="radio"
+              accessibilityState={{ checked: selected }}
+              accessibilityLabel={`${size.label} text`}
+              onPress={() =>
+                setPreferences((current) => ({
+                  ...current,
+                  textSize: size.value,
+                }))
+              }
+              style={[
+                styles.preferenceChoiceButton,
+                lightMode && lightStyles.secondaryButton,
+                selected && styles.selectedPreferenceChoice,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.preferenceChoiceText,
+                  lightMode && lightStyles.text,
+                  selected && styles.selectedPreferenceChoiceText,
+                ]}
+              >
+                {size.label}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+      <Text
+        accessibilityLabel="Text size preview. Bus 95 arriving in 3 minutes."
+        style={[
+          styles.summaryValue,
+          preferences.textSize !== "STANDARD" && styles.largeBody,
+          preferences.textSize === "EXTRA_LARGE" && styles.extraLargeBody,
+          lightMode && lightStyles.text,
+        ]}
+      >
+        Bus 95 arriving in 3 minutes
+      </Text>
+    </View>
+  );
+}
+
+function VibrationAlertSelector({
+  supported,
+  preferences,
+  setPreferences,
+}: {
+  supported: boolean;
+  preferences: AccessibilityPreferences;
+  setPreferences: React.Dispatch<
+    React.SetStateAction<AccessibilityPreferences>
+  >;
+}) {
+  const { width } = useWindowDimensions();
+  const lightMode = preferences.themeMode === "light";
+  const modes: Array<{ label: string; value: VibrationAlertMode }> = [
+    { label: "Off", value: "OFF" },
+    { label: "Important", value: "IMPORTANT" },
+    { label: "All guidance", value: "ALL" },
+  ];
+  return (
+    <View
+      style={[
+        styles.preferenceChoiceSection,
+        lightMode && lightStyles.surface,
+        preferences.highContrast &&
+          (lightMode
+            ? lightStyles.highContrastControl
+            : styles.highContrastControl),
+      ]}
+    >
+      <PreferenceSectionHeading
+        label="Vibration alerts"
+        lightMode={lightMode}
+      />
+      <Text style={[styles.summaryLabel, lightMode && lightStyles.mutedText]}>
+        {supported ? "Available on this device" : "Unavailable on this device"}
+      </Text>
+      <View
+        style={[
+          styles.preferenceChoiceRow,
+          shouldStackAccessibilityChoices({
+            width,
+            textSize: preferences.textSize,
+          }) && styles.stackedPreferenceChoiceRow,
+        ]}
+      >
+        {modes.map((mode) => {
+          const selected = preferences.vibrationAlerts === mode.value;
+          return (
+            <Pressable
+              key={mode.value}
+              accessibilityRole="radio"
+              accessibilityState={{ checked: selected, disabled: !supported }}
+              accessibilityLabel={`${mode.label} vibration alerts`}
+              disabled={!supported}
+              onPress={() =>
+                setPreferences((current) => ({
+                  ...current,
+                  vibrationAlerts: mode.value,
+                }))
+              }
+              style={[
+                styles.preferenceChoiceButton,
+                lightMode && lightStyles.secondaryButton,
+                selected && styles.selectedPreferenceChoice,
+                !supported && styles.disabledButton,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.preferenceChoiceText,
+                  lightMode && lightStyles.text,
+                  selected && styles.selectedPreferenceChoiceText,
+                ]}
+              >
+                {mode.label}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+    </View>
+  );
+}
+
 function AppPreferenceToggles({
   appPreferences,
   resolvedThemeMode,
   setAppPreferences,
 }: {
-  appPreferences: AppAccessibilityPreferences;
+  appPreferences: AccessibilityPreferences;
   resolvedThemeMode: "light" | "dark";
   setAppPreferences: React.Dispatch<
-    React.SetStateAction<AppAccessibilityPreferences>
+    React.SetStateAction<AccessibilityPreferences>
   >;
 }) {
   return (
     <>
+      <Text
+        style={[
+          styles.summaryValue,
+          resolvedThemeMode === "light" && lightStyles.text,
+        ]}
+      >
+        Mobility
+      </Text>
+      <ToggleRow
+        label="Wheelchair routing"
+        description="Default Directions to a dedicated wheelchair-aware route"
+        enabled={appPreferences.wheelchairRouting}
+        highContrast={appPreferences.highContrast}
+        largeText={isLargeText(appPreferences)}
+        lightMode={resolvedThemeMode === "light"}
+        variant="phone"
+        customIcon={<Accessibility size={28} />}
+        onPress={() =>
+          setAppPreferences((current) => ({
+            ...current,
+            wheelchairRouting: !current.wheelchairRouting,
+          }))
+        }
+      />
+      <View
+        style={styles.textPreviewPanel}
+        accessible
+        accessibilityLabel="Avoid steps, always on"
+      >
+        <Text
+          style={[
+            styles.summaryValue,
+            resolvedThemeMode === "light" && lightStyles.text,
+          ]}
+        >
+          Avoid steps · Always on
+        </Text>
+      </View>
+      <ToggleRow
+        label="Avoid steep slopes"
+        description="Ask the wheelchair router to avoid inclines above six percent"
+        enabled={appPreferences.avoidSteepSlopes}
+        highContrast={appPreferences.highContrast}
+        largeText={isLargeText(appPreferences)}
+        lightMode={resolvedThemeMode === "light"}
+        variant="phone"
+        customIcon={<Route size={28} />}
+        onPress={() =>
+          setAppPreferences((current) => ({
+            ...current,
+            avoidSteepSlopes: !current.avoidSteepSlopes,
+          }))
+        }
+      />
+      <ToggleRow
+        label="Prefer smooth surfaces"
+        description="Prefer mapped paved and smooth paths when available"
+        enabled={appPreferences.preferSmoothSurfaces}
+        highContrast={appPreferences.highContrast}
+        largeText={isLargeText(appPreferences)}
+        lightMode={resolvedThemeMode === "light"}
+        variant="phone"
+        customIcon={<Navigation size={28} />}
+        onPress={() =>
+          setAppPreferences((current) => ({
+            ...current,
+            preferSmoothSurfaces: !current.preferSmoothSurfaces,
+          }))
+        }
+      />
+      <Text
+        style={[
+          styles.summaryValue,
+          resolvedThemeMode === "light" && lightStyles.text,
+        ]}
+      >
+        Guidance
+      </Text>
       <ToggleRow
         label="Screen-reader optimised"
         description="Use longer labels and spoken announcements"
         enabled={appPreferences.screenReaderOptimised}
         highContrast={appPreferences.highContrast}
-        largeText={appPreferences.largeText}
+        largeText={isLargeText(appPreferences)}
         lightMode={resolvedThemeMode === "light"}
         variant="phone"
         iconSource={optionIcons.screenReader}
@@ -5960,11 +11561,28 @@ function AppPreferenceToggles({
         }
       />
       <ToggleRow
+        label="Spoken guidance"
+        description="Speak important walking, bus, and destination updates"
+        enabled={appPreferences.spokenGuidance}
+        highContrast={appPreferences.highContrast}
+        largeText={isLargeText(appPreferences)}
+        lightMode={resolvedThemeMode === "light"}
+        variant="phone"
+        iconSource={optionIcons.repeatAnnouncements}
+        iconSize={28}
+        onPress={() =>
+          setAppPreferences((current) => ({
+            ...current,
+            spokenGuidance: !current.spokenGuidance,
+          }))
+        }
+      />
+      <ToggleRow
         label="Repeat important announcements"
         description="Keep repeat buttons available for bus and journey guidance"
         enabled={appPreferences.repeatAudio}
         highContrast={appPreferences.highContrast}
-        largeText={appPreferences.largeText}
+        largeText={isLargeText(appPreferences)}
         lightMode={resolvedThemeMode === "light"}
         variant="phone"
         iconSource={optionIcons.repeatAnnouncements}
@@ -5979,9 +11597,9 @@ function AppPreferenceToggles({
       <ToggleRow
         label="Haptic alerts"
         description="Vibrate for acknowledgement, approach, and arrival"
-        enabled={appPreferences.hapticAlerts}
+        enabled={appPreferences.vibrationAlerts !== "OFF"}
         highContrast={appPreferences.highContrast}
-        largeText={appPreferences.largeText}
+        largeText={isLargeText(appPreferences)}
         lightMode={resolvedThemeMode === "light"}
         variant="phone"
         iconSource={optionIcons.hapticAlerts}
@@ -5989,37 +11607,91 @@ function AppPreferenceToggles({
         onPress={() =>
           setAppPreferences((current) => ({
             ...current,
-            hapticAlerts: !current.hapticAlerts,
+            vibrationAlerts:
+              current.vibrationAlerts === "OFF" ? "IMPORTANT" : "OFF",
           }))
         }
       />
+      <Text
+        style={[
+          styles.summaryValue,
+          resolvedThemeMode === "light" && lightStyles.text,
+        ]}
+      >
+        Display
+      </Text>
       <ToggleRow
         label="Large text"
         description="Increase important text size on this phone"
-        enabled={appPreferences.largeText}
+        enabled={isLargeText(appPreferences)}
         highContrast={appPreferences.highContrast}
-        largeText={appPreferences.largeText}
+        largeText={isLargeText(appPreferences)}
         lightMode={resolvedThemeMode === "light"}
         variant="phone"
         iconSource={optionIcons.largeText}
         iconSize={29}
+        illustration={
+          <LargeTextConceptVisual
+            lightMode={resolvedThemeMode === "light"}
+            highContrast={appPreferences.highContrast}
+          />
+        }
         onPress={() =>
           setAppPreferences((current) => ({
             ...current,
-            largeText: !current.largeText,
+            textSize: current.textSize === "STANDARD" ? "LARGE" : "STANDARD",
           }))
         }
       />
+      <View
+        style={[
+          styles.textPreviewPanel,
+          resolvedThemeMode === "light" && lightStyles.surface,
+          appPreferences.highContrast &&
+            resolvedThemeMode !== "light" &&
+            styles.highContrastControl,
+          appPreferences.highContrast &&
+            resolvedThemeMode === "light" &&
+            lightStyles.highContrastControl,
+        ]}
+        accessible
+        accessibilityLabel="Large text preview. Bus 95 arriving in 3 minutes."
+      >
+        <Text
+          style={[
+            styles.summaryLabel,
+            resolvedThemeMode === "light" && lightStyles.mutedText,
+          ]}
+        >
+          Text preview
+        </Text>
+        <Text
+          style={[
+            styles.summaryValue,
+            isLargeText(appPreferences) && styles.largeBody,
+            appPreferences.textSize === "EXTRA_LARGE" && styles.extraLargeBody,
+            resolvedThemeMode === "light" && lightStyles.text,
+          ]}
+        >
+          Bus 95 arriving in 3 minutes
+        </Text>
+      </View>
       <ToggleRow
         label="High contrast"
         description="Use stronger contrast for visual alerts and controls"
         enabled={appPreferences.highContrast}
         highContrast={appPreferences.highContrast}
-        largeText={appPreferences.largeText}
+        largeText={isLargeText(appPreferences)}
         lightMode={resolvedThemeMode === "light"}
         variant="phone"
         iconSource={optionIcons.highContrast}
         iconSize={28}
+        illustration={
+          <HighContrastConceptVisual
+            lightMode={resolvedThemeMode === "light"}
+            highContrast={appPreferences.highContrast}
+          />
+        }
         onPress={() =>
           setAppPreferences((current) => ({
             ...current,
@@ -6090,6 +11762,7 @@ function SectionHeader({
   highContrast?: boolean;
   lightMode?: boolean;
 }) {
+  const runtimeAccessibility = useContext(AccessibilityRuntimeContext);
   return (
     <View style={styles.sectionHeader}>
       <Text
@@ -6103,8 +11776,12 @@ function SectionHeader({
         {eyebrow}
       </Text>
       <Text
+        accessibilityRole="header"
         style={[
           styles.heading,
+          runtimeAccessibility.textSize !== "STANDARD" && styles.largeHeading,
+          runtimeAccessibility.textSize === "EXTRA_LARGE" &&
+            styles.extraLargeHeading,
           lightMode && lightStyles.text,
           highContrast && !lightMode && styles.highContrastText,
           highContrast && lightMode && lightStyles.highContrastText,
@@ -6128,12 +11805,12 @@ function ProfileHeaderWithAppearance({
 }: {
   eyebrow: string;
   title: string;
-  themeMode: AppAccessibilityPreferences["themeMode"];
+  themeMode: AccessibilityPreferences["themeMode"];
   highContrast: boolean;
   lightMode: boolean;
   largeText: boolean;
   compactLayout: boolean;
-  onSelectMode: (themeMode: AppAccessibilityPreferences["themeMode"]) => void;
+  onSelectMode: (themeMode: AccessibilityPreferences["themeMode"]) => void;
 }) {
   return (
     <View
@@ -6213,7 +11890,7 @@ function BrandHeader({
 
 function TabBar({
   activeTab,
-  hasSelectedBus,
+  journeyStateDescription,
   hasRequest,
   lightMode,
   highContrast,
@@ -6221,13 +11898,14 @@ function TabBar({
   onSelect,
 }: {
   activeTab: AppTab;
-  hasSelectedBus: boolean;
+  journeyStateDescription: string;
   hasRequest: boolean;
   lightMode: boolean;
   highContrast: boolean;
   compact: boolean;
   onSelect: (tab: AppTab) => void;
 }) {
+  const runtimeAccessibility = useContext(AccessibilityRuntimeContext);
   const theme = resolveVisualTheme(lightMode, highContrast);
   return (
     <View
@@ -6238,27 +11916,18 @@ function TabBar({
           borderColor: theme.colors.map.navigationDivider,
         },
         compact && styles.compactTabBar,
+        runtimeAccessibility.largerControls && styles.largerTabBar,
         lightMode && lightStyles.tabBar,
         highContrast && !lightMode && styles.highContrastControl,
         highContrast && lightMode && lightStyles.highContrastControl,
       ]}
     >
       <TabButton
-        label="Home"
-        icon="home"
-        index={1}
-        selected={activeTab === "HOME"}
-        lightMode={lightMode}
-        highContrast={highContrast}
-        compact={compact}
-        onPress={() => onSelect("HOME")}
-      />
-      <TabButton
         label="Journey"
         icon="journey"
-        index={2}
+        index={1}
         selected={activeTab === "JOURNEY"}
-        stateDescription={hasSelectedBus ? "active journey" : "map ready"}
+        stateDescription={journeyStateDescription}
         lightMode={lightMode}
         highContrast={highContrast}
         compact={compact}
@@ -6267,7 +11936,7 @@ function TabBar({
       <TabButton
         label="Assist"
         icon="assist"
-        index={3}
+        index={2}
         selected={activeTab === "ASSISTANCE"}
         stateDescription={
           hasRequest ? "assistance request active" : "preferences available"
@@ -6280,7 +11949,7 @@ function TabBar({
       <TabButton
         label="Profile"
         icon="profile"
-        index={4}
+        index={3}
         selected={activeTab === "PROFILE"}
         lightMode={lightMode}
         highContrast={highContrast}
@@ -6294,19 +11963,33 @@ function TabBar({
 const BusStopCard = memo(function BusStopCard({
   stop,
   selected = false,
+  recommended: recommendedOverride,
+  accessibleRouteStatus,
   onPress,
   lightMode = false,
   highContrast = false,
 }: {
   stop: NearbyBusStop;
   selected?: boolean;
+  recommended?: boolean;
+  accessibleRouteStatus?: AccessibleStopRouteStatus;
   onPress?: () => void;
   lightMode?: boolean;
   highContrast?: boolean;
 }) {
   const walkingMinutes = Math.max(1, Math.round(stop.distanceMeters / 70));
   const services = busServicesForStop(stop);
-  const recommended = stop.distanceMeters <= 80;
+  const recommended = recommendedOverride ?? stop.distanceMeters <= 80;
+  const accessibleRouteLabel =
+    accessibleRouteStatus === "AVAILABLE"
+      ? "Wheelchair-friendly route available"
+      : accessibleRouteStatus === "LIMITED_DATA"
+        ? "Wheelchair route · Accessibility data incomplete"
+        : accessibleRouteStatus === "UNAVAILABLE"
+          ? "No wheelchair route found"
+          : accessibleRouteStatus === "CHECKING"
+            ? "Checking wheelchair route…"
+            : null;
   const content = (
     <>
       <View style={styles.iconTitleRow}>
@@ -6352,6 +12035,17 @@ const BusStopCard = memo(function BusStopCard({
       <Text style={[styles.bodyText, lightMode && lightStyles.bodyText]}>
         Services {services.join(", ")}
       </Text>
+      {accessibleRouteLabel ? (
+        <Text
+          style={[
+            styles.infoPill,
+            accessibleRouteStatus === "AVAILABLE" && styles.accessibleChip,
+            lightMode && lightStyles.infoPill,
+          ]}
+        >
+          {accessibleRouteLabel}
+        </Text>
+      ) : null}
       {onPress ? (
         <View style={styles.actionHintRow}>
           {selected ? (
@@ -6406,7 +12100,7 @@ const BusStopCard = memo(function BusStopCard({
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`${recommended ? "Recommended stop. " : ""}${stop.description}, ${stop.roadName}, bus stop ${stop.busStopCode}, about ${stop.distanceMeters} metres away, about ${walkingMinutes} minutes walk. Services ${services.join(", ")}. Choose this stop.`}
+      accessibilityLabel={`${recommended ? "Recommended stop. " : ""}${stop.description}, ${stop.roadName}, bus stop ${stop.busStopCode}, about ${stop.distanceMeters} metres away, about ${walkingMinutes} minutes walk. ${accessibleRouteLabel ? `${accessibleRouteLabel}. ` : ""}Services ${services.join(", ")}. Choose this stop.`}
       onPress={onPress}
       style={[
         styles.busCard,
@@ -6426,20 +12120,25 @@ function BusArrivalCard({
   service,
   selected,
   onPress,
+  arrivalsLoading,
   lightMode = false,
   highContrast = false,
 }: {
   service: BusServiceOption;
   selected: boolean;
   onPress: () => void;
+  arrivalsLoading: boolean;
   lightMode?: boolean;
   highContrast?: boolean;
 }) {
+  const runtimeAccessibility = useContext(AccessibilityRuntimeContext);
   const nextBus = service.buses[0];
   const followingBus = service.buses[1];
   const nextEtaLabel = nextBus
     ? formatEta(nextBus.etaSeconds)
-    : "Live arrival unavailable";
+    : arrivalsLoading
+      ? "Loading live arrival..."
+      : "Live arrival unavailable";
   const followingEtaLabel = followingBus
     ? formatEta(followingBus.etaSeconds)
     : null;
@@ -6448,7 +12147,7 @@ function BusArrivalCard({
     <Pressable
       accessibilityRole="button"
       accessibilityState={{ selected }}
-      accessibilityLabel={`Bus ${service.serviceNo} towards ${service.destination}. Service ${service.serviceNo}. ${nextBus ? `Next bus ${nextEtaLabel}.` : "Live arrival unavailable."} ${
+      accessibilityLabel={`Bus ${service.serviceNo} towards ${service.destination}. Service ${service.serviceNo}. ${nextBus ? `Next bus ${nextEtaLabel}.` : arrivalsLoading ? "Live arrival loading." : "Live arrival unavailable."} ${
         nextBus?.wheelchairAccessible ? "Wheelchair accessible." : ""
       } Double tap to select service.`}
       onPress={onPress}
@@ -6459,6 +12158,7 @@ function BusArrivalCard({
         lightMode && selected && lightStyles.selectedCard,
         highContrast && !lightMode && styles.highContrastControl,
         highContrast && lightMode && lightStyles.highContrastControl,
+        runtimeAccessibility.largerControls && styles.largerServiceCard,
       ]}
     >
       <View style={styles.arrivalTopRow}>
@@ -6539,6 +12239,10 @@ function BusArrivalCard({
             {nextBus.wheelchairAccessible
               ? "Wheelchair accessible"
               : "Accessibility not indicated"}
+          </Text>
+        ) : arrivalsLoading ? (
+          <Text style={[styles.infoPill, lightMode && lightStyles.infoPill]}>
+            Checking live arrivals
           </Text>
         ) : (
           <Text style={[styles.infoPill, lightMode && lightStyles.infoPill]}>
@@ -6629,7 +12333,6 @@ function WheelchairAccessibleSymbol({
 function OnboardJourneyScreen({
   appPreferences,
   selectedBus,
-  destination,
   currentStop,
   nextStop,
   routeStops,
@@ -6637,21 +12340,25 @@ function OnboardJourneyScreen({
   selectedAlightingStop,
   selectedAlightingStopIndex,
   stopsRemaining,
-  destinationApproaching,
   alightingAssistanceTypes,
+  alightingRequestStatus,
   selectedStopIsNext,
   selectedStopReached,
   journeyPhase,
+  hasMeaningfulAnnouncement,
+  isRequestLoading,
   onChangeStop,
   onSetDestination,
   onRequestDisembarkation,
   onRepeat,
   onSimulateNextStop,
-  onEndJourney,
+  onOpenAccessibility,
+  onRequestEndJourney,
+  onFinishJourney,
+  journeyEndInProgress,
 }: {
-  appPreferences: AppAccessibilityPreferences;
+  appPreferences: AccessibilityPreferences;
   selectedBus: Bus;
-  destination: string;
   currentStop: RouteStop | null;
   nextStop: RouteStop | null;
   routeStops: RouteStop[];
@@ -6659,21 +12366,27 @@ function OnboardJourneyScreen({
   selectedAlightingStop: RouteStop | null;
   selectedAlightingStopIndex: number;
   stopsRemaining: number | null;
-  destinationApproaching: boolean;
   alightingAssistanceTypes: AssistanceType[];
+  alightingRequestStatus: AssistanceRequestStatus | null;
   selectedStopIsNext: boolean;
   selectedStopReached: boolean;
   journeyPhase: JourneyPhase;
+  hasMeaningfulAnnouncement: boolean;
+  isRequestLoading: boolean;
   onChangeStop: () => void;
   onSetDestination: (stop: RouteStop) => void;
   onRequestDisembarkation: () => void;
   onRepeat: () => void;
   onSimulateNextStop: () => void;
-  onEndJourney: () => void;
+  onOpenAccessibility: () => void;
+  onRequestEndJourney: () => void;
+  onFinishJourney: () => void;
+  journeyEndInProgress: boolean;
 }) {
   const [followJourney, setFollowJourney] = useState(true);
   const [showRouteStops, setShowRouteStops] = useState(false);
   const [showOnboardMore, setShowOnboardMore] = useState(false);
+  const [showSimplifiedMap, setShowSimplifiedMap] = useState(false);
   const [previewKind, setPreviewKind] = useState<"BUS" | "STOP" | null>(null);
   const [selectedPreviewStop, setSelectedPreviewStop] =
     useState<RouteStop | null>(null);
@@ -6700,34 +12413,84 @@ function OnboardJourneyScreen({
   ];
   const valueStyle = [
     styles.summaryValue,
+    isLargeText(appPreferences) && styles.largeBody,
+    appPreferences.textSize === "EXTRA_LARGE" && styles.extraLargeBody,
     lightMode && lightStyles.text,
     highContrast && !lightMode && styles.highContrastText,
     highContrast && lightMode && lightStyles.highContrastText,
   ];
   const bodyStyle = [
     styles.bodyText,
+    isLargeText(appPreferences) && styles.largeBody,
+    appPreferences.textSize === "EXTRA_LARGE" && styles.extraLargeBody,
     lightMode && lightStyles.bodyText,
     highContrast && !lightMode && styles.highContrastMutedText,
     highContrast && lightMode && lightStyles.highContrastMutedText,
   ];
   const destinationName =
     selectedAlightingStop?.description ?? "Choose destination";
-  const hasRemainingStops = stopsRemaining !== null && stopsRemaining > 0;
-  const stopsRemainingLabel =
+  const destinationIsNext =
+    selectedStopIsNext || journeyPhase === "DESTINATION_NEXT";
+  const assistanceRequestActive =
+    alightingRequestStatus === AssistanceRequestStatus.SENDING ||
+    alightingRequestStatus === AssistanceRequestStatus.ACKNOWLEDGED;
+  const assistanceAcknowledged =
+    alightingRequestStatus === AssistanceRequestStatus.ACKNOWLEDGED;
+  const assistanceRequestFailed =
+    alightingRequestStatus === AssistanceRequestStatus.FAILED;
+  const assistanceRequestCancelled =
+    alightingRequestStatus === AssistanceRequestStatus.CANCELLED;
+  const showActiveAlightingCard =
+    destinationIsNext ||
+    selectedStopReached ||
+    assistanceRequestActive ||
+    assistanceRequestFailed;
+  const rampAssistanceSelected =
+    alightingAssistanceTypes.includes("WHEELCHAIR_RAMP");
+  const extraAlightingTimeSelected = alightingAssistanceTypes.includes(
+    "EXTENDED_DWELL_TIME",
+  );
+  const wheelchairCompletion =
+    appPreferences.wheelchairAssistance || rampAssistanceSelected;
+  const stopsToDestinationLabel =
     stopsRemaining === null
       ? "Choose a destination for stop countdown"
       : stopsRemaining === 0
         ? "You have arrived"
-        : stopsRemaining === 1
-          ? "Your stop is next"
-          : `${stopsRemaining} stops remaining`;
-  const onboardStatus = selectedStopReached
-    ? "THIS IS YOUR STOP"
-    : selectedStopIsNext || journeyPhase === "DESTINATION_NEXT"
-      ? "YOUR STOP IS NEXT"
-      : destinationApproaching || journeyPhase === "DESTINATION_APPROACHING"
-        ? "Destination approaching"
-        : "Onboard journey";
+        : `${stopsRemaining} ${stopsRemaining === 1 ? "stop" : "stops"} to ${destinationName}`;
+  const heroAccessibilityLabel = selectedStopReached
+    ? appPreferences.simplifiedJourney
+      ? `You've reached your stop. ${destinationName}. Leave the bus when it is safe.`
+      : `You've reached your stop. ${destinationName}. Remain onboard until the bus has stopped and it is safe to exit.`
+    : destinationIsNext
+      ? `Your stop is next. ${destinationName}. Prepare to alight.`
+      : `Onboard Journey. Service ${selectedBus.busService}. Next stop ${nextStop?.description ?? "final stop"}. ${stopsToDestinationLabel}.`;
+  const rampStatusTitle = assistanceAcknowledged
+    ? "Ramp request received"
+    : assistanceRequestActive
+      ? "Ramp request sent"
+      : "Ramp assistance";
+  const rampStatusDetail = assistanceRequestActive
+    ? null
+    : rampAssistanceSelected
+      ? assistanceRequestCancelled
+        ? "Request cancelled"
+        : assistanceRequestFailed
+          ? "Request not sent"
+          : "Not requested"
+      : "Not selected";
+  const dwellStatusTitle = assistanceRequestActive
+    ? "Extra alighting time requested"
+    : "Extra alighting time";
+  const dwellStatusDetail = assistanceRequestActive
+    ? null
+    : extraAlightingTimeSelected
+      ? assistanceRequestCancelled
+        ? "Request cancelled"
+        : assistanceRequestFailed
+          ? "Request not sent"
+          : "Enabled"
+      : "Not enabled";
   const previewStopIndex = selectedPreviewStop
     ? routeStopIndex(routeStops, selectedPreviewStop)
     : -1;
@@ -6736,14 +12499,16 @@ function OnboardJourneyScreen({
       ? Math.max(0, previewStopIndex - currentStopIndex)
       : null;
 
-  function previewBusPosition() {
-    setPreviewKind("BUS");
-    setSelectedPreviewStop(null);
-  }
-
   function previewRouteStop(stop: RouteStop) {
+    setFollowJourney(false);
     setPreviewKind("STOP");
     setSelectedPreviewStop(stop);
+    setOnboardViewport((current) => ({
+      ...current,
+      center: stop,
+      zoom: clampMapZoom(Math.max(current.zoom, 15), "SELECTED_STOP"),
+      mode: "SELECTED_STOP",
+    }));
   }
 
   function setPreviewAsDestination() {
@@ -6753,13 +12518,12 @@ function OnboardJourneyScreen({
     onSetDestination(selectedPreviewStop);
   }
 
-  function moveMapManually() {
+  function updateOnboardProviderViewport(next: ProviderViewportChange) {
     setFollowJourney(false);
-    setOnboardViewport((current) => ({
-      ...current,
-      zoom: clampMapZoom(current.zoom - 1, "USER_PAN"),
+    setOnboardViewport({
+      ...next,
       mode: "USER_PAN",
-    }));
+    });
   }
 
   function returnToJourney() {
@@ -6790,6 +12554,9 @@ function OnboardJourneyScreen({
   function viewOnboardFullRoute() {
     setShowRouteStops(false);
     setShowOnboardMore(false);
+    setShowSimplifiedMap(true);
+    setPreviewKind(null);
+    setSelectedPreviewStop(null);
     setFollowJourney(false);
     setOnboardViewport((current) => ({
       ...current,
@@ -6816,227 +12583,449 @@ function OnboardJourneyScreen({
   return (
     <View style={styles.section}>
       <View
-        style={styles.onboardHero}
+        style={[
+          styles.onboardHero,
+          destinationIsNext && styles.onboardDestinationNextHero,
+          selectedStopReached && styles.onboardDestinationReachedHero,
+          highContrast && styles.highContrastOnboardHero,
+        ]}
         accessible
         accessibilityRole="header"
-        accessibilityLabel={
-          selectedStopReached
-            ? `Final stop. ${destinationName}. You have arrived.`
-            : `On Service ${selectedBus.busService}. Next stop ${nextStop?.description ?? "final stop"}. Destination ${destinationName}. ${stopsRemainingLabel}.`
-        }
+        accessibilityLabel={heroAccessibilityLabel}
       >
-        <Text style={styles.onboardEyebrow}>
-          {selectedStopReached ? "FINAL STOP" : onboardStatus}
-        </Text>
-        {selectedStopReached ? (
+        {!appPreferences.simplifiedJourney ||
+        (!destinationIsNext && !selectedStopReached) ? (
           <>
-            <Text style={styles.onboardDestination}>{destinationName}</Text>
-            <Text style={styles.onboardArrivalText}>You have arrived.</Text>
-          </>
-        ) : (
-          <>
+            <Text
+              style={[
+                styles.onboardEyebrow,
+                isLargeText(appPreferences) && styles.largeBody,
+                appPreferences.textSize === "EXTRA_LARGE" &&
+                  styles.extraLargeBody,
+              ]}
+            >
+              ONBOARD JOURNEY
+            </Text>
             <ServiceNumberWithAccessibility
               serviceNo={selectedBus.busService}
               accessible={selectedBus.isAccessible}
-              textStyle={styles.onboardBus}
+              prefix="Service"
+              textStyle={[
+                styles.onboardService,
+                isLargeText(appPreferences) && styles.largeBody,
+                appPreferences.textSize === "EXTRA_LARGE" &&
+                  styles.extraLargeBody,
+              ]}
               onDark
               highContrast={highContrast}
-              symbolSize="large"
+              symbolSize="regular"
             />
-            <Text style={styles.onboardDestination}>
-              Next: {nextStop?.description ?? "Final stop"}
+          </>
+        ) : null}
+
+        {selectedStopReached ? (
+          <>
+            <Text
+              style={[
+                styles.onboardAlertLabel,
+                isLargeText(appPreferences) && styles.largeHeading,
+                appPreferences.textSize === "EXTRA_LARGE" &&
+                  styles.extraLargeHeading,
+              ]}
+            >
+              YOU'VE REACHED YOUR STOP
+            </Text>
+            <Text
+              style={[
+                styles.onboardDestination,
+                isLargeText(appPreferences) && styles.largeHeading,
+                appPreferences.textSize === "EXTRA_LARGE" &&
+                  styles.extraLargeHeading,
+              ]}
+            >
+              {destinationName}
+            </Text>
+            {!appPreferences.simplifiedJourney ? (
+              <Text
+                style={[
+                  styles.onboardInstruction,
+                  isLargeText(appPreferences) && styles.largeBody,
+                  appPreferences.textSize === "EXTRA_LARGE" &&
+                    styles.extraLargeBody,
+                ]}
+              >
+                You have arrived.
+              </Text>
+            ) : null}
+            {appPreferences.simplifiedJourney ? (
+              <Text
+                style={[
+                  styles.onboardNextStopLabel,
+                  isLargeText(appPreferences) && styles.largeBody,
+                  appPreferences.textSize === "EXTRA_LARGE" &&
+                    styles.extraLargeBody,
+                ]}
+              >
+                NEXT
+              </Text>
+            ) : null}
+            <Text
+              style={[
+                styles.onboardInstruction,
+                isLargeText(appPreferences) && styles.largeBody,
+                appPreferences.textSize === "EXTRA_LARGE" &&
+                  styles.extraLargeBody,
+              ]}
+            >
+              {appPreferences.simplifiedJourney
+                ? "Leave the bus when it is safe."
+                : "Remain onboard until the bus has stopped and it is safe to exit."}
+            </Text>
+          </>
+        ) : destinationIsNext ? (
+          <>
+            <Text
+              style={[
+                styles.onboardAlertLabel,
+                isLargeText(appPreferences) && styles.largeHeading,
+                appPreferences.textSize === "EXTRA_LARGE" &&
+                  styles.extraLargeHeading,
+              ]}
+            >
+              YOUR STOP IS NEXT
+            </Text>
+            <Text
+              style={[
+                styles.onboardDestination,
+                isLargeText(appPreferences) && styles.largeHeading,
+                appPreferences.textSize === "EXTRA_LARGE" &&
+                  styles.extraLargeHeading,
+              ]}
+            >
+              {destinationName}
+            </Text>
+            <Text
+              style={[
+                styles.onboardInstruction,
+                isLargeText(appPreferences) && styles.largeBody,
+                appPreferences.textSize === "EXTRA_LARGE" &&
+                  styles.extraLargeBody,
+              ]}
+            >
+              Prepare to alight.
+            </Text>
+          </>
+        ) : (
+          <>
+            <Text
+              style={[
+                styles.onboardNextStopLabel,
+                isLargeText(appPreferences) && styles.largeBody,
+                appPreferences.textSize === "EXTRA_LARGE" &&
+                  styles.extraLargeBody,
+              ]}
+            >
+              Next stop
+            </Text>
+            <Text
+              style={[
+                styles.onboardDestination,
+                isLargeText(appPreferences) && styles.largeHeading,
+                appPreferences.textSize === "EXTRA_LARGE" &&
+                  styles.extraLargeHeading,
+              ]}
+            >
+              {nextStop?.description ?? "Final stop"}
+            </Text>
+            <Text
+              style={[
+                styles.onboardInstruction,
+                isLargeText(appPreferences) && styles.largeBody,
+                appPreferences.textSize === "EXTRA_LARGE" &&
+                  styles.extraLargeBody,
+              ]}
+            >
+              {stopsToDestinationLabel}
             </Text>
           </>
         )}
       </View>
 
-      {(selectedStopIsNext || journeyPhase === "DESTINATION_NEXT") &&
-        !selectedStopReached && (
-          <View
-            style={styles.priorityPanel}
-            accessible
-            accessibilityRole="alert"
-          >
-            <View style={styles.iconTitleRow}>
-              <Bell
-                size={24}
-                color={colors.textOnAccessible}
-                strokeWidth={2.75}
-                accessibilityElementsHidden
-                importantForAccessibility="no"
+      {showActiveAlightingCard ? (
+        <View
+          style={[
+            panelStyle,
+            destinationIsNext && styles.alightingPriorityPanel,
+          ]}
+          accessible={false}
+          testID="alighting-assistance-card"
+        >
+          {appPreferences.simplifiedJourney && destinationIsNext ? (
+            <>
+              <Text style={labelStyle}>NEXT</Text>
+              <Text style={valueStyle}>
+                {assistanceRequestActive
+                  ? "Assistance requested."
+                  : "Request help to get off the bus."}
+              </Text>
+            </>
+          ) : (
+            <Text
+              style={[
+                styles.alightingCardTitle,
+                isLargeText(appPreferences) && styles.largeHeading,
+                appPreferences.textSize === "EXTRA_LARGE" &&
+                  styles.extraLargeHeading,
+                lightMode && lightStyles.text,
+                highContrast && !lightMode && styles.highContrastText,
+                highContrast && lightMode && lightStyles.highContrastText,
+              ]}
+            >
+              Alighting assistance
+            </Text>
+          )}
+
+          {!appPreferences.simplifiedJourney ? (
+            <>
+              <AlightingStatusRow
+                Icon={Accessibility}
+                title={rampStatusTitle}
+                detail={rampStatusDetail}
+                complete={assistanceRequestActive && rampAssistanceSelected}
+                lightMode={lightMode}
+                highContrast={highContrast}
               />
-              <Text style={styles.statusLabel}>YOUR STOP IS NEXT</Text>
+              <AlightingStatusRow
+                Icon={Clock}
+                title={dwellStatusTitle}
+                detail={dwellStatusDetail}
+                complete={assistanceRequestActive && extraAlightingTimeSelected}
+                lightMode={lightMode}
+                highContrast={highContrast}
+              />
+            </>
+          ) : null}
+
+          {assistanceRequestActive ? (
+            <View
+              style={styles.assistanceRequestedStatus}
+              accessible
+              accessibilityRole="alert"
+              accessibilityLabel={
+                assistanceAcknowledged
+                  ? "Assistance requested. The bus has received your request."
+                  : "Assistance requested. Your request is being sent to the bus."
+              }
+            >
+              <View style={styles.iconTitleRow}>
+                <CheckCircle2
+                  size={24}
+                  color={controlIconColor({
+                    active: true,
+                    lightMode,
+                    highContrast,
+                  })}
+                  strokeWidth={3}
+                  accessibilityElementsHidden
+                  importantForAccessibility="no"
+                />
+                <Text style={valueStyle}>Assistance requested</Text>
+              </View>
+              <Text style={bodyStyle}>
+                {assistanceAcknowledged
+                  ? "The bus has received your request."
+                  : "Your request is being sent to the bus."}
+              </Text>
             </View>
-            <Text style={styles.statusValue}>{destinationName}</Text>
-            <Text style={styles.bodyText}>Prepare to get off.</Text>
-          </View>
-        )}
+          ) : null}
 
-      {selectedStopReached && (
-        <View style={styles.priorityPanel} accessible accessibilityRole="alert">
-          <View style={styles.iconTitleRow}>
-            <DoorOpen
-              size={24}
-              color={colors.textOnAccessible}
-              strokeWidth={2.75}
-              accessibilityElementsHidden
-              importantForAccessibility="no"
+          {assistanceAcknowledged && destinationIsNext ? (
+            <Text
+              style={[
+                styles.alightingSafetyInstruction,
+                isLargeText(appPreferences) && styles.largeBody,
+                appPreferences.textSize === "EXTRA_LARGE" &&
+                  styles.extraLargeBody,
+                lightMode && lightStyles.text,
+                highContrast && !lightMode && styles.highContrastText,
+                highContrast && lightMode && lightStyles.highContrastText,
+              ]}
+              accessibilityRole="alert"
+            >
+              {rampAssistanceSelected
+                ? "Please remain onboard until the bus has stopped and the ramp is ready."
+                : "Please remain onboard until the bus has stopped and assistance is ready."}
+            </Text>
+          ) : null}
+
+          {!assistanceRequestActive &&
+          (!selectedStopReached || alightingAssistanceTypes.length > 0) ? (
+            <PrimaryButton
+              label={
+                appPreferences.simplifiedJourney
+                  ? "Request help"
+                  : assistanceRequestFailed
+                    ? "Retry help request"
+                    : "Request help to disembark"
+              }
+              icon={CircleCheck}
+              accessibilityHint="Send a request for help getting off the bus. The bus remains responsible for safe operation."
+              onPress={onRequestDisembarkation}
+              disabled={isRequestLoading}
+              variant="attention"
+              lightMode={lightMode}
+              highContrast={highContrast}
             />
-            <Text style={styles.statusLabel}>Alighting assistance</Text>
-          </View>
-          <Text style={styles.bodyText}>
-            Please wait until the bus has stopped and assistance is ready.
+          ) : null}
+
+          {selectedStopReached ? (
+            alightingAssistanceTypes.length > 0 && !assistanceRequestActive ? (
+              <SecondaryButton
+                label={
+                  appPreferences.simplifiedJourney
+                    ? "I've left the bus"
+                    : "I've safely alighted"
+                }
+                icon={DoorOpen}
+                accessibilityHint="Complete this journey only after you have safely left the bus."
+                onPress={onFinishJourney}
+                disabled={journeyEndInProgress}
+                lightMode={lightMode}
+                highContrast={highContrast}
+              />
+            ) : (
+              <PrimaryButton
+                label={
+                  appPreferences.simplifiedJourney
+                    ? "I've left the bus"
+                    : wheelchairCompletion
+                      ? "I've safely alighted"
+                      : "Finish journey"
+                }
+                icon={DoorOpen}
+                accessibilityHint="Complete this journey only after you have safely left the bus."
+                onPress={onFinishJourney}
+                disabled={journeyEndInProgress}
+                lightMode={lightMode}
+                highContrast={highContrast}
+              />
+            )
+          ) : null}
+        </View>
+      ) : (
+        <View style={panelStyle} testID="alighting-assistance-card">
+          <Text
+            style={[
+              styles.alightingCardTitle,
+              isLargeText(appPreferences) && styles.largeHeading,
+              appPreferences.textSize === "EXTRA_LARGE" &&
+                styles.extraLargeHeading,
+              lightMode && lightStyles.text,
+              highContrast && !lightMode && styles.highContrastText,
+              highContrast && lightMode && lightStyles.highContrastText,
+            ]}
+          >
+            Alighting assistance
           </Text>
+          <Text style={bodyStyle}>Available near your destination</Text>
         </View>
       )}
 
-      <View style={panelStyle}>
-        <View style={styles.iconTitleRow}>
-          <Clock
-            size={22}
-            color={controlIconColor({ lightMode, highContrast })}
-            strokeWidth={2.75}
-            accessibilityElementsHidden
-            importantForAccessibility="no"
-          />
-          <ServiceNumberWithAccessibility
-            serviceNo={selectedBus.busService}
-            accessible={selectedBus.isAccessible}
-            prefix="On Service"
-            textStyle={labelStyle}
-            lightMode={lightMode}
-            highContrast={highContrast}
-            symbolSize="small"
-          />
-        </View>
-        <Text style={bodyStyle}>
-          Current progress: {currentStop?.description ?? "Journey starting"}
-        </Text>
-        <View style={styles.iconTitleRow}>
-          <Route
-            size={22}
-            color={controlIconColor({ lightMode, highContrast })}
-            strokeWidth={2.75}
-            accessibilityElementsHidden
-            importantForAccessibility="no"
-          />
-          <Text style={labelStyle}>NEXT STOP</Text>
-        </View>
-        <Text style={valueStyle}>{nextStop?.description ?? "Final stop"}</Text>
-        <View style={styles.iconTitleRow}>
-          <MapPinned
-            size={22}
-            color={controlIconColor({ active: true, lightMode, highContrast })}
-            strokeWidth={2.75}
-            accessibilityElementsHidden
-            importantForAccessibility="no"
-          />
-          <Text style={labelStyle}>Destination</Text>
-        </View>
-        <Text style={valueStyle}>{destinationName}</Text>
-        <Text style={bodyStyle}>{stopsRemainingLabel}</Text>
-      </View>
-
-      {showRouteStops && hasRemainingStops && (
-        <View style={panelStyle}>
-          <Text style={labelStyle}>Remaining stops</Text>
-          <RemainingStopsList
-            routeStops={routeStops}
-            currentStopIndex={currentStopIndex}
-            destinationStopIndex={selectedAlightingStopIndex}
-            lightMode={lightMode}
-            highContrast={highContrast}
-          />
-        </View>
-      )}
-
-      <View style={panelStyle}>
-        <Text style={labelStyle}>Alighting assistance</Text>
-        {alightingAssistanceTypes.length > 0 && (
-          <Text style={bodyStyle}>
-            {alightingAssistanceTypes.map(readableAssistanceType).join(", ")}{" "}
-            will be requested for your selected stop.
-          </Text>
-        )}
-        {alightingAssistanceTypes.length === 0 ? (
-          <Text style={bodyStyle}>
-            No disembarking assistance selected for this journey.
-          </Text>
-        ) : null}
-        <SecondaryButton
-          label={
-            selectedAlightingStop ? "Change destination" : "Choose destination"
-          }
-          icon={Undo2}
-          onPress={onChangeStop}
+      {hasMeaningfulAnnouncement ? (
+        <TertiaryButton
+          label="Repeat announcement"
+          icon={Volume2}
+          onPress={onRepeat}
           lightMode={lightMode}
           highContrast={highContrast}
         />
-      </View>
+      ) : null}
 
-      <PrimaryButton
-        label={
-          selectedStopReached
-            ? "I've safely alighted"
-            : "Request help to disembark"
-        }
-        icon={selectedStopReached ? DoorOpen : CircleCheck}
-        accessibilityHint="Send passenger intent to alight. The bus remains responsible for safe operation."
-        onPress={selectedStopReached ? onEndJourney : onRequestDisembarkation}
-        variant="attention"
-        lightMode={lightMode}
-        highContrast={highContrast}
-      />
-      <SecondaryButton
-        label="Repeat announcement"
-        icon={Volume2}
-        onPress={onRepeat}
-        lightMode={lightMode}
-        highContrast={highContrast}
-      />
-      <OnboardJourneyMap
-        selectedBus={selectedBus}
-        currentStop={currentStop}
-        nextStop={nextStop}
-        routeStops={routeStops}
-        currentStopIndex={currentStopIndex}
-        destinationStop={selectedAlightingStop}
-        destinationStopIndex={selectedAlightingStopIndex}
-        selectedPreviewStop={selectedPreviewStop}
-        followJourney={followJourney}
-        viewport={onboardViewport}
-        moreOpen={showOnboardMore}
-        routeStopsExpanded={showRouteStops}
-        stopsRemaining={stopsRemaining}
-        lightMode={lightMode}
-        highContrast={highContrast}
-        onPreviewBus={previewBusPosition}
-        onPreviewStop={previewRouteStop}
-        onMoveMap={moveMapManually}
-        onReturnToJourney={returnToJourney}
-        onViewStops={() => setShowRouteStops((visible) => !visible)}
-        onMore={() => setShowOnboardMore((open) => !open)}
-        onRotateMap={rotateOnboardMap}
-        onResetNorth={resetOnboardNorth}
-        onViewFullRoute={viewOnboardFullRoute}
-        onResetMap={resetOnboardMap}
-      />
+      {appPreferences.simplifiedJourney && !showSimplifiedMap ? (
+        <SecondaryButton
+          label="More"
+          icon={SlidersHorizontal}
+          onPress={() => setShowOnboardMore((open) => !open)}
+          lightMode={lightMode}
+          highContrast={highContrast}
+        />
+      ) : null}
 
-      <JourneyMapPreview
-        previewKind={previewKind}
-        selectedBus={selectedBus}
-        selectedPreviewStop={selectedPreviewStop}
-        currentStop={currentStop}
-        nextStop={nextStop}
-        destinationStop={selectedAlightingStop}
-        previewStopIndex={previewStopIndex}
-        currentStopIndex={currentStopIndex}
-        previewStopsAhead={previewStopsAhead}
-        stopsRemaining={stopsRemaining}
-        lightMode={lightMode}
-        highContrast={highContrast}
-        onSetDestination={setPreviewAsDestination}
-      />
+      {appPreferences.simplifiedJourney &&
+      !showSimplifiedMap &&
+      showOnboardMore ? (
+        <ActiveJourneyOptions
+          busy={journeyEndInProgress}
+          lightMode={lightMode}
+          highContrast={highContrast}
+          onChangeDestination={onChangeStop}
+          onOpenAccessibility={onOpenAccessibility}
+          onEndJourney={onRequestEndJourney}
+        />
+      ) : null}
+
+      {appPreferences.simplifiedJourney ? (
+        <SecondaryButton
+          label={showSimplifiedMap ? "Hide journey map" : "Show journey map"}
+          icon={MapIcon}
+          onPress={() => setShowSimplifiedMap((visible) => !visible)}
+          lightMode={lightMode}
+          highContrast={highContrast}
+        />
+      ) : null}
+
+      {!appPreferences.simplifiedJourney || showSimplifiedMap ? (
+        <>
+          <OnboardJourneyMap
+            selectedBus={selectedBus}
+            currentStop={currentStop}
+            nextStop={nextStop}
+            routeStops={routeStops}
+            currentStopIndex={currentStopIndex}
+            destinationStop={selectedAlightingStop}
+            destinationStopIndex={selectedAlightingStopIndex}
+            selectedPreviewStop={selectedPreviewStop}
+            followJourney={followJourney}
+            viewport={onboardViewport}
+            moreOpen={showOnboardMore}
+            routeStopsExpanded={showRouteStops}
+            stopsRemaining={stopsRemaining}
+            largeText={isLargeText(appPreferences)}
+            lightMode={lightMode}
+            highContrast={highContrast}
+            onPreviewStop={previewRouteStop}
+            onProviderViewportChange={updateOnboardProviderViewport}
+            onReturnToJourney={returnToJourney}
+            onViewStops={() => setShowRouteStops((visible) => !visible)}
+            onMore={() => setShowOnboardMore((open) => !open)}
+            onRotateMap={rotateOnboardMap}
+            onResetNorth={resetOnboardNorth}
+            onViewFullRoute={viewOnboardFullRoute}
+            onResetMap={resetOnboardMap}
+            onChangeDestination={onChangeStop}
+            onOpenAccessibility={onOpenAccessibility}
+            onEndJourney={onRequestEndJourney}
+            journeyEndInProgress={journeyEndInProgress}
+          />
+
+          <JourneyMapPreview
+            previewKind={previewKind}
+            selectedBus={selectedBus}
+            selectedPreviewStop={selectedPreviewStop}
+            currentStop={currentStop}
+            nextStop={nextStop}
+            destinationStop={selectedAlightingStop}
+            previewStopIndex={previewStopIndex}
+            currentStopIndex={currentStopIndex}
+            previewStopsAhead={previewStopsAhead}
+            stopsRemaining={stopsRemaining}
+            lightMode={lightMode}
+            highContrast={highContrast}
+            onSetDestination={setPreviewAsDestination}
+          />
+        </>
+      ) : null}
+
       {__DEV__ ? (
         <SecondaryButton
           label="Simulate next stop"
@@ -7048,6 +13037,231 @@ function OnboardJourneyScreen({
           highContrast={highContrast}
         />
       ) : null}
+    </View>
+  );
+}
+
+function ActiveJourneyOptions({
+  busy,
+  lightMode,
+  highContrast,
+  onChangeDestination,
+  onOpenAccessibility,
+  onEndJourney,
+}: {
+  busy: boolean;
+  lightMode: boolean;
+  highContrast: boolean;
+  onChangeDestination: () => void;
+  onOpenAccessibility: () => void;
+  onEndJourney: () => void;
+}) {
+  return (
+    <View
+      testID="active-journey-options"
+      style={[
+        styles.activeJourneyOptions,
+        lightMode && lightStyles.surface,
+        highContrast && !lightMode && styles.highContrastControl,
+        highContrast && lightMode && lightStyles.highContrastControl,
+      ]}
+    >
+      <Text
+        style={[
+          styles.activeJourneyOptionsTitle,
+          lightMode && lightStyles.text,
+          highContrast && !lightMode && styles.highContrastText,
+          highContrast && lightMode && lightStyles.highContrastText,
+        ]}
+      >
+        Journey options
+      </Text>
+      <SecondaryButton
+        label="Change destination"
+        icon={Undo2}
+        onPress={onChangeDestination}
+        disabled={busy}
+        lightMode={lightMode}
+        highContrast={highContrast}
+      />
+      <SecondaryButton
+        label="Accessibility options"
+        icon={Accessibility}
+        onPress={onOpenAccessibility}
+        disabled={busy}
+        lightMode={lightMode}
+        highContrast={highContrast}
+      />
+      <View style={styles.journeyEndDivider} />
+      <SecondaryButton
+        label="End journey"
+        icon={CircleX}
+        onPress={onEndJourney}
+        disabled={busy}
+        variant="destructive"
+        lightMode={lightMode}
+        highContrast={highContrast}
+      />
+    </View>
+  );
+}
+
+function JourneyEndConfirmationDialog({
+  visible,
+  serviceNo,
+  destinationName,
+  busy,
+  lightMode,
+  highContrast,
+  onKeep,
+  onConfirm,
+}: {
+  visible: boolean;
+  serviceNo: string | null;
+  destinationName: string | null;
+  busy: boolean;
+  lightMode: boolean;
+  highContrast: boolean;
+  onKeep: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <Modal
+      transparent
+      visible={visible}
+      animationType="fade"
+      onRequestClose={onKeep}
+    >
+      <View style={styles.journeyEndBackdrop}>
+        <View
+          testID="end-journey-confirmation"
+          accessibilityViewIsModal
+          accessibilityRole="alert"
+          accessibilityLabel={`End this journey? Service ${serviceNo ?? "not selected"}. Destination ${destinationName ?? "not selected"}. Your route and live journey monitoring will stop.`}
+          style={[
+            styles.journeyEndDialog,
+            lightMode && lightStyles.surface,
+            highContrast && !lightMode && styles.highContrastControl,
+            highContrast && lightMode && lightStyles.highContrastControl,
+          ]}
+        >
+          <Text
+            style={[
+              styles.journeyEndTitle,
+              lightMode && lightStyles.text,
+              highContrast && !lightMode && styles.highContrastText,
+              highContrast && lightMode && lightStyles.highContrastText,
+            ]}
+          >
+            End this journey?
+          </Text>
+          <Text style={[styles.statusValue, lightMode && lightStyles.text]}>
+            Service {serviceNo ?? "not selected"}
+          </Text>
+          <Text style={[styles.bodyText, lightMode && lightStyles.bodyText]}>
+            Destination: {destinationName ?? "Not selected"}
+          </Text>
+          <Text style={[styles.bodyText, lightMode && lightStyles.bodyText]}>
+            Your route and live journey monitoring will stop.
+          </Text>
+          <PrimaryButton
+            label="Keep journey"
+            icon={ArrowLeft}
+            onPress={onKeep}
+            disabled={busy}
+            lightMode={lightMode}
+            highContrast={highContrast}
+          />
+          <SecondaryButton
+            label="End journey"
+            icon={CircleX}
+            onPress={onConfirm}
+            disabled={busy}
+            variant="destructive"
+            lightMode={lightMode}
+            highContrast={highContrast}
+          />
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+function AlightingStatusRow({
+  Icon,
+  title,
+  detail,
+  complete,
+  lightMode,
+  highContrast,
+}: {
+  Icon: LucideIcon;
+  title: string;
+  detail: string | null;
+  complete: boolean;
+  lightMode: boolean;
+  highContrast: boolean;
+}) {
+  const runtimeAccessibility = useContext(AccessibilityRuntimeContext);
+  const iconColor = controlIconColor({
+    active: complete,
+    lightMode,
+    highContrast,
+  });
+
+  return (
+    <View
+      style={styles.alightingStatusRow}
+      accessible
+      accessibilityLabel={[title, detail].filter(Boolean).join(". ")}
+    >
+      {complete ? (
+        <CheckCircle2
+          size={26}
+          color={iconColor}
+          strokeWidth={3}
+          accessibilityElementsHidden
+          importantForAccessibility="no"
+        />
+      ) : (
+        <Icon
+          size={26}
+          color={iconColor}
+          strokeWidth={2.75}
+          accessibilityElementsHidden
+          importantForAccessibility="no"
+        />
+      )}
+      <View style={styles.alightingStatusCopy}>
+        <Text
+          style={[
+            styles.alightingStatusTitle,
+            lightMode && lightStyles.text,
+            highContrast && !lightMode && styles.highContrastText,
+            highContrast && lightMode && lightStyles.highContrastText,
+            runtimeAccessibility.textSize !== "STANDARD" && styles.largeBody,
+            runtimeAccessibility.textSize === "EXTRA_LARGE" &&
+              styles.extraLargeBody,
+          ]}
+        >
+          {title}
+        </Text>
+        {detail ? (
+          <Text
+            style={[
+              styles.alightingStatusDetail,
+              lightMode && lightStyles.bodyText,
+              highContrast && !lightMode && styles.highContrastMutedText,
+              highContrast && lightMode && lightStyles.highContrastMutedText,
+              runtimeAccessibility.textSize !== "STANDARD" && styles.largeBody,
+              runtimeAccessibility.textSize === "EXTRA_LARGE" &&
+                styles.extraLargeBody,
+            ]}
+          >
+            {detail}
+          </Text>
+        ) : null}
+      </View>
     </View>
   );
 }
@@ -7066,11 +13280,11 @@ function OnboardJourneyMap({
   moreOpen,
   routeStopsExpanded,
   stopsRemaining,
+  largeText,
   lightMode,
   highContrast,
-  onPreviewBus,
   onPreviewStop,
-  onMoveMap,
+  onProviderViewportChange,
   onReturnToJourney,
   onViewStops,
   onMore,
@@ -7078,6 +13292,10 @@ function OnboardJourneyMap({
   onResetNorth,
   onViewFullRoute,
   onResetMap,
+  onChangeDestination,
+  onOpenAccessibility,
+  onEndJourney,
+  journeyEndInProgress,
 }: {
   selectedBus: Bus;
   currentStop: RouteStop | null;
@@ -7092,11 +13310,11 @@ function OnboardJourneyMap({
   moreOpen: boolean;
   routeStopsExpanded: boolean;
   stopsRemaining: number | null;
+  largeText: boolean;
   lightMode: boolean;
   highContrast: boolean;
-  onPreviewBus: () => void;
   onPreviewStop: (stop: RouteStop) => void;
-  onMoveMap: () => void;
+  onProviderViewportChange: (viewport: ProviderViewportChange) => void;
   onReturnToJourney: () => void;
   onViewStops: () => void;
   onMore: () => void;
@@ -7104,13 +13322,65 @@ function OnboardJourneyMap({
   onResetNorth: () => void;
   onViewFullRoute: () => void;
   onResetMap: () => void;
+  onChangeDestination: () => void;
+  onOpenAccessibility: () => void;
+  onEndJourney: () => void;
+  journeyEndInProgress: boolean;
 }) {
+  const [mapReady, setMapReady] = useState(false);
+  const [providerRetryKey, setProviderRetryKey] = useState(0);
+  const [mapLayout, setMapLayout] = useState<MapLayoutSize>({
+    height: 320,
+    width: defaultMapCanvasWidth,
+  });
   const routeEndIndex =
     destinationStopIndex >= 0 ? destinationStopIndex : routeStops.length - 1;
   const hasRemainingStops = stopsRemaining !== null && stopsRemaining > 0;
+  const progressLabel = hasRemainingStops
+    ? `${stopsRemaining} ${stopsRemaining === 1 ? "stop" : "stops"} remaining`
+    : null;
   const iconColor = controlIconColor({ lightMode, highContrast });
   const destinationName =
     destinationStop?.description ?? "destination not selected";
+  const mapStops = useMemo<NearbyBusStop[]>(
+    () =>
+      routeStops.map((stop) => ({
+        ...stop,
+        services: stop.services ?? [],
+        distanceMeters: 0,
+      })),
+    [routeStops],
+  );
+  const selectedMapStop = useMemo(
+    () =>
+      selectedPreviewStop
+        ? (mapStops.find(
+            (stop) => stop.busStopCode === selectedPreviewStop.busStopCode,
+          ) ?? null)
+        : null,
+    [mapStops, selectedPreviewStop],
+  );
+  const mapCameraGeometry = useMemo(
+    () => createMapCameraGeometry({ mapLayout }),
+    [mapLayout],
+  );
+  const activeVehicleCoordinate = currentStop ?? {
+    latitude: selectedBus.latitude,
+    longitude: selectedBus.longitude,
+  };
+  const remainingRouteStops = routeStops.slice(
+    Math.max(0, currentStopIndex + 1),
+    Math.max(currentStopIndex + 1, routeEndIndex + 1),
+  );
+  const routeProgressVisible =
+    hasRemainingStops &&
+    remainingRouteStops.length > 0 &&
+    (routeStopsExpanded || !mapReady);
+
+  function retryMap() {
+    setMapReady(false);
+    setProviderRetryKey((current) => current + 1);
+  }
 
   return (
     <View
@@ -7138,17 +13408,15 @@ function OnboardJourneyMap({
             Journey map
           </Text>
         </View>
+        {progressLabel ? (
+          <Text style={[styles.bodyText, lightMode && lightStyles.bodyText]}>
+            {progressLabel}
+          </Text>
+        ) : null}
       </View>
 
       <View style={styles.onboardMapControls}>
-        <SecondaryButton
-          label={followJourney ? "Journey" : "Return to journey"}
-          icon={followJourney ? Navigation : LocateFixed}
-          onPress={followJourney ? onPreviewBus : onReturnToJourney}
-          lightMode={lightMode}
-          highContrast={highContrast}
-        />
-        {hasRemainingStops ? (
+        {mapReady && hasRemainingStops ? (
           <SecondaryButton
             label={
               routeStopsExpanded
@@ -7170,7 +13438,66 @@ function OnboardJourneyMap({
         />
       </View>
 
-      {viewport.bearing !== 0 ? (
+      <View style={styles.onboardProviderMap}>
+        <NearbyStopsMap
+          stops={mapStops}
+          selectedStop={selectedMapStop}
+          selectedLandmark={null}
+          landmarks={[]}
+          currentLocation={null}
+          mapViewport={viewport}
+          mapCameraGeometry={mapCameraGeometry}
+          layers={defaultMapLayers}
+          mapManuallyMoved={!followJourney}
+          mapInteractionMode={followJourney ? "FOLLOW_JOURNEY" : "BROWSE"}
+          directionsActive
+          followMode={followJourney}
+          hasSelectedService
+          providerRetryKey={providerRetryKey}
+          journeyAlternative={null}
+          routeStops={routeStops}
+          destinationCoordinate={destinationStop}
+          activeVehicle={{
+            coordinate: activeVehicleCoordinate,
+            serviceNo: selectedBus.busService,
+          }}
+          mapPickCandidate={null}
+          headingDegrees={viewport.bearing}
+          largeText={largeText}
+          lightMode={lightMode}
+          highContrast={highContrast}
+          showInlineControls={false}
+          onSelectStop={(stop) => {
+            const routeStop = routeStops.find(
+              (candidate) => candidate.busStopCode === stop.busStopCode,
+            );
+            if (routeStop) {
+              onPreviewStop(routeStop);
+            }
+          }}
+          onSelectLandmark={() => undefined}
+          onMapLayoutChange={setMapLayout}
+          onMoveMap={() => undefined}
+          onProviderAvailabilityChange={setMapReady}
+          onProviderViewportChange={onProviderViewportChange}
+          onFocusCluster={(center) =>
+            onProviderViewportChange({
+              ...viewport,
+              center,
+              zoom: clampMapZoom(viewport.zoom + 1, "CLUSTER_EXPAND"),
+            })
+          }
+          onRecenter={onReturnToJourney}
+          onRetryMap={retryMap}
+          onRefreshLocation={() => undefined}
+          onShowRoute={onViewFullRoute}
+          onToggleFollow={onReturnToJourney}
+          onToggleLayer={() => undefined}
+          onResetHeading={onResetNorth}
+        />
+      </View>
+
+      {mapReady && viewport.bearing !== 0 ? (
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Reset map to north"
@@ -7194,11 +13521,20 @@ function OnboardJourneyMap({
       ) : null}
 
       {moreOpen ? (
-        <View
-          style={[styles.onboardMorePanel, lightMode && lightStyles.surface]}
-        >
+        <View style={styles.onboardMorePanel}>
+          <ActiveJourneyOptions
+            busy={journeyEndInProgress}
+            lightMode={lightMode}
+            highContrast={highContrast}
+            onChangeDestination={onChangeDestination}
+            onOpenAccessibility={onOpenAccessibility}
+            onEndJourney={onEndJourney}
+          />
           <Text
-            style={[styles.statusLabel, lightMode && lightStyles.mutedText]}
+            style={[
+              styles.activeJourneyOptionsTitle,
+              lightMode && lightStyles.text,
+            ]}
           >
             Map options
           </Text>
@@ -7230,17 +13566,10 @@ function OnboardJourneyMap({
             lightMode={lightMode}
             highContrast={highContrast}
           />
-          <SecondaryButton
-            label="Move journey map manually"
-            icon={MapIcon}
-            onPress={onMoveMap}
-            lightMode={lightMode}
-            highContrast={highContrast}
-          />
         </View>
       ) : null}
 
-      {!followJourney && (
+      {mapReady && !followJourney && (
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Return to journey"
@@ -7270,121 +13599,82 @@ function OnboardJourneyMap({
         lightMode={lightMode}
       />
 
-      <View style={styles.onboardMapCanvas}>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={`Service ${selectedBus.busService} bus marker. Show journey position.`}
-          onPress={onPreviewBus}
-          style={[
-            styles.journeyBusMarker,
-            lightMode && lightStyles.journeyBusMarker,
-            highContrast && styles.highContrastSelectedControl,
-          ]}
+      {routeProgressVisible ? (
+        <View
+          testID="remaining-stops-list"
+          style={styles.onboardMapCanvas}
+          accessibilityLabel="Remaining stops"
         >
-          <BusFront
-            size={22}
-            color={
-              highContrast
-                ? lightMode
-                  ? "#000000"
-                  : "#FFFFFF"
-                : colors.textOnPrimary
-            }
-            strokeWidth={2.75}
-            accessibilityElementsHidden
-            importantForAccessibility="no"
-          />
-          <ServiceNumberWithAccessibility
-            serviceNo={selectedBus.busService}
-            accessible={selectedBus.isAccessible}
-            prefix="Bus"
-            textStyle={styles.journeyBusMarkerText}
-            highContrast={highContrast}
-            onDark
-            symbolSize="small"
-          />
-        </Pressable>
+          <Text
+            style={[styles.statusLabel, lightMode && lightStyles.mutedText]}
+          >
+            Remaining stops
+          </Text>
+          {remainingRouteStops.map((stop, remainingIndex) => {
+            const index = currentStopIndex + remainingIndex + 1;
+            const next = remainingIndex === 0;
+            const destination = index === destinationStopIndex;
+            const previewed =
+              selectedPreviewStop?.busStopCode === stop.busStopCode;
+            const status = destination
+              ? next
+                ? "next destination"
+                : "destination"
+              : next
+                ? "next"
+                : "upcoming";
+            const MarkerIcon = destination ? MapPinned : MapPin;
 
-        {routeStops.map((stop, index) => {
-          const passed = index < currentStopIndex;
-          const current = index === currentStopIndex;
-          const next = index === currentStopIndex + 1;
-          const destination = index === destinationStopIndex;
-          const afterDestination =
-            destinationStopIndex >= 0 && index > destinationStopIndex;
-          const previewed =
-            selectedPreviewStop?.busStopCode === stop.busStopCode;
-          const status = current
-            ? "current"
-            : next
-              ? "next"
-              : destination
-                ? "destination"
-                : passed
-                  ? "passed"
-                  : "upcoming";
-          const MarkerIcon = destination
-            ? MapPinned
-            : current
-              ? BusFront
-              : MapPin;
-
-          return (
-            <Pressable
-              key={`${stop.sequence}-${stop.busStopCode}-map`}
-              accessibilityRole="button"
-              accessibilityLabel={`Preview ${stop.description}, ${status} route stop`}
-              onPress={() => onPreviewStop(stop)}
-              style={[
-                styles.journeyMapStopRow,
-                previewed && styles.journeyMapStopRowSelected,
-                lightMode && previewed && lightStyles.selectedCard,
-              ]}
-            >
-              <View style={styles.journeyMapRail}>
-                <View
-                  style={[
-                    styles.journeyMapLine,
-                    passed && styles.journeyMapLineCompleted,
-                    afterDestination && styles.journeyMapLineAfterDestination,
-                  ]}
-                />
-                <View
-                  style={[
-                    styles.journeyMapStopMarker,
-                    passed && styles.journeyMapStopMarkerPassed,
-                    current && styles.journeyMapStopMarkerCurrent,
-                    next && styles.journeyMapStopMarkerNext,
-                    destination && styles.journeyMapStopMarkerDestination,
-                    afterDestination && styles.journeyMapStopMarkerMuted,
-                  ]}
-                >
-                  <MarkerIcon
-                    size={18}
-                    color={destination || current ? "#FFFFFF" : colors.text}
-                    strokeWidth={2.75}
-                    accessibilityElementsHidden
-                    importantForAccessibility="no"
-                  />
+            return (
+              <Pressable
+                key={`${stop.sequence}-${stop.busStopCode}-map`}
+                testID={`remaining-stop-${stop.busStopCode}`}
+                accessibilityRole="button"
+                accessibilityLabel={`Preview ${stop.description}, ${status} route stop`}
+                onPress={() => onPreviewStop(stop)}
+                style={[
+                  styles.journeyMapStopRow,
+                  previewed && styles.journeyMapStopRowSelected,
+                  lightMode && previewed && lightStyles.selectedCard,
+                ]}
+              >
+                <View style={styles.journeyMapRail}>
+                  <View style={[styles.journeyMapLine]} />
+                  <View
+                    style={[
+                      styles.journeyMapStopMarker,
+                      next && styles.journeyMapStopMarkerNext,
+                      destination && styles.journeyMapStopMarkerDestination,
+                    ]}
+                  >
+                    <MarkerIcon
+                      size={18}
+                      color={destination ? "#FFFFFF" : colors.text}
+                      strokeWidth={2.75}
+                      accessibilityElementsHidden
+                      importantForAccessibility="no"
+                    />
+                  </View>
                 </View>
-              </View>
-              <View style={styles.journeyMapStopText}>
-                <Text
-                  style={[styles.statusValue, lightMode && lightStyles.text]}
-                >
-                  {stop.description}
-                </Text>
-                <Text
-                  style={[styles.bodyText, lightMode && lightStyles.bodyText]}
-                >
-                  {destination ? "YOUR STOP" : status.toUpperCase()} · Stop{" "}
-                  {stop.busStopCode}
-                </Text>
-              </View>
-            </Pressable>
-          );
-        })}
-      </View>
+                <View style={styles.journeyMapStopText}>
+                  <Text
+                    style={[styles.statusValue, lightMode && lightStyles.text]}
+                  >
+                    {stop.description}
+                  </Text>
+                  <Text
+                    style={[styles.bodyText, lightMode && lightStyles.bodyText]}
+                  >
+                    {next ? "NEXT" : `${remainingIndex + 1}.`}
+                    {destination ? " · DESTINATION" : ""} · Stop{" "}
+                    {stop.busStopCode}
+                  </Text>
+                </View>
+              </Pressable>
+            );
+          })}
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -7529,87 +13819,6 @@ function JourneyMapPreview({
           highContrast={highContrast}
         />
       ) : null}
-    </View>
-  );
-}
-
-function RemainingStopsList({
-  routeStops,
-  currentStopIndex,
-  destinationStopIndex,
-  lightMode,
-  highContrast,
-}: {
-  routeStops: RouteStop[];
-  currentStopIndex: number;
-  destinationStopIndex: number;
-  lightMode: boolean;
-  highContrast: boolean;
-}) {
-  const routeEndIndex =
-    destinationStopIndex >= 0 ? destinationStopIndex : routeStops.length - 1;
-  const remainingStops = routeStops.slice(
-    Math.max(0, currentStopIndex + 1),
-    Math.max(currentStopIndex + 1, routeEndIndex + 1),
-  );
-  const textStyle = [
-    styles.bodyText,
-    lightMode && lightStyles.bodyText,
-    highContrast && !lightMode && styles.highContrastMutedText,
-    highContrast && lightMode && lightStyles.highContrastMutedText,
-  ];
-  return (
-    <View
-      testID="remaining-stops-list"
-      accessibilityLabel={`Remaining stops. ${remainingStops
-        .map((stop, index) =>
-          index === 0
-            ? `Next, ${stop.description}`
-            : stop.sequence === routeStops[routeEndIndex]?.sequence
-              ? `Destination, ${stop.description}`
-              : stop.description,
-        )
-        .join(". ")}`}
-    >
-      {remainingStops.map((stop, remainingIndex) => {
-        const next = remainingIndex === 0;
-        const destinationStop =
-          stop.sequence === routeStops[routeEndIndex]?.sequence;
-        const marker = destinationStop ? "◎" : "○";
-        const label = next
-          ? "NEXT"
-          : destinationStop
-            ? "DESTINATION"
-            : `${remainingIndex + 1}. UPCOMING`;
-        return (
-          <View
-            key={`${stop.sequence}-${stop.busStopCode}`}
-            style={[
-              styles.routeProgressRow,
-              next && styles.currentRouteProgressRow,
-              destinationStop && styles.destinationRouteProgressRow,
-              lightMode && lightStyles.surface,
-            ]}
-          >
-            <Text
-              style={[
-                styles.routeProgressMarker,
-                lightMode && lightStyles.text,
-              ]}
-            >
-              {marker}
-            </Text>
-            <View style={styles.routeProgressTextGroup}>
-              <Text style={[styles.statusValue, lightMode && lightStyles.text]}>
-                {stop.description}
-              </Text>
-              <Text style={textStyle}>
-                {label} · Stop {stop.busStopCode}
-              </Text>
-            </View>
-          </View>
-        );
-      })}
     </View>
   );
 }
@@ -7869,93 +14078,175 @@ const BusStopSearchOverlay = memo(function BusStopSearchOverlay({
         ) : null}
       </View>
 
-      <ScrollView
-        keyboardShouldPersistTaps="handled"
-        style={styles.busStopSearchResultsScroll}
-        contentContainerStyle={styles.busStopSearchResultsContent}
-      >
-        {!hasQuery ? (
-          <View style={styles.searchStateBlock}>
-            <Text style={[styles.summaryValue, lightMode && lightStyles.text]}>
-              {searchMode === "DESTINATION"
-                ? "Search for a destination"
-                : searchMode === "ORIGIN"
-                  ? "Search for a starting point"
-                  : "Search for a bus stop or place"}
-            </Text>
-            <Text
-              style={[
-                styles.bodyText,
-                largeText && styles.largeBody,
-                lightMode && lightStyles.bodyText,
-              ]}
-            >
-              {searchMode === "DISCOVERY"
-                ? "Try a stop name, stop code, road, landmark or bus service."
-                : "Try NUH, Kent Ridge MRT, Central Library, a stop name or a landmark."}
-            </Text>
-            {searchMode === "DESTINATION" ? (
-              <SecondaryButton
-                label="Choose destination on map"
-                icon={MapPinned}
-                onPress={onChooseOnMap}
-                lightMode={lightMode}
-                highContrast={highContrast}
-              />
-            ) : null}
-          </View>
-        ) : searchState.status === "SEARCHING" ? (
-          <View style={styles.searchStateBlock}>
-            <ActivityIndicator accessibilityLabel="Searching stops" />
-            <Text
-              style={[
-                styles.bodyText,
-                largeText && styles.largeBody,
-                lightMode && lightStyles.bodyText,
-              ]}
-            >
-              Searching...
-            </Text>
-          </View>
-        ) : searchState.status === "EMPTY" || !hasResults ? (
-          <View style={styles.searchStateBlock}>
-            <Text style={[styles.summaryValue, lightMode && lightStyles.text]}>
-              No matches found
-            </Text>
-            <Text
-              style={[
-                styles.bodyText,
-                largeText && styles.largeBody,
-                lightMode && lightStyles.bodyText,
-              ]}
-            >
-              Try a bus stop name, stop code, road or landmark.
-            </Text>
-          </View>
-        ) : (
-          <>
-            {searchState.results.stops.length > 0 ? (
-              <View style={styles.searchSection}>
-                <Text
-                  style={[
-                    styles.searchGroupLabel,
-                    lightMode && lightStyles.mutedText,
-                  ]}
-                >
-                  Bus Stops
-                </Text>
-                {searchState.results.stops.map((stop) => {
-                  const services = busServicesForStopCode(stop.busStopCode);
-                  return (
+      {!hasQuery ? (
+        <View style={styles.searchStateBlock}>
+          <Text style={[styles.summaryValue, lightMode && lightStyles.text]}>
+            {searchMode === "DESTINATION"
+              ? "Search for a destination"
+              : searchMode === "ORIGIN"
+                ? "Search for a starting point"
+                : "Search for a bus stop or place"}
+          </Text>
+          <Text
+            style={[
+              styles.bodyText,
+              largeText && styles.largeBody,
+              lightMode && lightStyles.bodyText,
+            ]}
+          >
+            {searchMode === "DISCOVERY"
+              ? "Try a stop name, stop code, road, landmark or bus service."
+              : "Try NUH, Kent Ridge MRT, Central Library, a stop name or a landmark."}
+          </Text>
+          {searchMode === "DESTINATION" ? (
+            <SecondaryButton
+              label="Choose destination on map"
+              icon={MapPinned}
+              onPress={onChooseOnMap}
+              lightMode={lightMode}
+              highContrast={highContrast}
+            />
+          ) : null}
+        </View>
+      ) : (
+        <ScrollView
+          testID="search-results-shell"
+          keyboardShouldPersistTaps="handled"
+          style={styles.busStopSearchResultsScroll}
+          contentContainerStyle={styles.busStopSearchResultsContent}
+        >
+          {searchState.status === "SEARCHING" ? (
+            <View style={styles.searchStateBlock}>
+              <ActivityIndicator accessibilityLabel="Searching stops" />
+              <Text
+                style={[
+                  styles.bodyText,
+                  largeText && styles.largeBody,
+                  lightMode && lightStyles.bodyText,
+                ]}
+              >
+                Searching...
+              </Text>
+            </View>
+          ) : searchState.status === "EMPTY" || !hasResults ? (
+            <View style={styles.searchStateBlock}>
+              <Text
+                style={[styles.summaryValue, lightMode && lightStyles.text]}
+              >
+                No matches found
+              </Text>
+              <Text
+                style={[
+                  styles.bodyText,
+                  largeText && styles.largeBody,
+                  lightMode && lightStyles.bodyText,
+                ]}
+              >
+                Try a bus stop name, stop code, road or landmark.
+              </Text>
+            </View>
+          ) : (
+            <>
+              {searchState.results.stops.length > 0 ? (
+                <View style={styles.searchSection}>
+                  <Text
+                    style={[
+                      styles.searchGroupLabel,
+                      lightMode && lightStyles.mutedText,
+                    ]}
+                  >
+                    Bus Stops
+                  </Text>
+                  {searchState.results.stops.map((stop) => {
+                    const services = stop.services;
+                    return (
+                      <Pressable
+                        key={stop.busStopCode}
+                        accessibilityRole="button"
+                        accessibilityLabel={`${stop.description}, Bus Stop ${stop.busStopCode}, ${stop.roadName}${
+                          services.length > 0
+                            ? `, services ${formatServicesForSpeech(services)}`
+                            : ""
+                        }.`}
+                        onPress={() => onSelectStop(stop)}
+                        style={[
+                          styles.transportSearchResult,
+                          lightMode && lightStyles.landmarkSearchResult,
+                          highContrast &&
+                            !lightMode &&
+                            styles.highContrastControl,
+                          highContrast &&
+                            lightMode &&
+                            lightStyles.highContrastControl,
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.transportSearchIcon,
+                            { color: theme.colors.map.controlIcon },
+                          ]}
+                        >
+                          BUS
+                        </Text>
+                        <View style={styles.landmarkSearchTextGroup}>
+                          <Text
+                            style={[
+                              styles.summaryValue,
+                              largeText && styles.largeBody,
+                              lightMode && lightStyles.text,
+                            ]}
+                          >
+                            {stop.description}
+                          </Text>
+                          <Text
+                            style={[
+                              styles.summaryLabel,
+                              lightMode && lightStyles.mutedText,
+                            ]}
+                          >
+                            Bus Stop {stop.busStopCode}
+                          </Text>
+                          <Text
+                            style={[
+                              styles.bodyText,
+                              lightMode && lightStyles.bodyText,
+                            ]}
+                          >
+                            {stop.roadName}
+                          </Text>
+                          {services.length > 0 ? (
+                            <Text
+                              style={[
+                                styles.summaryLabel,
+                                lightMode && lightStyles.mutedText,
+                              ]}
+                            >
+                              Services {services.join(" · ")}
+                            </Text>
+                          ) : null}
+                        </View>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              ) : null}
+
+              {searchState.results.places.length > 0 ? (
+                <View style={styles.searchSection}>
+                  <Text
+                    style={[
+                      styles.searchGroupLabel,
+                      lightMode && lightStyles.mutedText,
+                    ]}
+                  >
+                    Places
+                  </Text>
+                  {searchState.results.places.map((place) => (
                     <Pressable
-                      key={stop.busStopCode}
+                      key={place.id}
                       accessibilityRole="button"
-                      accessibilityLabel={`${stop.description}, Bus Stop ${stop.busStopCode}, ${stop.roadName}${
-                        services.length > 0
-                          ? `, services ${formatServicesForSpeech(services)}`
-                          : ""
-                      }.`}
-                      onPress={() => onSelectStop(stop)}
+                      accessibilityLabel={`${place.name}, place. Select to view nearby bus stops.`}
+                      onPress={() => onSelectPlace(place)}
                       style={[
                         styles.transportSearchResult,
                         lightMode && lightStyles.landmarkSearchResult,
@@ -7973,7 +14264,7 @@ const BusStopSearchOverlay = memo(function BusStopSearchOverlay({
                           { color: theme.colors.map.controlIcon },
                         ]}
                       >
-                        BUS
+                        {landmarkIcon(place)}
                       </Text>
                       <View style={styles.landmarkSearchTextGroup}>
                         <Text
@@ -7983,7 +14274,7 @@ const BusStopSearchOverlay = memo(function BusStopSearchOverlay({
                             lightMode && lightStyles.text,
                           ]}
                         >
-                          {stop.description}
+                          {place.name}
                         </Text>
                         <Text
                           style={[
@@ -7991,148 +14282,75 @@ const BusStopSearchOverlay = memo(function BusStopSearchOverlay({
                             lightMode && lightStyles.mutedText,
                           ]}
                         >
-                          Bus Stop {stop.busStopCode}
+                          {place.category}
+                        </Text>
+                      </View>
+                    </Pressable>
+                  ))}
+                </View>
+              ) : null}
+
+              {searchState.results.services.length > 0 ? (
+                <View style={styles.searchSection}>
+                  <Text
+                    style={[
+                      styles.searchGroupLabel,
+                      lightMode && lightStyles.mutedText,
+                    ]}
+                  >
+                    Bus Services
+                  </Text>
+                  {searchState.results.services.map((serviceNo) => (
+                    <Pressable
+                      key={serviceNo}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Service ${serviceNo}. Stops serving ${serviceNo}.`}
+                      onPress={() => onSelectService(serviceNo)}
+                      style={[
+                        styles.transportSearchResult,
+                        lightMode && lightStyles.landmarkSearchResult,
+                        highContrast &&
+                          !lightMode &&
+                          styles.highContrastControl,
+                        highContrast &&
+                          lightMode &&
+                          lightStyles.highContrastControl,
+                      ]}
+                    >
+                      <BusFront
+                        size={24}
+                        color={theme.colors.map.controlIcon}
+                        strokeWidth={2.8}
+                        accessibilityElementsHidden
+                        importantForAccessibility="no"
+                      />
+                      <View style={styles.landmarkSearchTextGroup}>
+                        <Text
+                          style={[
+                            styles.summaryValue,
+                            largeText && styles.largeBody,
+                            lightMode && lightStyles.text,
+                          ]}
+                        >
+                          {serviceNo}
                         </Text>
                         <Text
                           style={[
-                            styles.bodyText,
-                            lightMode && lightStyles.bodyText,
+                            styles.summaryLabel,
+                            lightMode && lightStyles.mutedText,
                           ]}
                         >
-                          {stop.roadName}
+                          Stops serving {serviceNo}
                         </Text>
-                        {services.length > 0 ? (
-                          <Text
-                            style={[
-                              styles.summaryLabel,
-                              lightMode && lightStyles.mutedText,
-                            ]}
-                          >
-                            Services {services.join(" · ")}
-                          </Text>
-                        ) : null}
                       </View>
                     </Pressable>
-                  );
-                })}
-              </View>
-            ) : null}
-
-            {searchState.results.places.length > 0 ? (
-              <View style={styles.searchSection}>
-                <Text
-                  style={[
-                    styles.searchGroupLabel,
-                    lightMode && lightStyles.mutedText,
-                  ]}
-                >
-                  Places
-                </Text>
-                {searchState.results.places.map((place) => (
-                  <Pressable
-                    key={place.id}
-                    accessibilityRole="button"
-                    accessibilityLabel={`${place.name}, place. Select to view nearby bus stops.`}
-                    onPress={() => onSelectPlace(place)}
-                    style={[
-                      styles.transportSearchResult,
-                      lightMode && lightStyles.landmarkSearchResult,
-                      highContrast && !lightMode && styles.highContrastControl,
-                      highContrast &&
-                        lightMode &&
-                        lightStyles.highContrastControl,
-                    ]}
-                  >
-                    <Text
-                      style={[
-                        styles.transportSearchIcon,
-                        { color: theme.colors.map.controlIcon },
-                      ]}
-                    >
-                      {landmarkIcon(place)}
-                    </Text>
-                    <View style={styles.landmarkSearchTextGroup}>
-                      <Text
-                        style={[
-                          styles.summaryValue,
-                          largeText && styles.largeBody,
-                          lightMode && lightStyles.text,
-                        ]}
-                      >
-                        {place.name}
-                      </Text>
-                      <Text
-                        style={[
-                          styles.summaryLabel,
-                          lightMode && lightStyles.mutedText,
-                        ]}
-                      >
-                        {place.category}
-                      </Text>
-                    </View>
-                  </Pressable>
-                ))}
-              </View>
-            ) : null}
-
-            {searchState.results.services.length > 0 ? (
-              <View style={styles.searchSection}>
-                <Text
-                  style={[
-                    styles.searchGroupLabel,
-                    lightMode && lightStyles.mutedText,
-                  ]}
-                >
-                  Bus Services
-                </Text>
-                {searchState.results.services.map((serviceNo) => (
-                  <Pressable
-                    key={serviceNo}
-                    accessibilityRole="button"
-                    accessibilityLabel={`Service ${serviceNo}. Stops serving ${serviceNo}.`}
-                    onPress={() => onSelectService(serviceNo)}
-                    style={[
-                      styles.transportSearchResult,
-                      lightMode && lightStyles.landmarkSearchResult,
-                      highContrast && !lightMode && styles.highContrastControl,
-                      highContrast &&
-                        lightMode &&
-                        lightStyles.highContrastControl,
-                    ]}
-                  >
-                    <BusFront
-                      size={24}
-                      color={theme.colors.map.controlIcon}
-                      strokeWidth={2.8}
-                      accessibilityElementsHidden
-                      importantForAccessibility="no"
-                    />
-                    <View style={styles.landmarkSearchTextGroup}>
-                      <Text
-                        style={[
-                          styles.summaryValue,
-                          largeText && styles.largeBody,
-                          lightMode && lightStyles.text,
-                        ]}
-                      >
-                        {serviceNo}
-                      </Text>
-                      <Text
-                        style={[
-                          styles.summaryLabel,
-                          lightMode && lightStyles.mutedText,
-                        ]}
-                      >
-                        Stops serving {serviceNo}
-                      </Text>
-                    </View>
-                  </Pressable>
-                ))}
-              </View>
-            ) : null}
-          </>
-        )}
-      </ScrollView>
+                  ))}
+                </View>
+              ) : null}
+            </>
+          )}
+        </ScrollView>
+      )}
     </View>
   );
 });
@@ -8201,8 +14419,65 @@ function MapListToggle({
   );
 }
 
+export function MapStatusPill({
+  message,
+  isAlert = false,
+  lightMode,
+  highContrast,
+  error = false,
+  children,
+}: {
+  message?: string | null;
+  isAlert?: boolean;
+  lightMode: boolean;
+  highContrast: boolean;
+  error?: boolean;
+  children?: React.ReactNode;
+}) {
+  const normalizedMessage = message?.trim();
+  if (!normalizedMessage) {
+    return null;
+  }
+  const theme = resolveVisualTheme(lightMode, highContrast);
+
+  return (
+    <View
+      testID="map-status-pill"
+      pointerEvents={children ? "auto" : "none"}
+      accessible
+      accessibilityRole={isAlert ? "alert" : undefined}
+      accessibilityLiveRegion={isAlert ? "assertive" : "polite"}
+      accessibilityLabel={normalizedMessage}
+      style={[
+        styles.regionalStopsStatus,
+        {
+          backgroundColor: theme.colors.map.overlaySurfaceElevated,
+          borderColor: error
+            ? theme.colors.statusError
+            : theme.colors.map.overlayBorder,
+        },
+      ]}
+    >
+      <Text
+        style={[
+          styles.statusLabel,
+          styles.regionalStopsStatusText,
+          { color: theme.colors.textPrimary },
+        ]}
+      >
+        {normalizedMessage}
+      </Text>
+      {children}
+    </View>
+  );
+}
+
 function MapFirstStopScreen({
   stops,
+  nearbyStops,
+  accessibleStopRoutes,
+  accessibleRoutesOnly,
+  recommendedStopCode,
   selectedStop,
   selectedLandmark,
   landmarks,
@@ -8214,7 +14489,21 @@ function MapFirstStopScreen({
   searchThisAreaVisible,
   nearbyHeading,
   directionsActive,
-  followMode,
+  followState,
+  directionsStatus,
+  directionsError,
+  mobilityMode,
+  wheelchairRoutingPreferred,
+  wheelchairRoutingAvailable,
+  walkingRoute,
+  walkingRouteProgress,
+  walkingRouteOffRoute,
+  walkingLocationAccuracyLimited,
+  canRepeatWalkingGuidance,
+  guidanceStatus,
+  routeFitKey,
+  locationPulseKey,
+  reducedMotion,
   rotationEnabled,
   hasSelectedService,
   hasSelectedDestination,
@@ -8231,11 +14520,14 @@ function MapFirstStopScreen({
   searchMode,
   bottomSheetState,
   bottomSheetContent,
+  nearbyOpen,
   lastExpandedSheetState,
   nearbyStatus,
   locationStatus,
   locationRequested,
   connectivityStatus,
+  regionalStopsStatus,
+  staticServicesStatus,
   largeText,
   lightMode,
   highContrast,
@@ -8263,6 +14555,7 @@ function MapFirstStopScreen({
   onRecenter,
   onLocateMap,
   onOpenNearby,
+  onToggleAccessibleRoutesOnly,
   onRefreshLocation,
   onSearchForStop,
   onShowRoute,
@@ -8273,15 +14566,29 @@ function MapFirstStopScreen({
   onToggleLayer,
   onResetHeading,
   onDirections,
+  onRetryDirections,
+  onChangeMobilityMode,
+  onStartGuidance,
+  onRecalculateDirections,
+  onContinueWithoutRerouting,
+  onRepeatWalkingGuidance,
+  onUseLocationForDirections,
   onStopDirections,
   onClearSelectedStop,
   onExitMap,
   onConfirm,
+  onSelectService,
   onHear,
   onHearDirections,
+  onRetryRegionalStops,
+  onRetryStopServices,
   onSetBottomSheetState,
 }: {
   stops: NearbyBusStop[];
+  nearbyStops: NearbyBusStop[];
+  accessibleStopRoutes: Record<string, AccessibleStopRouteStatus>;
+  accessibleRoutesOnly: boolean;
+  recommendedStopCode?: string;
   selectedStop: NearbyBusStop | null;
   selectedLandmark: MapLandmark | null;
   landmarks: MapLandmark[];
@@ -8289,6 +14596,7 @@ function MapFirstStopScreen({
     latitude: number;
     longitude: number;
     accuracyMeters?: number;
+    headingDegrees?: number;
   } | null;
   mapViewport: MapViewport;
   mapCameraGeometry: MapCameraGeometry;
@@ -8297,7 +14605,21 @@ function MapFirstStopScreen({
   searchThisAreaVisible: boolean;
   nearbyHeading: string;
   directionsActive: boolean;
-  followMode: boolean;
+  followState: MapFollowState;
+  directionsStatus: DirectionsStatus;
+  directionsError: string | null;
+  mobilityMode: MobilityMode;
+  wheelchairRoutingPreferred: boolean;
+  wheelchairRoutingAvailable: boolean;
+  walkingRoute: WalkingRoute | null;
+  walkingRouteProgress: WalkingRouteProgress | null;
+  walkingRouteOffRoute: boolean;
+  walkingLocationAccuracyLimited: boolean;
+  canRepeatWalkingGuidance: boolean;
+  guidanceStatus: GuidanceStatus;
+  routeFitKey: number;
+  locationPulseKey: number;
+  reducedMotion: boolean;
   rotationEnabled: boolean;
   hasSelectedService: boolean;
   hasSelectedDestination: boolean;
@@ -8314,11 +14636,14 @@ function MapFirstStopScreen({
   searchMode: TransportSearchMode;
   bottomSheetState: BottomSheetState;
   bottomSheetContent: MapBottomSheetContent;
+  nearbyOpen: boolean;
   lastExpandedSheetState: UsefulBottomSheetState;
   nearbyStatus: NearbyStopsState;
   locationStatus: LocationState;
   locationRequested: boolean;
   connectivityStatus: ConnectivityState;
+  regionalStopsStatus: RegionalStopsStatus;
+  staticServicesStatus: DataLoadStatus;
   largeText: boolean;
   lightMode: boolean;
   highContrast: boolean;
@@ -8346,6 +14671,7 @@ function MapFirstStopScreen({
   onRecenter: () => void;
   onLocateMap: () => void;
   onOpenNearby: () => void;
+  onToggleAccessibleRoutesOnly: () => void;
   onRefreshLocation: () => void;
   onSearchForStop: () => void;
   onShowRoute: () => void;
@@ -8356,22 +14682,45 @@ function MapFirstStopScreen({
   onToggleLayer: (layer: MapLayerKey) => void;
   onResetHeading: () => void;
   onDirections: () => void;
+  onRetryDirections: () => void;
+  onChangeMobilityMode: (mode: MobilityMode) => void;
+  onStartGuidance: () => void;
+  onRecalculateDirections: () => void;
+  onContinueWithoutRerouting: () => void;
+  onRepeatWalkingGuidance: () => void;
+  onUseLocationForDirections: () => void;
   onStopDirections: () => void;
   onClearSelectedStop: () => void;
   onExitMap: () => void;
   onConfirm: () => void;
+  onSelectService: (serviceNo: string) => void;
   onHear: () => void;
   onHearDirections: () => void;
+  onRetryRegionalStops: () => void;
+  onRetryStopServices: () => void;
   onSetBottomSheetState: (state: BottomSheetState) => void;
 }) {
   const [showMoreControls, setShowMoreControls] = useState(false);
+  const [mapProviderRetryKey, setMapProviderRetryKey] = useState(0);
+  const [mapReady, setMapReady] = useState(false);
   const theme = resolveVisualTheme(lightMode, highContrast);
-  const sheetExpanded = bottomSheetState === "EXPANDED";
+  const mapProviderConfigured = shouldUseMapProvider(false);
   const searchActive = searchState.isOpen;
+  const showNearbySheet = mapReady && nearbyOpen;
+  const showMapUnavailableManualSelection =
+    !mapReady && nearbyOpen && bottomSheetContent === "NEARBY";
   const plannerActive =
     !hasSelectedService && !selectedStop && !directionsActive;
+  const mapInteractionMode: MapInteractionMode =
+    mapPickMode === "DESTINATION"
+      ? "CHOOSE_DESTINATION_ON_MAP"
+      : directionsActive && followState !== "FREE"
+        ? "FOLLOW_JOURNEY"
+        : mapViewport.mode === "USER_LOCATION"
+          ? "FOLLOW_USER"
+          : "BROWSE";
   const contextualMapControl =
-    searchThisAreaVisible && !showMoreControls && !searchActive
+    mapReady && searchThisAreaVisible && !showMoreControls && !searchActive
       ? {
           accessibilityLabel:
             "Find bus stops in the currently visible map area",
@@ -8395,6 +14744,14 @@ function MapFirstStopScreen({
     });
   }
   const ContextualMapControlIcon = contextualMapControl?.icon;
+  const effectiveBottomSheetState =
+    showMoreControls ||
+    (bottomSheetContent === "NEARBY" &&
+      !showNearbySheet &&
+      !showMapUnavailableManualSelection &&
+      !selectedStop)
+      ? "HIDDEN_PEEK"
+      : bottomSheetState;
   const overlayLayout = {
     paddingRight: rightToolbarWidth + mapOverlayMargin,
   };
@@ -8404,7 +14761,7 @@ function MapFirstStopScreen({
       ? "Back to bus stop details"
       : selectedStop
         ? "Back to nearby bus stops"
-        : bottomSheetState !== "COLLAPSED" && bottomSheetState !== "HIDDEN_PEEK"
+        : bottomSheetState !== "HIDDEN_PEEK"
           ? "Back to map"
           : "Back to previous view";
   const handleBack = () => {
@@ -8418,18 +14775,14 @@ function MapFirstStopScreen({
     }
     if (directionsActive) {
       onStopDirections();
-      onSetBottomSheetState("MEDIUM");
       return;
     }
     if (selectedStop) {
       onClearSelectedStop();
       return;
     }
-    if (
-      bottomSheetState !== "COLLAPSED" &&
-      bottomSheetState !== "HIDDEN_PEEK"
-    ) {
-      onSetBottomSheetState("COLLAPSED");
+    if (bottomSheetState !== "HIDDEN_PEEK") {
+      onSetBottomSheetState("HIDDEN_PEEK");
       return;
     }
     onExitMap();
@@ -8439,6 +14792,61 @@ function MapFirstStopScreen({
       setShowMoreControls(false);
     }
   }, [searchActive]);
+  useEffect(() => {
+    logMapConfiguration("screen opened");
+    if (mapProviderConfigured) {
+      return;
+    }
+    setMapReady(false);
+    setShowMoreControls(false);
+    if (__DEV__ && process.env.NODE_ENV !== "test") {
+      console.warn("[Map] initialization unavailable", {
+        platform: Platform.OS,
+        reason: mapTechnicalConfigurationMessage(),
+      });
+    }
+  }, [mapProviderConfigured]);
+  const handleMapProviderAvailabilityChange = useCallback((ready: boolean) => {
+    setMapReady(ready);
+    if (!ready) {
+      setShowMoreControls(false);
+    }
+  }, []);
+  const retryMapProvider = useCallback(() => {
+    setMapReady(false);
+    setShowMoreControls(false);
+    setMapProviderRetryKey((current) => {
+      const nextAttempt = current + 1;
+      if (__DEV__ && process.env.NODE_ENV !== "test") {
+        console.info("[Map] retry requested", {
+          attempt: nextAttempt,
+          platform: Platform.OS,
+          provider: Platform.OS === "web" ? "OPENSTREETMAP" : "GOOGLE_MAPS",
+        });
+      }
+      return nextAttempt;
+    });
+  }, []);
+  const routeSheetHeight =
+    guidanceStatus === "ACTIVE"
+      ? 300
+      : directionsActive
+        ? 430
+        : mapBottomSheetHeights[effectiveBottomSheetState];
+  const routeFitPadding = {
+    top: Math.max(96, mapCameraGeometry.insets.top),
+    right: Math.max(
+      rightToolbarWidth + mapOverlayMargin * 2,
+      mapCameraGeometry.insets.right,
+    ),
+    bottom: Math.max(
+      bottomNavigationHeight + routeSheetHeight + mapOverlayMargin,
+      mapCameraGeometry.insets.bottom,
+    ),
+    left: Math.max(18, mapCameraGeometry.insets.left),
+  };
+  const visibleMapLayers =
+    guidanceStatus === "ACTIVE" ? { ...layers, busStops: false } : layers;
 
   return (
     <View
@@ -8449,18 +14857,26 @@ function MapFirstStopScreen({
     >
       <NearbyStopsMap
         stops={stops}
+        recommendedStopCode={recommendedStopCode}
         selectedStop={selectedStop}
         selectedLandmark={selectedLandmark}
         landmarks={landmarks}
         currentLocation={currentLocation}
         mapViewport={mapViewport}
         mapCameraGeometry={mapCameraGeometry}
-        layers={layers}
+        layers={visibleMapLayers}
         mapManuallyMoved={mapManuallyMoved}
+        mapInteractionMode={mapInteractionMode}
         directionsActive={directionsActive}
-        followMode={followMode}
+        followMode={followState !== "FREE"}
         hasSelectedService={hasSelectedService}
+        providerRetryKey={mapProviderRetryKey}
         journeyAlternative={plannerActive ? selectedJourneyAlternative : null}
+        walkingRoute={walkingRoute}
+        routeFitKey={routeFitKey}
+        routeFitPadding={routeFitPadding}
+        locationPulseKey={locationPulseKey}
+        reducedMotion={reducedMotion}
         mapPickCandidate={mapPickMode ? mapPickCandidate : null}
         headingDegrees={headingDegrees}
         largeText={largeText}
@@ -8469,8 +14885,8 @@ function MapFirstStopScreen({
         showInlineControls={false}
         onSelectStop={(stop) => {
           setShowMoreControls(false);
+          onSetBottomSheetState("HIDDEN_PEEK");
           onSelectStop(stop);
-          onSetBottomSheetState("MEDIUM");
         }}
         onSelectLandmark={(landmark) => {
           setShowMoreControls(false);
@@ -8478,13 +14894,16 @@ function MapFirstStopScreen({
         }}
         onMapLayoutChange={onMapLayoutChange}
         onMoveMap={onMoveMap}
+        onProviderAvailabilityChange={handleMapProviderAvailabilityChange}
         onProviderViewportChange={onProviderViewportChange}
         onFocusCluster={(center) => {
           setShowMoreControls(false);
           onFocusCluster(center);
         }}
         onRecenter={onRecenter}
+        onRetryMap={retryMapProvider}
         onRefreshLocation={onRefreshLocation}
+        onSelectBusStopManually={onOpenNearby}
         onShowRoute={onShowRoute}
         onToggleFollow={onToggleFollow}
         onToggleLayer={onToggleLayer}
@@ -8570,8 +14989,56 @@ function MapFirstStopScreen({
             </Text>
           </Pressable>
         ) : null}
+        {mapReady && regionalStopsStatus === "LOADING" ? (
+          <MapStatusPill
+            message="Loading stops..."
+            lightMode={lightMode}
+            highContrast={highContrast}
+          />
+        ) : null}
+        {mapReady && regionalStopsStatus === "ERROR" ? (
+          <MapStatusPill
+            message={
+              stops.length > 0
+                ? "Unable to update bus stops"
+                : "Unable to load bus stops"
+            }
+            isAlert
+            error
+            lightMode={lightMode}
+            highContrast={highContrast}
+          >
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Retry loading bus stops"
+              onPress={onRetryRegionalStops}
+              style={styles.regionalStopsRetry}
+            >
+              <RefreshCw
+                size={14}
+                color={theme.colors.actionPrimary}
+                strokeWidth={2.8}
+              />
+              <Text
+                style={[
+                  styles.statusLabel,
+                  { color: theme.colors.actionPrimary },
+                ]}
+              >
+                Retry
+              </Text>
+            </Pressable>
+          </MapStatusPill>
+        ) : null}
+        {mapReady && regionalStopsStatus === "SUCCESS" && stops.length === 0 ? (
+          <MapStatusPill
+            message="No bus stops in this area."
+            lightMode={lightMode}
+            highContrast={highContrast}
+          />
+        ) : null}
       </View>
-      {mapPickMode === "DESTINATION" && !searchActive ? (
+      {mapReady && mapPickMode === "DESTINATION" && !searchActive ? (
         <MapDestinationPicker
           candidate={mapPickCandidate}
           lightMode={lightMode}
@@ -8579,34 +15046,30 @@ function MapFirstStopScreen({
           onConfirm={onConfirmMapDestination}
         />
       ) : null}
-      {!searchActive ? (
+      {mapReady && !searchActive ? (
         <MapSideControls
-          selectedStop={selectedStop}
           sheetState={bottomSheetState}
           sheetContent={bottomSheetContent}
-          expanded={sheetExpanded}
+          nearbyOpen={nearbyOpen}
           moreOpen={showMoreControls}
           bearingDegrees={mapViewport.bearing}
+          followState={followState}
           lightMode={lightMode}
           highContrast={highContrast}
           onLocate={() => {
-            onRecenter();
             onLocateMap();
           }}
           onNearby={() => {
             onOpenNearby();
           }}
-          onMap={() => {
-            onSetBottomSheetState("COLLAPSED");
-            onStopDirections();
-            setShowMoreControls(false);
+          onMore={() => {
+            onSetBottomSheetState("HIDDEN_PEEK");
+            setShowMoreControls((current) => !current);
           }}
-          onDirections={selectedStop ? onDirections : undefined}
-          onMore={() => setShowMoreControls((current) => !current)}
           onResetHeading={onResetHeading}
         />
       ) : null}
-      {showMoreControls ? (
+      {mapReady && showMoreControls ? (
         <View
           pointerEvents="none"
           style={[
@@ -8620,7 +15083,7 @@ function MapFirstStopScreen({
           ]}
         />
       ) : null}
-      {showMoreControls ? (
+      {mapReady && showMoreControls ? (
         <MapLayerQuickControls
           layers={layers}
           lightMode={lightMode}
@@ -8656,7 +15119,10 @@ function MapFirstStopScreen({
         />
       ) : (
         <JourneyBottomSheet
-          stops={stops}
+          stops={nearbyStops}
+          accessibleStopRoutes={accessibleStopRoutes}
+          accessibleRoutesOnly={accessibleRoutesOnly}
+          recommendedStopCode={recommendedStopCode}
           selectedStop={selectedStop}
           selectedLandmark={selectedLandmark}
           journeyOrigin={journeyOrigin}
@@ -8672,9 +15138,21 @@ function MapFirstStopScreen({
           locationStatus={locationStatus}
           locationRequested={locationRequested}
           connectivityStatus={connectivityStatus}
-          state={showMoreControls ? "HIDDEN_PEEK" : bottomSheetState}
+          staticServicesStatus={staticServicesStatus}
+          state={effectiveBottomSheetState}
           lastExpandedState={lastExpandedSheetState}
           directionsActive={directionsActive}
+          directionsStatus={directionsStatus}
+          directionsError={directionsError}
+          mobilityMode={mobilityMode}
+          wheelchairRoutingPreferred={wheelchairRoutingPreferred}
+          wheelchairRoutingAvailable={wheelchairRoutingAvailable}
+          walkingRoute={walkingRoute}
+          walkingRouteProgress={walkingRouteProgress}
+          walkingRouteOffRoute={walkingRouteOffRoute}
+          walkingLocationAccuracyLimited={walkingLocationAccuracyLimited}
+          canRepeatWalkingGuidance={canRepeatWalkingGuidance}
+          guidanceStatus={guidanceStatus}
           largeText={largeText}
           lightMode={lightMode}
           highContrast={highContrast}
@@ -8689,11 +15167,22 @@ function MapFirstStopScreen({
           onChooseDestinationOnMap={onChooseDestinationOnMap}
           onStartJourneyPlan={onStartJourneyPlan}
           onRetryNearby={onRefreshLocation}
+          onToggleAccessibleRoutesOnly={onToggleAccessibleRoutesOnly}
+          onRetryStopServices={onRetryStopServices}
           onSearchForStop={onSearchForStop}
           onConfirm={onConfirm}
+          onSelectService={onSelectService}
           onHear={onHear}
           onDirections={onDirections}
+          onRetryDirections={onRetryDirections}
+          onChangeMobilityMode={onChangeMobilityMode}
+          onStartGuidance={onStartGuidance}
+          onRecalculateDirections={onRecalculateDirections}
+          onContinueWithoutRerouting={onContinueWithoutRerouting}
+          onRepeatWalkingGuidance={onRepeatWalkingGuidance}
+          onUseLocationForDirections={onUseLocationForDirections}
           onStopDirections={onStopDirections}
+          onChooseDifferentStop={onClearSelectedStop}
           onHearDirections={onHearDirections}
         />
       )}
@@ -9165,70 +15654,58 @@ function JourneyStepList({
 }
 
 function MapSideControls({
-  selectedStop,
   sheetState,
   sheetContent,
-  expanded,
+  nearbyOpen,
   moreOpen,
   bearingDegrees,
+  followState,
   lightMode,
   highContrast,
   onLocate,
   onNearby,
-  onMap,
-  onDirections,
   onMore,
   onResetHeading,
 }: {
-  selectedStop: NearbyBusStop | null;
   sheetState: BottomSheetState;
   sheetContent: MapBottomSheetContent;
-  expanded: boolean;
+  nearbyOpen: boolean;
   moreOpen: boolean;
   bearingDegrees: number;
+  followState: MapFollowState;
   lightMode: boolean;
   highContrast: boolean;
   onLocate: () => void;
   onNearby: () => void;
-  onMap: () => void;
-  onDirections?: () => void;
   onMore: () => void;
   onResetHeading: () => void;
 }) {
+  const runtimeAccessibility = useContext(AccessibilityRuntimeContext);
   const theme = resolveVisualTheme(lightMode, highContrast);
   const mapIsRotated = normalizeBearing(bearingDegrees) !== 0;
-  const nearbyActive = !moreOpen && sheetContent === "NEARBY";
+  const nearbyActive = nearbyOpen;
   const controls = [
     {
       key: "locate",
-      label: "Locate",
-      accessibilityLabel: "Centre map on my current location",
+      label: followState === "FREE" ? "Locate" : "Following",
+      accessibilityLabel:
+        followState === "FOLLOW_USER_HEADING"
+          ? "Following my location and heading"
+          : followState === "FOLLOW_USER"
+            ? "Following my location"
+            : "Centre map on my current location",
       icon: LocateFixed,
       onPress: onLocate,
+      active: followState !== "FREE",
     },
-    ...(!expanded
-      ? [
-          {
-            key: "nearby",
-            label: "Nearby",
-            accessibilityLabel: "Show nearby bus stops in this area",
-            icon: List,
-            onPress: onNearby,
-            active: nearbyActive,
-          },
-        ]
-      : []),
-    ...(selectedStop
-      ? [
-          {
-            key: "directions",
-            label: "Route",
-            accessibilityLabel: "Directions",
-            icon: Route,
-            onPress: onDirections,
-          },
-        ]
-      : []),
+    {
+      key: "nearby",
+      label: "Nearby",
+      accessibilityLabel: "Show nearby bus stops in this area",
+      icon: List,
+      onPress: onNearby,
+      active: nearbyActive,
+    },
     {
       key: "more",
       label: "More",
@@ -9239,20 +15716,14 @@ function MapSideControls({
   ];
 
   return (
-    <View
-      style={[
-        styles.mapSideControls,
-        expanded && styles.mapSideControlsExpanded,
-      ]}
-    >
-      {mapIsRotated ? (
-        <CompassResetControl
-          bearingDegrees={bearingDegrees}
-          lightMode={lightMode}
-          highContrast={highContrast}
-          onPress={onResetHeading}
-        />
-      ) : null}
+    <View testID="map-side-control-stack" style={styles.mapSideControls}>
+      <CompassResetControl
+        bearingDegrees={bearingDegrees}
+        prominent={mapIsRotated}
+        lightMode={lightMode}
+        highContrast={highContrast}
+        onPress={onResetHeading}
+      />
       {controls.map(
         ({ key, label, accessibilityLabel, icon: Icon, onPress, active }) => (
           <Pressable
@@ -9262,11 +15733,13 @@ function MapSideControls({
             accessibilityState={{
               expanded: key === "more" ? moreOpen : undefined,
               selected:
-                key === "nearby"
-                  ? nearbyActive
-                  : key === "more"
-                    ? moreOpen
-                    : undefined,
+                key === "locate"
+                  ? followState !== "FREE"
+                  : key === "nearby"
+                    ? nearbyActive
+                    : key === "more"
+                      ? moreOpen
+                      : undefined,
             }}
             onPress={onPress}
             style={[
@@ -9292,6 +15765,7 @@ function MapSideControls({
                 backgroundColor: theme.colors.selectedSurface,
                 borderColor: theme.colors.map.selectionAccent,
               },
+              runtimeAccessibility.largerControls && styles.largerMapControl,
             ]}
           >
             <Icon
@@ -9330,11 +15804,13 @@ function MapSideControls({
 
 function CompassResetControl({
   bearingDegrees,
+  prominent,
   lightMode,
   highContrast,
   onPress,
 }: {
   bearingDegrees: number;
+  prominent: boolean;
   lightMode: boolean;
   highContrast: boolean;
   onPress: () => void;
@@ -9362,6 +15838,7 @@ function CompassResetControl({
           borderColor: theme.colors.map.selectionAccent,
         },
         lightMode && lightStyles.activeMapSideControl,
+        !prominent && styles.subtleMapCompassControl,
         highContrast && !lightMode && styles.highContrastSelectedControl,
         highContrast && lightMode && lightStyles.highContrastSelectedControl,
       ]}
@@ -9508,25 +15985,20 @@ function MapLayerQuickControls({
   ];
   const orientationRows = [
     {
-      label: "Rotate map",
-      accessibilityLabel: `Rotate map, ${rotationEnabled ? "on" : "off"}`,
-      icon: Compass,
-      onPress: onRotateMap,
-      state: rotationEnabled ? "ON" : "OFF",
-    },
-    {
       label: "North up",
       accessibilityLabel: "North up",
       icon: Compass,
       onPress: onResetHeading,
       disabled: isNorthUp,
       reason: "Map is already north up",
+      state: undefined,
     },
     {
       label: "Reset map",
       accessibilityLabel: "Reset map view",
       icon: RefreshCw,
       onPress: onResetMap,
+      state: undefined,
     },
   ];
   const runCameraAction = (
@@ -9814,18 +16286,10 @@ function MapLayerQuickControls({
           }) => (
             <Pressable
               key={label}
-              accessibilityRole={label === "Rotate map" ? "switch" : "button"}
+              accessibilityRole="button"
               accessibilityLabel={accessibilityLabel}
-              accessibilityState={
-                label === "Rotate map"
-                  ? { checked: rotationEnabled }
-                  : { disabled }
-              }
+              accessibilityState={{ disabled }}
               onPress={() => {
-                if (label === "Rotate map") {
-                  onPress();
-                  return;
-                }
                 runCameraAction(onPress, disabled, reason);
               }}
               style={[
@@ -9908,6 +16372,9 @@ function MapLayerQuickControls({
 
 function JourneyBottomSheet({
   stops,
+  accessibleStopRoutes,
+  accessibleRoutesOnly,
+  recommendedStopCode,
   selectedStop,
   selectedLandmark,
   journeyOrigin,
@@ -9923,9 +16390,21 @@ function JourneyBottomSheet({
   locationStatus,
   locationRequested,
   connectivityStatus,
+  staticServicesStatus,
   state,
   lastExpandedState,
   directionsActive,
+  directionsStatus,
+  directionsError,
+  mobilityMode,
+  wheelchairRoutingPreferred,
+  wheelchairRoutingAvailable,
+  walkingRoute,
+  walkingRouteProgress,
+  walkingRouteOffRoute,
+  walkingLocationAccuracyLimited,
+  canRepeatWalkingGuidance,
+  guidanceStatus,
   largeText,
   lightMode,
   highContrast,
@@ -9940,14 +16419,28 @@ function JourneyBottomSheet({
   onChooseDestinationOnMap,
   onStartJourneyPlan,
   onRetryNearby,
+  onToggleAccessibleRoutesOnly,
+  onRetryStopServices,
   onSearchForStop,
   onConfirm,
+  onSelectService,
   onHear,
   onDirections,
+  onRetryDirections,
+  onChangeMobilityMode,
+  onStartGuidance,
+  onRecalculateDirections,
+  onContinueWithoutRerouting,
+  onRepeatWalkingGuidance,
+  onUseLocationForDirections,
   onStopDirections,
+  onChooseDifferentStop,
   onHearDirections,
 }: {
   stops: NearbyBusStop[];
+  accessibleStopRoutes: Record<string, AccessibleStopRouteStatus>;
+  accessibleRoutesOnly: boolean;
+  recommendedStopCode?: string;
   selectedStop: NearbyBusStop | null;
   selectedLandmark: MapLandmark | null;
   journeyOrigin: JourneyPoint;
@@ -9963,9 +16456,21 @@ function JourneyBottomSheet({
   locationStatus: LocationState;
   locationRequested: boolean;
   connectivityStatus: ConnectivityState;
+  staticServicesStatus: DataLoadStatus;
   state: BottomSheetState;
   lastExpandedState: UsefulBottomSheetState;
   directionsActive: boolean;
+  directionsStatus: DirectionsStatus;
+  directionsError: string | null;
+  mobilityMode: MobilityMode;
+  wheelchairRoutingPreferred: boolean;
+  wheelchairRoutingAvailable: boolean;
+  walkingRoute: WalkingRoute | null;
+  walkingRouteProgress: WalkingRouteProgress | null;
+  walkingRouteOffRoute: boolean;
+  walkingLocationAccuracyLimited: boolean;
+  canRepeatWalkingGuidance: boolean;
+  guidanceStatus: GuidanceStatus;
   largeText: boolean;
   lightMode: boolean;
   highContrast: boolean;
@@ -9980,14 +16485,29 @@ function JourneyBottomSheet({
   onChooseDestinationOnMap: () => void;
   onStartJourneyPlan: () => void;
   onRetryNearby: () => void;
+  onToggleAccessibleRoutesOnly: () => void;
+  onRetryStopServices: () => void;
   onSearchForStop: () => void;
   onConfirm: () => void;
+  onSelectService: (serviceNo: string) => void;
   onHear: () => void;
   onDirections: () => void;
+  onRetryDirections: () => void;
+  onChangeMobilityMode: (mode: MobilityMode) => void;
+  onStartGuidance: () => void;
+  onRecalculateDirections: () => void;
+  onContinueWithoutRerouting: () => void;
+  onRepeatWalkingGuidance: () => void;
+  onUseLocationForDirections: () => void;
   onStopDirections: () => void;
+  onChooseDifferentStop: () => void;
   onHearDirections: () => void;
 }) {
   const [previewService, setPreviewService] = useState<string | null>(null);
+  const [directionsStepsExpanded, setDirectionsStepsExpanded] = useState(false);
+  const { width: sheetViewportWidth } = useWindowDimensions();
+  const compactServiceChips = sheetViewportWidth <= 320;
+  const numberFirstServiceChips = sheetViewportWidth < 300;
   const theme = resolveVisualTheme(lightMode, highContrast);
   const sheetStyle =
     state === "HIDDEN_PEEK"
@@ -9997,21 +16517,23 @@ function JourneyBottomSheet({
         : state === "MEDIUM"
           ? styles.mapBottomSheetMedium
           : styles.mapBottomSheetCollapsed;
-  const headerActionState: BottomSheetState =
-    state === "HIDDEN_PEEK" ? lastExpandedState : "HIDDEN_PEEK";
-  const HeaderIcon =
-    state === "HIDDEN_PEEK" ? APP_ICONS.expand : APP_ICONS.collapse;
-  const headerAccessibilityLabel =
-    state === "HIDDEN_PEEK"
-      ? `Expand stop panel to ${lastExpandedState.toLowerCase()} height`
-      : "Minimize stop panel";
+  const sheetExpanded = state !== "HIDDEN_PEEK";
+  const headerActionState: BottomSheetState = sheetExpanded
+    ? "HIDDEN_PEEK"
+    : lastExpandedState;
   const walkingMinutes = selectedStop
     ? Math.max(1, Math.round(selectedStop.distanceMeters / 70))
     : 0;
   const services = selectedStop ? busServicesForStop(selectedStop) : [];
   useEffect(() => {
     setPreviewService(null);
+    setDirectionsStepsExpanded(false);
   }, [selectedStop?.busStopCode]);
+  useEffect(() => {
+    if (!directionsActive) {
+      setDirectionsStepsExpanded(false);
+    }
+  }, [directionsActive]);
   const showSearchResults = query.trim().length > 0;
   const nearbyState = resolveNearbyStopsState({
     nearbyStatus,
@@ -10025,14 +16547,54 @@ function JourneyBottomSheet({
     !selectedStop &&
     !directionsActive &&
     nearbyState !== "success";
+  const nearbySheetClosed =
+    state === "HIDDEN_PEEK" &&
+    !selectedStop &&
+    !showSearchResults &&
+    (sheetContent === "NEARBY" || nearbyHeading === "Nearby bus stops");
   const effectiveSheetStyle =
     state === "HIDDEN_PEEK"
       ? sheetStyle
-      : shortNearbyState
-        ? styles.mapBottomSheetContentFit
-        : sheetStyle;
-  const collapsedNearbyHeading =
-    nearbyHeading === "Nearby bus stops" ? "Nearby stops" : nearbyHeading;
+      : directionsActive && guidanceStatus === "ACTIVE"
+        ? styles.mapBottomSheetGuidance
+        : selectedStop && state === "MEDIUM"
+          ? styles.mapBottomSheetSelectedStop
+          : shortNearbyState
+            ? styles.mapBottomSheetContentFit
+            : sheetStyle;
+  const headerControlsNearby =
+    (state === "HIDDEN_PEEK" && !selectedStop && !showSearchResults) ||
+    (sheetContent === "NEARBY" && !selectedStop && !showSearchResults);
+  const headerPressDisabled = headerControlsNearby && !sheetExpanded;
+  const HeaderIcon = headerPressDisabled
+    ? null
+    : state === "HIDDEN_PEEK"
+      ? APP_ICONS.expand
+      : APP_ICONS.collapse;
+  const headerAccessibilityLabel = headerControlsNearby
+    ? `Nearby bus stops, ${sheetExpanded ? "expanded" : "collapsed"}`
+    : sheetExpanded
+      ? "Minimize stop panel"
+      : `Expand stop panel to ${lastExpandedState.toLowerCase()} height`;
+  const collapsedNearbyHeading = nearbyHeading;
+  const handleSheetHeaderPress = () => {
+    if (headerControlsNearby) {
+      if (sheetExpanded) {
+        onSetState("HIDDEN_PEEK");
+        AccessibilityInfo.announceForAccessibility(
+          "Nearby bus stops collapsed",
+        );
+        return;
+      }
+      return;
+    }
+
+    onSetState(headerActionState);
+  };
+
+  if (state === "HIDDEN_PEEK" || nearbySheetClosed) {
+    return null;
+  }
 
   return (
     <View
@@ -10050,37 +16612,75 @@ function JourneyBottomSheet({
       accessible
       accessibilityLabel={
         selectedStop
-          ? `Selected stop ${selectedStop.description}`
+          ? directionsActive
+            ? `${mobilityMode === "WHEELCHAIR" ? "Wheelchair" : "Walking"} directions to ${selectedStop.description}`
+            : `Selected stop ${selectedStop.description}`
           : "Nearby bus stops"
       }
     >
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={headerAccessibilityLabel}
-        onPress={() => onSetState(headerActionState)}
+        accessibilityState={{
+          disabled: headerPressDisabled || undefined,
+          expanded: sheetExpanded,
+        }}
+        disabled={headerPressDisabled}
+        onPress={handleSheetHeaderPress}
         style={styles.mapBottomSheetHeader}
       >
+        <View
+          accessibilityElementsHidden
+          importantForAccessibility="no"
+          style={[
+            styles.mapBottomSheetGrabber,
+            { backgroundColor: theme.colors.map.sheetBorder },
+          ]}
+        />
         <View style={styles.sheetHeaderRow}>
-          {state === "HIDDEN_PEEK" ? (
-            <Text
-              style={[styles.sheetPeekLabel, lightMode && lightStyles.text]}
-            >
-              {collapsedNearbyHeading}
-            </Text>
-          ) : null}
-          <HeaderIcon
-            size={iconSizes.small}
-            color={controlIconColor({ active: true, lightMode, highContrast })}
-            strokeWidth={highContrast ? 3.2 : 2.8}
+          <Text
             accessibilityElementsHidden
             importantForAccessibility="no"
-          />
+            numberOfLines={1}
+            style={[
+              styles.sheetPeekLabel,
+              { color: theme.colors.map.controlText },
+              lightMode && lightStyles.text,
+            ]}
+          >
+            {headerControlsNearby
+              ? collapsedNearbyHeading
+              : selectedStop
+                ? directionsActive
+                  ? guidanceStatus === "ACTIVE"
+                    ? mobilityMode === "WHEELCHAIR"
+                      ? "Wheelchair guidance"
+                      : "Walking guidance"
+                    : mobilityMode === "WHEELCHAIR"
+                      ? "Wheelchair directions"
+                      : "Walking directions"
+                  : "Bus stop details"
+                : "Journey details"}
+          </Text>
+          {HeaderIcon ? (
+            <HeaderIcon
+              size={iconSizes.small}
+              color={controlIconColor({
+                active: true,
+                lightMode,
+                highContrast,
+              })}
+              strokeWidth={highContrast ? 3.2 : 2.8}
+              accessibilityElementsHidden
+              importantForAccessibility="no"
+            />
+          ) : null}
         </View>
       </Pressable>
 
-      {state === "HIDDEN_PEEK" ? null : !selectedStop &&
-        (sheetContent === "PLANNER" ||
-          (sheetContent === "ROUTE_OPTIONS" && !selectedJourneyAlternative)) ? (
+      {!selectedStop &&
+      (sheetContent === "PLANNER" ||
+        (sheetContent === "ROUTE_OPTIONS" && !selectedJourneyAlternative)) ? (
         <ScrollView
           style={styles.mapBottomSheetScroll}
           contentContainerStyle={styles.mapBottomSheetContent}
@@ -10147,173 +16747,64 @@ function JourneyBottomSheet({
           />
         </ScrollView>
       ) : directionsActive && selectedStop ? (
-        <ScrollView
-          style={styles.mapBottomSheetScroll}
-          contentContainerStyle={styles.mapBottomSheetContent}
-        >
-          <Text
-            style={[styles.statusLabel, lightMode && lightStyles.mutedText]}
-          >
-            Walking to
-          </Text>
-          <Text
-            style={[
-              styles.busTitle,
-              largeText && styles.largeBody,
-              lightMode && lightStyles.text,
-            ]}
-          >
-            {selectedStop.description}
-          </Text>
-          <Text style={[styles.summaryValue, lightMode && lightStyles.text]}>
-            {selectedStop.distanceMeters} m · About {walkingMinutes} min walk
-          </Text>
-          <Text
-            style={[
-              styles.bodyText,
-              largeText && styles.largeBody,
-              lightMode && lightStyles.bodyText,
-            ]}
-          >
-            {firstMoveInstruction(selectedStop, selectedLandmark)}
-          </Text>
-          <Text
-            style={[
-              styles.infoPill,
-              styles.accessibleChip,
-              lightMode && lightStyles.accessibleChip,
-            ]}
-          >
-            Accessibility information unavailable
-          </Text>
-          <SecondaryButton
-            label="Hear directions"
-            icon={Volume2}
-            onPress={onHearDirections}
-            lightMode={lightMode}
-            highContrast={highContrast}
-          />
-          <SecondaryButton
-            label="Stop directions"
-            icon={CircleX}
-            onPress={onStopDirections}
-            lightMode={lightMode}
-            highContrast={highContrast}
-          />
-        </ScrollView>
+        <WalkingDirectionsSheet
+          stop={selectedStop}
+          status={directionsStatus}
+          error={directionsError}
+          mobilityMode={mobilityMode}
+          wheelchairRoutingPreferred={wheelchairRoutingPreferred}
+          wheelchairRoutingAvailable={wheelchairRoutingAvailable}
+          route={walkingRoute}
+          progress={walkingRouteProgress}
+          offRoute={walkingRouteOffRoute}
+          locationAccuracyLimited={walkingLocationAccuracyLimited}
+          canRepeatGuidance={canRepeatWalkingGuidance}
+          guidanceStatus={guidanceStatus}
+          stepsExpanded={directionsStepsExpanded}
+          largeText={largeText}
+          lightMode={lightMode}
+          highContrast={highContrast}
+          onToggleSteps={() =>
+            setDirectionsStepsExpanded((current) => !current)
+          }
+          onRetry={onRetryDirections}
+          onChangeMobilityMode={onChangeMobilityMode}
+          onUseLocation={onUseLocationForDirections}
+          onStartGuidance={onStartGuidance}
+          onRecalculate={onRecalculateDirections}
+          onContinueWithoutRerouting={onContinueWithoutRerouting}
+          onRepeatGuidance={onRepeatWalkingGuidance}
+          onHear={onHearDirections}
+          onChooseStop={onConfirm}
+          onChooseDifferentStop={onChooseDifferentStop}
+          onExit={onStopDirections}
+        />
       ) : selectedStop ? (
-        <ScrollView
-          style={styles.mapBottomSheetScroll}
-          contentContainerStyle={styles.mapBottomSheetContent}
-        >
-          <View style={styles.iconTitleRow}>
-            <MapPin
-              size={26}
-              color={controlIconColor({
-                active: true,
-                lightMode,
-                highContrast,
-              })}
-              strokeWidth={2.8}
-            />
-            <View style={styles.landmarkSearchTextGroup}>
-              {selectedStop.distanceMeters <= 80 ? (
+        <View style={styles.selectedStopSheetBody}>
+          <ScrollView
+            style={styles.mapBottomSheetScroll}
+            contentContainerStyle={styles.mapBottomSheetContent}
+          >
+            <View style={styles.iconTitleRow}>
+              <MapPin
+                size={26}
+                color={controlIconColor({
+                  active: true,
+                  lightMode,
+                  highContrast,
+                })}
+                strokeWidth={2.8}
+              />
+              <View style={styles.landmarkSearchTextGroup}>
                 <Text
                   style={[
-                    styles.statusLabel,
-                    lightMode && lightStyles.mutedText,
+                    styles.busTitle,
+                    largeText && styles.largeBody,
+                    lightMode && lightStyles.text,
                   ]}
                 >
-                  Nearest stop
+                  {selectedStop.description}
                 </Text>
-              ) : null}
-              <Text
-                style={[
-                  styles.busTitle,
-                  largeText && styles.largeBody,
-                  lightMode && lightStyles.text,
-                ]}
-              >
-                {selectedStop.description}
-              </Text>
-              <Text
-                style={[
-                  styles.bodyText,
-                  largeText && styles.largeBody,
-                  lightMode && lightStyles.bodyText,
-                ]}
-              >
-                Bus Stop {selectedStop.busStopCode} · About{" "}
-                {selectedStop.distanceMeters} m away
-              </Text>
-            </View>
-          </View>
-          <View style={styles.stopSheetSection}>
-            <Text
-              style={[styles.statusLabel, lightMode && lightStyles.mutedText]}
-            >
-              Services
-            </Text>
-            {services.length > 0 ? (
-              <View style={styles.infoRow}>
-                {services.slice(0, 4).map((service) => {
-                  const selected = previewService === service;
-                  return (
-                    <Pressable
-                      key={service}
-                      accessibilityRole="button"
-                      accessibilityLabel={`Preview Service ${service} at ${selectedStop.description}`}
-                      accessibilityState={{ selected }}
-                      onPress={() =>
-                        setPreviewService(selected ? null : service)
-                      }
-                      style={[
-                        styles.stopServiceChip,
-                        {
-                          borderColor: selected
-                            ? theme.colors.map.selectionAccent
-                            : theme.colors.borderDefault,
-                        },
-                        selected && styles.selectedStopServiceChip,
-                        highContrast && styles.highContrastControl,
-                      ]}
-                    >
-                      <BusFront
-                        size={15}
-                        color={controlIconColor({
-                          active: selected,
-                          lightMode,
-                          highContrast,
-                        })}
-                        strokeWidth={2.8}
-                        accessibilityElementsHidden
-                        importantForAccessibility="no"
-                      />
-                      <Text
-                        style={[
-                          styles.stopServiceChipText,
-                          {
-                            color: selected
-                              ? theme.colors.actionPrimary
-                              : theme.colors.textPrimary,
-                          },
-                        ]}
-                      >
-                        {service}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-                {services.length > 4 ? (
-                  <Text
-                    style={[styles.infoPill, lightMode && lightStyles.infoPill]}
-                  >
-                    + {services.length - 4} more
-                  </Text>
-                ) : null}
-              </View>
-            ) : (
-              <View style={styles.serviceUnavailableBlock}>
                 <Text
                   style={[
                     styles.bodyText,
@@ -10321,76 +16812,90 @@ function JourneyBottomSheet({
                     lightMode && lightStyles.bodyText,
                   ]}
                 >
-                  Bus services couldn't be loaded.
+                  Bus Stop {selectedStop.busStopCode} · About{" "}
+                  {selectedStop.distanceMeters} m away
                 </Text>
-                <SecondaryButton
-                  label="Try again"
-                  icon={RefreshCw}
-                  onPress={onRetryNearby}
-                  lightMode={lightMode}
-                  highContrast={highContrast}
-                />
               </View>
-            )}
-          </View>
-          {previewService ? (
-            <View
-              style={[
-                styles.servicePreviewPanel,
-                {
-                  borderColor: theme.colors.borderDefault,
-                  backgroundColor: theme.colors.map.overlaySurfaceElevated,
-                },
-              ]}
-              accessible
-              accessibilityLabel={`Service ${previewService}. Live arrival unavailable before stop confirmation.`}
-            >
-              <Text
-                style={[styles.statusLabel, lightMode && lightStyles.mutedText]}
-              >
-                Service {previewService}
-              </Text>
-              <Text
-                style={[styles.summaryValue, lightMode && lightStyles.text]}
-              >
-                Live arrival unavailable
-              </Text>
-              <Text
-                style={[
-                  styles.bodyText,
-                  largeText && styles.largeBody,
-                  lightMode && lightStyles.bodyText,
-                ]}
-              >
-                Choose this stop to load live arrivals for Service{" "}
-                {previewService}.
-              </Text>
             </View>
-          ) : null}
-          {state === "EXPANDED" ? (
-            <>
+            <View style={styles.stopSheetSection}>
               <Text
                 style={[styles.statusLabel, lightMode && lightStyles.mutedText]}
               >
-                Accessibility
+                Services
               </Text>
-              <View style={styles.infoRow}>
-                <Text
-                  style={[styles.infoPill, lightMode && lightStyles.infoPill]}
-                >
-                  Stop accessibility information unavailable
-                </Text>
-              </View>
-              {selectedLandmark ? (
-                <>
-                  <Text
-                    style={[
-                      styles.statusLabel,
-                      lightMode && lightStyles.mutedText,
-                    ]}
-                  >
-                    Nearby
-                  </Text>
+              {services.length > 0 ? (
+                <View style={styles.stopServiceRow}>
+                  {services.map((service) => {
+                    const selected = previewService === service;
+                    return (
+                      <Pressable
+                        key={service}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Bus service ${service}${selected ? ", selected" : ""}`}
+                        accessibilityHint={`Preview Service ${service} at ${selectedStop.description}`}
+                        accessibilityState={{ selected }}
+                        onPress={() =>
+                          setPreviewService(selected ? null : service)
+                        }
+                        style={[
+                          styles.stopServiceChip,
+                          compactServiceChips && styles.compactStopServiceChip,
+                          {
+                            backgroundColor: selected
+                              ? theme.colors.surfaceSelected
+                              : theme.colors.surfaceInteractive,
+                            borderColor: selected
+                              ? theme.colors.borderSelected
+                              : theme.colors.borderInteractive,
+                          },
+                          selected && styles.selectedStopServiceChip,
+                          highContrast && styles.highContrastServiceChip,
+                        ]}
+                      >
+                        {!numberFirstServiceChips ? (
+                          <BusFront
+                            size={17}
+                            color={
+                              selected
+                                ? theme.colors.textOnSelected
+                                : theme.colors.actionPrimary
+                            }
+                            strokeWidth={2.8}
+                            accessibilityElementsHidden
+                            importantForAccessibility="no"
+                          />
+                        ) : null}
+                        <Text
+                          style={[
+                            styles.stopServiceChipText,
+                            {
+                              color: selected
+                                ? theme.colors.textOnSelected
+                                : theme.colors.actionPrimary,
+                            },
+                          ]}
+                        >
+                          {service}
+                        </Text>
+                        {selected ? (
+                          <CircleCheck
+                            size={17}
+                            color={theme.colors.textOnSelected}
+                            strokeWidth={3}
+                            accessibilityElementsHidden
+                            importantForAccessibility="no"
+                          />
+                        ) : null}
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              ) : staticServicesStatus === "LOADING" ? (
+                <View style={styles.serviceUnavailableBlock}>
+                  <ActivityIndicator
+                    accessibilityLabel="Loading static services"
+                    color={theme.colors.actionPrimary}
+                  />
                   <Text
                     style={[
                       styles.bodyText,
@@ -10398,38 +16903,157 @@ function JourneyBottomSheet({
                       lightMode && lightStyles.bodyText,
                     ]}
                   >
-                    {selectedLandmark.name}
+                    Loading scheduled services...
                   </Text>
-                </>
-              ) : null}
-              <SecondaryButton
-                label="Hear stop information"
-                icon={Volume2}
-                onPress={onHear}
-                lightMode={lightMode}
-                highContrast={highContrast}
-              />
-            </>
-          ) : null}
-          <SecondaryButton
-            label="Directions"
-            icon={Route}
-            onPress={onDirections}
-            lightMode={lightMode}
-            highContrast={highContrast}
-          />
-          <PrimaryButton
-            label={
-              previewService
-                ? `Choose stop and Service ${previewService}`
-                : "Choose this stop"
-            }
-            icon={CircleCheck}
-            onPress={onConfirm}
-            lightMode={lightMode}
-            highContrast={highContrast}
-          />
-        </ScrollView>
+                </View>
+              ) : staticServicesStatus === "ERROR" ? (
+                <View style={styles.serviceUnavailableBlock}>
+                  <Text
+                    style={[
+                      styles.bodyText,
+                      largeText && styles.largeBody,
+                      lightMode && lightStyles.bodyText,
+                    ]}
+                  >
+                    We couldn't load services for this stop.
+                  </Text>
+                  <SecondaryButton
+                    label="Try again"
+                    icon={RefreshCw}
+                    onPress={onRetryStopServices}
+                    lightMode={lightMode}
+                    highContrast={highContrast}
+                  />
+                </View>
+              ) : (
+                <View style={styles.serviceUnavailableBlock}>
+                  <Text
+                    style={[
+                      styles.bodyText,
+                      largeText && styles.largeBody,
+                      lightMode && lightStyles.bodyText,
+                    ]}
+                  >
+                    No scheduled services are listed for this stop.
+                  </Text>
+                </View>
+              )}
+            </View>
+            {previewService ? (
+              <View
+                style={[
+                  styles.servicePreviewPanel,
+                  {
+                    borderColor: theme.colors.borderDefault,
+                    backgroundColor: theme.colors.map.overlaySurfaceElevated,
+                  },
+                ]}
+                accessible
+                accessibilityLabel={`Service ${previewService}. Live arrival unavailable before stop confirmation.`}
+              >
+                <Text
+                  style={[
+                    styles.statusLabel,
+                    lightMode && lightStyles.mutedText,
+                  ]}
+                >
+                  Service {previewService}
+                </Text>
+                <Text
+                  style={[styles.summaryValue, lightMode && lightStyles.text]}
+                >
+                  Live arrival unavailable
+                </Text>
+                <Text
+                  style={[
+                    styles.bodyText,
+                    largeText && styles.largeBody,
+                    lightMode && lightStyles.bodyText,
+                  ]}
+                >
+                  Choose this stop to load live arrivals for Service{" "}
+                  {previewService}.
+                </Text>
+              </View>
+            ) : null}
+            {state === "EXPANDED" ? (
+              <>
+                <Text
+                  style={[
+                    styles.statusLabel,
+                    lightMode && lightStyles.mutedText,
+                  ]}
+                >
+                  Accessibility
+                </Text>
+                <View style={styles.infoRow}>
+                  <Text
+                    style={[styles.infoPill, lightMode && lightStyles.infoPill]}
+                  >
+                    Stop accessibility information unavailable
+                  </Text>
+                </View>
+                {selectedLandmark ? (
+                  <>
+                    <Text
+                      style={[
+                        styles.statusLabel,
+                        lightMode && lightStyles.mutedText,
+                      ]}
+                    >
+                      Nearby
+                    </Text>
+                    <Text
+                      style={[
+                        styles.bodyText,
+                        largeText && styles.largeBody,
+                        lightMode && lightStyles.bodyText,
+                      ]}
+                    >
+                      {selectedLandmark.name}
+                    </Text>
+                  </>
+                ) : null}
+                <SecondaryButton
+                  label="Hear stop information"
+                  icon={Volume2}
+                  onPress={onHear}
+                  lightMode={lightMode}
+                  highContrast={highContrast}
+                />
+              </>
+            ) : null}
+          </ScrollView>
+          <View
+            style={[
+              styles.selectedStopActions,
+              { borderColor: theme.colors.map.sheetBorder },
+            ]}
+          >
+            <SecondaryButton
+              label={
+                mobilityMode === "WHEELCHAIR"
+                  ? "Wheelchair directions"
+                  : "Directions"
+              }
+              icon={mobilityMode === "WHEELCHAIR" ? Accessibility : Route}
+              onPress={onDirections}
+              lightMode={lightMode}
+              highContrast={highContrast}
+            />
+            <PrimaryButton
+              label="Choose this stop"
+              icon={CircleCheck}
+              onPress={
+                previewService
+                  ? () => onSelectService(previewService)
+                  : onConfirm
+              }
+              lightMode={lightMode}
+              highContrast={highContrast}
+            />
+          </View>
+        </View>
       ) : shortNearbyState ? (
         <ScrollView
           style={styles.mapBottomSheetScroll}
@@ -10546,6 +17170,41 @@ function JourneyBottomSheet({
           >
             {nearbyHeading}
           </Text>
+          {state !== "COLLAPSED" && wheelchairRoutingPreferred ? (
+            <Pressable
+              accessibilityRole="switch"
+              accessibilityLabel="Accessible routes only"
+              accessibilityHint="Show stops in the checked shortlist with a wheelchair route"
+              accessibilityState={{ checked: accessibleRoutesOnly }}
+              onPress={onToggleAccessibleRoutesOnly}
+              style={styles.nearbyStateTextAction}
+            >
+              <Accessibility
+                size={20}
+                color={theme.colors.actionPrimary}
+                accessibilityElementsHidden
+                importantForAccessibility="no"
+              />
+              <Text
+                style={[
+                  styles.secondaryButtonText,
+                  lightMode && lightStyles.secondaryButtonText,
+                ]}
+              >
+                Accessible routes only: {accessibleRoutesOnly ? "On" : "Off"}
+              </Text>
+            </Pressable>
+          ) : null}
+          {Object.values(accessibleStopRoutes).some(
+            (value) => value === "CHECKING",
+          ) ? (
+            <Text
+              accessibilityLiveRegion="polite"
+              style={[styles.bodyText, lightMode && lightStyles.bodyText]}
+            >
+              Checking wheelchair routes to the 3 closest stops…
+            </Text>
+          ) : null}
           {state === "COLLAPSED" ? (
             <Text
               style={[
@@ -10560,6 +17219,8 @@ function JourneyBottomSheet({
             <NearbyStopsList
               stops={state === "MEDIUM" ? stops.slice(0, 3) : stops}
               selectedStop={selectedStop}
+              routeStatuses={accessibleStopRoutes}
+              recommendedStopCode={recommendedStopCode}
               lightMode={lightMode}
               highContrast={highContrast}
               onSelectStop={(stop) => {
@@ -10575,13 +17236,695 @@ function JourneyBottomSheet({
                 lightMode && lightStyles.bodyText,
               ]}
             >
-              No nearby stops match your search. Try a stop code, road or
-              landmark.
+              {accessibleRoutesOnly
+                ? "No checked wheelchair routes are available in this shortlist. Try another area or turn the filter off."
+                : "No nearby stops match your search. Try a stop code, road or landmark."}
             </Text>
           )}
         </ScrollView>
       )}
     </View>
+  );
+}
+
+function routeStepIcon(step: RouteStep): LucideIcon {
+  const maneuver = step.maneuver ?? "";
+  if (maneuver.includes("left")) return ArrowLeft;
+  if (maneuver.includes("right")) return ArrowRight;
+  if (maneuver.includes("uturn")) return Undo2;
+  if (maneuver.includes("arrive")) return MapPin;
+  if (maneuver.includes("depart")) return Footprints;
+  return Navigation;
+}
+
+function WalkingDirectionsSheet({
+  stop,
+  status,
+  error,
+  mobilityMode,
+  wheelchairRoutingPreferred,
+  wheelchairRoutingAvailable,
+  route,
+  progress,
+  offRoute,
+  locationAccuracyLimited,
+  canRepeatGuidance,
+  guidanceStatus,
+  stepsExpanded,
+  largeText,
+  lightMode,
+  highContrast,
+  onToggleSteps,
+  onRetry,
+  onChangeMobilityMode,
+  onUseLocation,
+  onStartGuidance,
+  onRecalculate,
+  onContinueWithoutRerouting,
+  onRepeatGuidance,
+  onHear,
+  onChooseStop,
+  onChooseDifferentStop,
+  onExit,
+}: {
+  stop: NearbyBusStop;
+  status: DirectionsStatus;
+  error: string | null;
+  mobilityMode: MobilityMode;
+  wheelchairRoutingPreferred: boolean;
+  wheelchairRoutingAvailable: boolean;
+  route: WalkingRoute | null;
+  progress: WalkingRouteProgress | null;
+  offRoute: boolean;
+  locationAccuracyLimited: boolean;
+  canRepeatGuidance: boolean;
+  guidanceStatus: GuidanceStatus;
+  stepsExpanded: boolean;
+  largeText: boolean;
+  lightMode: boolean;
+  highContrast: boolean;
+  onToggleSteps: () => void;
+  onRetry: () => void;
+  onChangeMobilityMode: (mode: MobilityMode) => void;
+  onUseLocation: () => void;
+  onStartGuidance: () => void;
+  onRecalculate: () => void;
+  onContinueWithoutRerouting: () => void;
+  onRepeatGuidance: () => void;
+  onHear: () => void;
+  onChooseStop: () => void;
+  onChooseDifferentStop: () => void;
+  onExit: () => void;
+}) {
+  const theme = resolveVisualTheme(lightMode, highContrast);
+  const activeStepIndex = Math.min(
+    progress?.activeStepIndex ?? 0,
+    Math.max(0, (route?.steps.length ?? 1) - 1),
+  );
+  const activeStep = route?.steps[activeStepIndex];
+  const nextStep = route?.steps[activeStepIndex + 1];
+  const ActiveStepIcon = activeStep ? routeStepIcon(activeStep) : Navigation;
+  const routeMinutes = route
+    ? friendlyWalkingMinutes(route.durationSeconds)
+    : 0;
+  const remainingMinutes = progress
+    ? friendlyWalkingMinutes(progress.remainingDurationSeconds)
+    : routeMinutes;
+
+  return (
+    <ScrollView
+      style={styles.mapBottomSheetScroll}
+      contentContainerStyle={[
+        styles.mapBottomSheetContent,
+        guidanceStatus === "ACTIVE" && styles.guidanceSheetContent,
+      ]}
+      accessibilityLabel={
+        route
+          ? `${mobilityMode === "WHEELCHAIR" ? "Wheelchair" : "Walking"} directions, approximately ${routeMinutes} minutes, ${Math.round(route.distanceMeters)} metres`
+          : `${mobilityMode === "WHEELCHAIR" ? "Wheelchair" : "Walking"} directions`
+      }
+    >
+      <View style={styles.directionsTitleRow}>
+        {mobilityMode === "WHEELCHAIR" ? (
+          <Accessibility
+            size={24}
+            color={theme.colors.actionPrimary}
+            strokeWidth={2.8}
+            accessibilityElementsHidden
+            importantForAccessibility="no"
+          />
+        ) : (
+          <Footprints
+            size={24}
+            color={theme.colors.actionPrimary}
+            strokeWidth={2.8}
+            accessibilityElementsHidden
+            importantForAccessibility="no"
+          />
+        )}
+        <View style={styles.landmarkSearchTextGroup}>
+          <Text
+            style={[styles.statusLabel, lightMode && lightStyles.mutedText]}
+          >
+            {guidanceStatus === "ARRIVED"
+              ? "Arrived"
+              : guidanceStatus === "ACTIVE"
+                ? mobilityMode === "WHEELCHAIR"
+                  ? "Wheelchair guidance"
+                  : "Walking guidance"
+                : mobilityMode === "WHEELCHAIR"
+                  ? "Wheelchair directions"
+                  : "Walking directions"}
+          </Text>
+          <Text
+            style={[
+              styles.busTitle,
+              largeText && styles.largeBody,
+              lightMode && lightStyles.text,
+            ]}
+          >
+            {stop.description}
+          </Text>
+          <Text style={[styles.bodyText, lightMode && lightStyles.bodyText]}>
+            Bus Stop {stop.busStopCode}
+          </Text>
+        </View>
+      </View>
+
+      <View
+        style={styles.mapListToggle}
+        accessible
+        accessibilityRole="radiogroup"
+        accessibilityLabel="Directions mode"
+      >
+        {(["WHEELCHAIR", "WALKING"] as const).map((mode) => {
+          const selected = mobilityMode === mode;
+          const ModeIcon = mode === "WHEELCHAIR" ? Accessibility : Footprints;
+          return (
+            <Pressable
+              key={mode}
+              accessibilityRole="radio"
+              accessibilityLabel={
+                mode === "WHEELCHAIR" ? "Wheelchair route" : "Standard walking"
+              }
+              accessibilityState={{
+                checked: selected,
+                disabled: mode === "WHEELCHAIR" && !wheelchairRoutingAvailable,
+              }}
+              disabled={mode === "WHEELCHAIR" && !wheelchairRoutingAvailable}
+              onPress={() => onChangeMobilityMode(mode)}
+              style={[
+                styles.mapListToggleButton,
+                selected && styles.selectedMapListToggleButton,
+                lightMode && lightStyles.mapListToggleButton,
+                lightMode &&
+                  selected &&
+                  lightStyles.selectedMapListToggleButton,
+              ]}
+            >
+              <ModeIcon
+                size={18}
+                color={controlIconColor({
+                  active: selected,
+                  lightMode,
+                  highContrast,
+                })}
+                accessibilityElementsHidden
+                importantForAccessibility="no"
+              />
+              <Text
+                style={[
+                  styles.mapListToggleText,
+                  selected && styles.selectedMapListToggleText,
+                  lightMode && lightStyles.text,
+                ]}
+              >
+                {mode === "WHEELCHAIR" ? "Wheelchair" : "Walking"}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+      {wheelchairRoutingPreferred && mobilityMode === "WALKING" ? (
+        <View style={styles.directionsStatePanel} accessibilityRole="alert">
+          <Text style={[styles.bodyText, lightMode && lightStyles.bodyText]}>
+            Standard walking route selected. It has not been checked for
+            wheelchair access.
+          </Text>
+        </View>
+      ) : null}
+
+      {status === "LOADING" ? (
+        <View
+          style={styles.directionsLoadingRow}
+          accessible
+          accessibilityRole="progressbar"
+          accessibilityLabel={
+            mobilityMode === "WHEELCHAIR"
+              ? "Finding wheelchair-friendly route"
+              : "Finding walking route"
+          }
+          accessibilityState={{ busy: true }}
+        >
+          <ActivityIndicator color={theme.colors.actionPrimary} />
+          <Text
+            style={[
+              styles.summaryValue,
+              largeText && styles.largeBody,
+              lightMode && lightStyles.text,
+            ]}
+          >
+            {mobilityMode === "WHEELCHAIR"
+              ? "Finding wheelchair-friendly route…"
+              : "Finding route…"}
+          </Text>
+        </View>
+      ) : status === "NEEDS_LOCATION" ? (
+        <View style={styles.directionsStatePanel} accessibilityRole="alert">
+          <Text style={[styles.summaryValue, lightMode && lightStyles.text]}>
+            Your location is needed for walking directions.
+          </Text>
+          <PrimaryButton
+            label="Use my location"
+            icon={LocateFixed}
+            onPress={onUseLocation}
+            lightMode={lightMode}
+            highContrast={highContrast}
+          />
+          <SecondaryButton
+            label="Exit directions"
+            icon={CircleX}
+            onPress={onExit}
+            lightMode={lightMode}
+            highContrast={highContrast}
+          />
+        </View>
+      ) : status === "ERROR" ||
+        status === "RATE_LIMITED" ||
+        status === "WHEELCHAIR_UNAVAILABLE" ||
+        status === "KNOWN_BARRIER" ? (
+        <View style={styles.directionsStatePanel} accessibilityRole="alert">
+          <Text style={[styles.summaryValue, lightMode && lightStyles.text]}>
+            {error ??
+              (mobilityMode === "WHEELCHAIR"
+                ? "No wheelchair-accessible route found."
+                : "Walking route unavailable.")}
+          </Text>
+          <Text style={[styles.bodyText, lightMode && lightStyles.bodyText]}>
+            The bus stop is approximately{" "}
+            {friendlyDistance(stop.distanceMeters)} away. The map and bus stop
+            details are still available.
+          </Text>
+          <PrimaryButton
+            label="Try again"
+            icon={RefreshCw}
+            onPress={onRetry}
+            lightMode={lightMode}
+            highContrast={highContrast}
+          />
+          {mobilityMode === "WHEELCHAIR" ? (
+            <SecondaryButton
+              label="Use standard walking directions"
+              icon={Footprints}
+              onPress={() => onChangeMobilityMode("WALKING")}
+              lightMode={lightMode}
+              highContrast={highContrast}
+            />
+          ) : null}
+          <SecondaryButton
+            label="Try a different stop"
+            icon={MapPin}
+            onPress={onChooseDifferentStop}
+            lightMode={lightMode}
+            highContrast={highContrast}
+          />
+          <SecondaryButton
+            label="Open Nearby stops"
+            icon={List}
+            onPress={onChooseDifferentStop}
+            lightMode={lightMode}
+            highContrast={highContrast}
+          />
+          <SecondaryButton
+            label="Exit directions"
+            icon={CircleX}
+            onPress={onExit}
+            lightMode={lightMode}
+            highContrast={highContrast}
+          />
+        </View>
+      ) : route && guidanceStatus === "ARRIVED" ? (
+        <View
+          style={styles.arrivalPanel}
+          accessible
+          accessibilityRole="alert"
+          accessibilityLabel={`You've reached the bus stop. ${stop.description}, Bus Stop ${stop.busStopCode}.`}
+        >
+          <CircleCheck
+            size={30}
+            color={theme.colors.statusSuccess}
+            strokeWidth={3}
+          />
+          <Text style={[styles.busTitle, lightMode && lightStyles.text]}>
+            You've reached the bus stop
+          </Text>
+          <Text style={[styles.bodyText, lightMode && lightStyles.bodyText]}>
+            {stop.description} · Bus Stop {stop.busStopCode}
+          </Text>
+          <View style={styles.directionsStatePanel}>
+            <Text style={[styles.summaryValue, lightMode && lightStyles.text]}>
+              Route accessibility
+            </Text>
+            <Text style={[styles.bodyText, lightMode && lightStyles.bodyText]}>
+              {mobilityMode === "WHEELCHAIR"
+                ? "Wheelchair-aware route completed."
+                : "Standard walking route completed."}
+            </Text>
+            <Text style={[styles.summaryValue, lightMode && lightStyles.text]}>
+              Next bus accessibility
+            </Text>
+            <Text style={[styles.bodyText, lightMode && lightStyles.bodyText]}>
+              Accessibility information unavailable until you choose a bus.
+            </Text>
+            <Text style={[styles.summaryValue, lightMode && lightStyles.text]}>
+              Ramp assistance
+            </Text>
+            <Text style={[styles.bodyText, lightMode && lightStyles.bodyText]}>
+              Not requested. Ramp assistance is handled separately after bus
+              selection.
+            </Text>
+          </View>
+          <PrimaryButton
+            label="Choose this stop"
+            icon={CircleCheck}
+            onPress={onChooseStop}
+            lightMode={lightMode}
+            highContrast={highContrast}
+          />
+          <SecondaryButton
+            label="Exit guidance"
+            icon={CircleX}
+            onPress={onExit}
+            lightMode={lightMode}
+            highContrast={highContrast}
+          />
+        </View>
+      ) : route && guidanceStatus === "ACTIVE" ? (
+        <>
+          <View
+            nativeID="walking-current-instruction"
+            testID="walking-current-instruction"
+            style={[
+              styles.currentInstructionCard,
+              {
+                backgroundColor: theme.colors.map.overlaySurfaceElevated,
+                borderColor: theme.colors.map.selectionAccent,
+              },
+            ]}
+            accessible
+            accessibilityLabel={`${activeStep?.instruction ?? "Continue toward the bus stop"}, ${friendlyDistance(progress?.distanceToNextManeuverMeters ?? 0)}.`}
+          >
+            <ActiveStepIcon
+              size={largeText ? 40 : 34}
+              color={theme.colors.actionPrimary}
+              strokeWidth={3}
+              accessibilityElementsHidden
+              importantForAccessibility="no"
+            />
+            <View style={styles.landmarkSearchTextGroup}>
+              <Text
+                style={[
+                  styles.walkingInstructionText,
+                  largeText && styles.walkingInstructionTextLarge,
+                  lightMode && lightStyles.text,
+                ]}
+              >
+                {activeStep?.instruction ?? "Continue toward the bus stop"}
+              </Text>
+              <Text
+                style={[
+                  styles.walkingInstructionDistance,
+                  largeText && styles.walkingInstructionDistanceLarge,
+                  lightMode && lightStyles.text,
+                ]}
+              >
+                {friendlyDistance(progress?.distanceToNextManeuverMeters ?? 0)}
+              </Text>
+            </View>
+          </View>
+          <Text
+            style={[
+              styles.bodyText,
+              largeText && styles.largeBody,
+              lightMode && lightStyles.bodyText,
+            ]}
+          >
+            {remainingMinutes} min ·{" "}
+            {friendlyDistance(
+              progress?.remainingDistanceMeters ?? route.distanceMeters,
+            )}{" "}
+            remaining
+          </Text>
+          {nextStep ? (
+            <Text
+              style={[
+                styles.bodyText,
+                largeText && styles.largeBody,
+                lightMode && lightStyles.bodyText,
+              ]}
+            >
+              Next: {nextStep.instruction}
+            </Text>
+          ) : null}
+          {locationAccuracyLimited ? (
+            <View
+              nativeID="walking-location-accuracy-warning"
+              testID="walking-location-accuracy-warning"
+              style={styles.directionsStatePanel}
+              accessibilityRole="alert"
+            >
+              <Text
+                style={[styles.summaryValue, lightMode && lightStyles.text]}
+              >
+                Location accuracy is limited
+              </Text>
+              <Text
+                style={[styles.bodyText, lightMode && lightStyles.bodyText]}
+              >
+                Follow the map and signs around you.
+              </Text>
+            </View>
+          ) : null}
+          {offRoute ? (
+            <View
+              nativeID="walking-off-route-warning"
+              testID="walking-off-route-warning"
+              style={styles.offRoutePanel}
+              accessibilityRole="alert"
+            >
+              <Text
+                style={[styles.summaryValue, lightMode && lightStyles.text]}
+              >
+                You're off the suggested walking route.
+              </Text>
+              <SecondaryButton
+                label="Recalculate"
+                icon={RefreshCw}
+                onPress={onRecalculate}
+                lightMode={lightMode}
+                highContrast={highContrast}
+              />
+              <SecondaryButton
+                label="Continue without rerouting"
+                icon={Navigation}
+                onPress={onContinueWithoutRerouting}
+                lightMode={lightMode}
+                highContrast={highContrast}
+              />
+            </View>
+          ) : null}
+          {canRepeatGuidance ? (
+            <SecondaryButton
+              label="Repeat guidance"
+              icon={Volume2}
+              onPress={onRepeatGuidance}
+              lightMode={lightMode}
+              highContrast={highContrast}
+            />
+          ) : null}
+          <SecondaryButton
+            label="Exit guidance"
+            icon={CircleX}
+            onPress={onExit}
+            lightMode={lightMode}
+            highContrast={highContrast}
+          />
+        </>
+      ) : route ? (
+        <>
+          <View
+            style={styles.walkingRouteSummary}
+            accessible
+            accessibilityLabel={`${mobilityMode === "WHEELCHAIR" ? "Wheelchair-friendly route" : "Walking directions"}, approximately ${routeMinutes} minutes, ${route.distanceMeters} metres`}
+          >
+            <Text style={[styles.summaryValue, lightMode && lightStyles.text]}>
+              {mobilityMode === "WHEELCHAIR"
+                ? "Wheelchair-friendly route"
+                : "Walking"}
+            </Text>
+            <Text
+              style={[
+                styles.directionsSummaryMetric,
+                largeText && styles.largeBody,
+                lightMode && lightStyles.text,
+              ]}
+            >
+              {routeMinutes} min · {friendlyDistance(route.distanceMeters)}
+            </Text>
+          </View>
+          <PrimaryButton
+            label="Start guidance"
+            icon={Navigation}
+            onPress={onStartGuidance}
+            lightMode={lightMode}
+            highContrast={highContrast}
+          />
+          {mobilityMode === "WHEELCHAIR" ? (
+            <View
+              style={styles.directionsStatePanel}
+              accessible
+              accessibilityLabel={`Accessibility confidence ${route.accessibility.confidence.toLowerCase().replace("_", " ")}`}
+            >
+              <Text
+                style={[styles.summaryValue, lightMode && lightStyles.text]}
+              >
+                Accessibility confidence:{" "}
+                {route.accessibility.confidence === "LIMITED_DATA"
+                  ? "Limited data"
+                  : route.accessibility.confidence === "HIGH"
+                    ? "High"
+                    : "Medium"}
+              </Text>
+              <Text
+                style={[styles.bodyText, lightMode && lightStyles.bodyText]}
+              >
+                No steps reported by the wheelchair router
+                {route.accessibility.maximumInclinePercent !== undefined
+                  ? ` · Maximum mapped incline about ${Math.round(route.accessibility.maximumInclinePercent)}%`
+                  : " · Incline data incomplete"}
+                {route.accessibility.surfaces.length > 0
+                  ? ` · ${route.accessibility.surfaces.join(", ")} surfaces`
+                  : " · Surface data incomplete"}
+              </Text>
+              {route.accessibility.warnings.map((warning) => (
+                <Text
+                  key={warning.code}
+                  style={[styles.bodyText, lightMode && lightStyles.bodyText]}
+                >
+                  {warning.severity === "BARRIER" ? "Barrier: " : ""}
+                  {warning.message}
+                </Text>
+              ))}
+              <Text
+                style={[styles.bodyText, lightMode && lightStyles.bodyText]}
+              >
+                Based on available map accessibility data. Conditions may
+                differ; check kerbs, surfaces and temporary obstructions before
+                travelling.
+              </Text>
+            </View>
+          ) : null}
+          <View style={styles.routeEndpointRow}>
+            <View style={styles.routeEndpointMarker} />
+            <Text style={[styles.bodyText, lightMode && lightStyles.bodyText]}>
+              Your location
+            </Text>
+          </View>
+          <View style={styles.routeEndpointLine} />
+          <View style={styles.routeEndpointRow}>
+            <MapPin
+              size={20}
+              color={theme.colors.map.stopSelected}
+              strokeWidth={3}
+            />
+            <Text style={[styles.bodyText, lightMode && lightStyles.bodyText]}>
+              {stop.description}
+            </Text>
+          </View>
+          <SecondaryButton
+            label={stepsExpanded ? "Hide steps" : "View steps"}
+            icon={stepsExpanded ? ChevronUp : ChevronDown}
+            onPress={onToggleSteps}
+            lightMode={lightMode}
+            highContrast={highContrast}
+          />
+          {stepsExpanded ? (
+            <View style={styles.walkingStepList}>
+              {route.steps.map((step, index) => {
+                const StepIcon = routeStepIcon(step);
+                return (
+                  <View
+                    key={`${index}-${step.instruction}`}
+                    style={styles.walkingStepRow}
+                  >
+                    <StepIcon
+                      size={20}
+                      color={theme.colors.actionPrimary}
+                      strokeWidth={2.8}
+                    />
+                    <View style={styles.landmarkSearchTextGroup}>
+                      <Text
+                        style={[
+                          styles.bodyText,
+                          largeText && styles.largeBody,
+                          lightMode && lightStyles.bodyText,
+                        ]}
+                      >
+                        {index + 1}. {step.instruction}
+                      </Text>
+                      {step.distanceMeters > 0 ? (
+                        <Text
+                          style={[
+                            styles.statusLabel,
+                            lightMode && lightStyles.mutedText,
+                          ]}
+                        >
+                          {friendlyDistance(step.distanceMeters)}
+                        </Text>
+                      ) : null}
+                    </View>
+                  </View>
+                );
+              })}
+            </View>
+          ) : null}
+          <SecondaryButton
+            label="Hear directions"
+            icon={Volume2}
+            onPress={onHear}
+            lightMode={lightMode}
+            highContrast={highContrast}
+          />
+          <SecondaryButton
+            label="Exit directions"
+            icon={CircleX}
+            onPress={onExit}
+            lightMode={lightMode}
+            highContrast={highContrast}
+          />
+          <Pressable
+            accessibilityRole="link"
+            accessibilityLabel={`Routing attribution, ${route.attribution.label}`}
+            onPress={() => void Linking.openURL(route.attribution.url)}
+          >
+            <Text
+              style={[
+                styles.routingAttribution,
+                { color: theme.colors.actionPrimary },
+              ]}
+            >
+              {route.attribution.label}
+            </Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="link"
+            accessibilityLabel="Report a routing map issue"
+            onPress={() =>
+              void Linking.openURL("https://www.openstreetmap.org/fixthemap")
+            }
+          >
+            <Text
+              style={[
+                styles.routingAttribution,
+                { color: theme.colors.actionPrimary },
+              ]}
+            >
+              Report a map issue
+            </Text>
+          </Pressable>
+        </>
+      ) : null}
+    </ScrollView>
   );
 }
 
@@ -10935,6 +18278,12 @@ function NearbySheetState({
       accessible
       accessibilityLabel={`${title}. ${message}`}
     >
+      <StatusConceptVisual
+        kind={tone === "info" ? "location" : "generic"}
+        compact
+        lightMode={lightMode}
+        highContrast={highContrast}
+      />
       <View style={styles.nearbyStateTitleRow}>
         <Icon size={24} color={iconColor} strokeWidth={2.75} />
         <View style={styles.landmarkSearchTextGroup}>
@@ -10985,6 +18334,7 @@ function NearbySheetState({
 
 type NearbyStopsMapProps = {
   stops: NearbyBusStop[];
+  recommendedStopCode?: string;
   selectedStop: NearbyBusStop | null;
   selectedLandmark: MapLandmark | null;
   landmarks: MapLandmark[];
@@ -10992,15 +18342,29 @@ type NearbyStopsMapProps = {
     latitude: number;
     longitude: number;
     accuracyMeters?: number;
+    headingDegrees?: number;
   } | null;
   mapViewport: MapViewport;
   mapCameraGeometry: MapCameraGeometry;
   layers: MapLayers;
   mapManuallyMoved: boolean;
+  mapInteractionMode: MapInteractionMode;
   directionsActive: boolean;
   followMode: boolean;
   hasSelectedService: boolean;
+  providerRetryKey?: number;
   journeyAlternative: JourneyAlternative | null;
+  walkingRoute?: WalkingRoute | null;
+  routeFitKey?: number;
+  routeFitPadding?: MapOverlayInsets;
+  locationPulseKey?: number;
+  reducedMotion?: boolean;
+  routeStops?: RouteStop[];
+  destinationCoordinate?: MapCoordinate | null;
+  activeVehicle?: {
+    coordinate: MapCoordinate;
+    serviceNo: string;
+  } | null;
   mapPickCandidate: JourneyPoint | null;
   headingDegrees: number;
   largeText: boolean;
@@ -11011,1076 +18375,197 @@ type NearbyStopsMapProps = {
   onSelectLandmark: (landmark: MapLandmark) => void;
   onMapLayoutChange?: (layout: MapLayoutSize) => void;
   onMoveMap: () => void;
+  onProviderAvailabilityChange?: (ready: boolean) => void;
   onProviderViewportChange?: (viewport: ProviderViewportChange) => void;
   onFocusCluster: (center: MapCoordinate) => void;
   onRecenter: () => void;
+  onRetryMap?: () => void;
   onRefreshLocation: () => void;
+  onSelectBusStopManually?: () => void;
   onShowRoute: () => void;
   onToggleFollow: () => void;
   onToggleLayer: (layer: MapLayerKey) => void;
   onResetHeading: () => void;
 };
 
-function googleSymbolIcon({
-  fill,
-  scale,
-  stroke,
-  strokeWeight = 3,
-}: {
-  fill: string;
-  scale: number;
-  stroke: string;
-  strokeWeight?: number;
-}): google.maps.Symbol {
-  return {
-    fillColor: fill,
-    fillOpacity: 1,
-    path: google.maps.SymbolPath.CIRCLE,
-    scale,
-    strokeColor: stroke,
-    strokeOpacity: 1,
-    strokeWeight,
-  };
-}
-
-function GoogleMapsProviderJourneyMap({
-  stops,
-  selectedStop,
-  currentLocation,
-  mapViewport,
-  mapCameraGeometry,
-  layers,
-  mapManuallyMoved,
-  journeyAlternative,
-  mapPickCandidate,
+function MapProviderUnavailableState({
+  message,
   lightMode,
   highContrast,
-  onSelectStop,
-  onMapLayoutChange,
-  onMoveMap,
-  onProviderViewportChange,
-  onFocusCluster,
-}: NearbyStopsMapProps) {
+  onRetryMap,
+  onSelectBusStopManually,
+}: {
+  message: string;
+  lightMode: boolean;
+  highContrast: boolean;
+  onRetryMap?: () => void;
+  onSelectBusStopManually?: () => void;
+}) {
   const theme = resolveVisualTheme(lightMode, highContrast);
-  const mapHostRef = useRef<HTMLElement | null>(null);
-  const mapRef = useRef<google.maps.Map | null>(null);
-  const mapControllerRef = useRef<GoAssistMapController | null>(null);
-  const clustererRef = useRef<GoogleMarkerClusterer | null>(null);
-  const ordinaryStopMarkersRef = useRef<google.maps.Marker[]>([]);
-  const priorityStopMarkersRef = useRef<google.maps.Marker[]>([]);
-  const userMarkerRef = useRef<google.maps.Marker | null>(null);
-  const userAccuracyRef = useRef<google.maps.Circle | null>(null);
-  const destinationMarkerRef = useRef<google.maps.Marker | null>(null);
-  const routePolylineRef = useRef<google.maps.Polyline | null>(null);
-  const listenersRef = useRef<google.maps.MapsEventListener[]>([]);
-  const programmaticCameraRef = useRef(false);
-  const userGestureRef = useRef(false);
-  const latestViewportRef = useRef(mapViewport);
-  const mapInteractionRef = useRef<MapInteractionState>({
-    lastManualViewport: null,
-    userIsPanning: false,
-    userIsZooming: false,
-  });
-  const [providerReady, setProviderReady] = useState(false);
-  const [providerError, setProviderError] = useState(false);
-  const providerName: MapProviderName = providerError
-    ? "ACCESSIBLE_FALLBACK"
-    : "GOOGLE_MAPS";
-
-  useEffect(() => {
-    latestViewportRef.current = mapViewport;
-  }, [mapViewport]);
-
-  const setMapHost = useCallback((node: unknown) => {
-    mapHostRef.current = node as HTMLElement | null;
-  }, []);
-
-  const handleProviderLayout = useCallback(
-    (event: LayoutChangeEvent) => {
-      onMapLayoutChange?.({
-        height: event.nativeEvent.layout.height,
-        width: event.nativeEvent.layout.width,
-      });
-    },
-    [onMapLayoutChange],
-  );
-
-  const clearMarkers = useCallback((markers: google.maps.Marker[]) => {
-    markers.forEach((marker) => marker.setMap(null));
-    markers.length = 0;
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function initializeProviderMap() {
-      if (!mapHostRef.current) {
-        return;
-      }
-
-      try {
-        setProviderError(false);
-        await loadGoogleMapsSdk();
-        const { MarkerClusterer } = await import("@googlemaps/markerclusterer");
-
-        if (cancelled || !mapHostRef.current) {
-          return;
-        }
-
-        const viewport = latestViewportRef.current;
-        const map = new google.maps.Map(mapHostRef.current, {
-          center: toGoogleLatLng(viewport.center),
-          clickableIcons: false,
-          disableDefaultUI: true,
-          gestureHandling: "greedy",
-          keyboardShortcuts: true,
-          mapTypeControl: false,
-          rotateControl: false,
-          scaleControl: true,
-          streetViewControl: false,
-          styles: googleMapStyles(lightMode, highContrast),
-          zoom: viewport.zoom,
-          zoomControl: false,
-        });
-        mapRef.current = map;
-
-        const clusterFill = theme.colors.map.selectionAccent;
-        const clusterStroke = theme.colors.map.routeOutline;
-        clustererRef.current = new MarkerClusterer({
-          map,
-          markers: [],
-          onClusterClick: (_event, cluster) => {
-            const position = cluster.position;
-            if (!position) {
-              return;
-            }
-            onFocusCluster({
-              latitude: position.lat(),
-              longitude: position.lng(),
-            });
-          },
-          renderer: {
-            render: ({ count, position }) =>
-              new google.maps.Marker({
-                icon: googleSymbolIcon({
-                  fill: clusterFill,
-                  scale: clusterVisualSize(count) / 2,
-                  stroke: clusterStroke,
-                  strokeWeight: highContrast ? 4 : 3,
-                }),
-                label: {
-                  color: theme.colors.iconSelected,
-                  fontSize: "16px",
-                  fontWeight: "900",
-                  text: String(count),
-                },
-                position,
-                title: `Cluster of ${count} nearby bus stops`,
-                zIndex: zIndexForMarkerPriority("CLUSTER"),
-              }),
-          },
-        });
-
-        listenersRef.current = [
-          map.addListener("dragstart", () => {
-            userGestureRef.current = true;
-            mapInteractionRef.current = {
-              ...mapInteractionRef.current,
-              userIsPanning: true,
-            };
-          }),
-          map.addListener("zoom_changed", () => {
-            if (!programmaticCameraRef.current) {
-              userGestureRef.current = true;
-              mapInteractionRef.current = {
-                ...mapInteractionRef.current,
-                userIsZooming: true,
-              };
-            }
-          }),
-          map.addListener("idle", () => {
-            if (!userGestureRef.current || programmaticCameraRef.current) {
-              return;
-            }
-            const center = map.getCenter();
-            if (!center || !onProviderViewportChange) {
-              return;
-            }
-            const nextViewport: MapViewport = {
-              bearing: map.getHeading() ?? 0,
-              center: {
-                latitude: center.lat(),
-                longitude: center.lng(),
-              },
-              mode: "USER_PAN",
-              pitch: map.getTilt() ?? 0,
-              zoom: map.getZoom() ?? latestViewportRef.current.zoom,
-            };
-            mapInteractionRef.current = {
-              lastManualViewport: nextViewport,
-              userIsPanning: false,
-              userIsZooming: false,
-            };
-            userGestureRef.current = false;
-            onProviderViewportChange(nextViewport);
-          }),
-        ];
-
-        mapControllerRef.current = {
-          focusBounds: (bounds) => {
-            const googleBounds = new google.maps.LatLngBounds();
-            bounds.forEach((point) =>
-              googleBounds.extend(toGoogleLatLng(point)),
-            );
-            map.fitBounds(
-              googleBounds,
-              cameraPaddingForProvider(mapCameraGeometry),
-            );
-          },
-          focusJourney: (points) => {
-            const googleBounds = new google.maps.LatLngBounds();
-            points.forEach((point) =>
-              googleBounds.extend(toGoogleLatLng(point)),
-            );
-            map.fitBounds(
-              googleBounds,
-              cameraPaddingForProvider(mapCameraGeometry),
-            );
-          },
-          focusStop: (stop) => map.panTo(toGoogleLatLng(stop)),
-          focusUser: (coordinate) => map.panTo(toGoogleLatLng(coordinate)),
-          getViewport: () => {
-            const center = map.getCenter();
-            return {
-              bearing: map.getHeading() ?? 0,
-              center: center
-                ? { latitude: center.lat(), longitude: center.lng() }
-                : latestViewportRef.current.center,
-              mode: latestViewportRef.current.mode,
-              pitch: map.getTilt() ?? 0,
-              zoom: map.getZoom() ?? latestViewportRef.current.zoom,
-            };
-          },
-          getZoom: () => map.getZoom() ?? latestViewportRef.current.zoom,
-          resetNorth: () => {
-            map.setHeading(0);
-            map.setTilt(0);
-          },
-        };
-
-        setProviderReady(true);
-      } catch (error) {
-        console.warn("Google Maps provider failed to load", error);
-        setProviderError(true);
-      }
-    }
-
-    initializeProviderMap();
-
-    return () => {
-      cancelled = true;
-      listenersRef.current.forEach((listener) => listener.remove());
-      listenersRef.current = [];
-      clustererRef.current?.clearMarkers();
-      clustererRef.current?.setMap(null);
-      clearMarkers(ordinaryStopMarkersRef.current);
-      clearMarkers(priorityStopMarkersRef.current);
-      userMarkerRef.current?.setMap(null);
-      userMarkerRef.current = null;
-      userAccuracyRef.current?.setMap(null);
-      userAccuracyRef.current = null;
-      destinationMarkerRef.current?.setMap(null);
-      destinationMarkerRef.current = null;
-      routePolylineRef.current?.setMap(null);
-      routePolylineRef.current = null;
-      mapControllerRef.current = null;
-      mapRef.current = null;
-      setProviderReady(false);
-    };
-  }, [
-    clearMarkers,
-    highContrast,
-    lightMode,
-    onFocusCluster,
-    onProviderViewportChange,
-    theme.colors.iconSelected,
-    theme.colors.map.routeOutline,
-    theme.colors.map.selectionAccent,
-  ]);
-
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !providerReady) {
-      return;
-    }
-
-    programmaticCameraRef.current = true;
-    map.panTo(toGoogleLatLng(mapViewport.center));
-    if (map.getZoom() !== mapViewport.zoom) {
-      map.setZoom(mapViewport.zoom);
-    }
-    map.setHeading(mapViewport.bearing);
-    map.setTilt(mapViewport.pitch);
-
-    const listener = google.maps.event.addListenerOnce(map, "idle", () => {
-      programmaticCameraRef.current = false;
-    });
-
-    return () => listener.remove();
-  }, [
-    mapViewport.bearing,
-    mapViewport.center.latitude,
-    mapViewport.center.longitude,
-    mapViewport.pitch,
-    mapViewport.zoom,
-    providerReady,
-  ]);
-
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !providerReady) {
-      return;
-    }
-    map.setOptions({
-      styles: googleMapStyles(lightMode, highContrast),
-    });
-  }, [highContrast, lightMode, providerReady]);
-
-  useEffect(() => {
-    const map = mapRef.current;
-    const clusterer = clustererRef.current;
-    if (!map || !clusterer || !providerReady) {
-      return;
-    }
-
-    clusterer.clearMarkers(true);
-    clearMarkers(ordinaryStopMarkersRef.current);
-    clearMarkers(priorityStopMarkersRef.current);
-
-    const nearestStopCode = stops[0]?.busStopCode;
-    const boardingStopCode = journeyAlternative?.boardingStop.busStopCode;
-    const destinationStopCode = journeyAlternative?.alightingStop.busStopCode;
-    const priorityStopCodes = new Set(
-      [
-        selectedStop?.busStopCode,
-        nearestStopCode,
-        boardingStopCode,
-        destinationStopCode,
-        ...(journeyAlternative?.routeStops.map((stop) => stop.busStopCode) ??
-          []),
-      ].filter(Boolean),
-    );
-    const priorityStops = stops.filter((stop) =>
-      priorityStopCodes.has(stop.busStopCode),
-    );
-
-    priorityStops.forEach((stop) => {
-      const selected = stop.busStopCode === selectedStop?.busStopCode;
-      const nearest = stop.busStopCode === nearestStopCode;
-      const routeRelevant =
-        stop.busStopCode === boardingStopCode ||
-        stop.busStopCode === destinationStopCode ||
-        Boolean(
-          journeyAlternative?.routeStops.some(
-            (routeStop) => routeStop.busStopCode === stop.busStopCode,
-          ),
-        );
-      const priorityKey: MarkerPriorityKey = selected
-        ? "SELECTED_STOP"
-        : nearest
-          ? "NEAREST_STOP"
-          : stop.busStopCode === boardingStopCode
-            ? "BOARDING_STOP"
-            : stop.busStopCode === destinationStopCode
-              ? "DESTINATION_STOP"
-              : "ROUTE_RELEVANT_STOP";
-      const marker = new google.maps.Marker({
-        icon: googleSymbolIcon({
-          fill: selected
-            ? theme.colors.map.stopSelected
-            : nearest
-              ? theme.colors.map.stopRecommended
-              : theme.colors.map.routePrimary,
-          scale: selected ? 13 : nearest ? 11 : 10,
-          stroke: theme.colors.map.routeOutline,
-          strokeWeight: highContrast || selected ? 4 : 3,
-        }),
-        label:
-          selected || nearest
-            ? {
-                color: theme.colors.iconSelected,
-                fontSize: "11px",
-                fontWeight: "900",
-                text: selected ? stop.busStopCode : "N",
-              }
-            : undefined,
-        map,
-        position: toGoogleLatLng(stop),
-        title: `${selected ? "Selected bus stop. " : nearest ? "Nearest bus stop. " : routeRelevant ? "Route stop. " : ""}${stop.description}, bus stop ${stop.busStopCode}`,
-        zIndex: zIndexForMarkerPriority(priorityKey),
-      });
-      marker.addListener("click", () => onSelectStop(stop));
-      priorityStopMarkersRef.current.push(marker);
-    });
-
-    if (layers.busStops) {
-      const ordinaryMarkers = stops
-        .filter((stop) => !priorityStopCodes.has(stop.busStopCode))
-        .map((stop) => {
-          const marker = new google.maps.Marker({
-            icon: googleSymbolIcon({
-              fill: theme.colors.map.stopDefault,
-              scale: 7,
-              stroke: theme.colors.map.stopOutline,
-              strokeWeight: highContrast ? 3 : 2,
-            }),
-            position: toGoogleLatLng(stop),
-            title: `${stop.description}, bus stop ${stop.busStopCode}`,
-            zIndex: zIndexForMarkerPriority("NORMAL_BUS_STOP"),
-          });
-          marker.addListener("click", () => onSelectStop(stop));
-          return marker;
-        });
-      ordinaryStopMarkersRef.current.push(...ordinaryMarkers);
-      clusterer.addMarkers(ordinaryMarkers);
-    }
-
-    clusterer.render();
-  }, [
-    clearMarkers,
-    highContrast,
-    journeyAlternative?.alightingStop.busStopCode,
-    journeyAlternative?.boardingStop.busStopCode,
-    journeyAlternative?.routeStops,
-    layers.busStops,
-    onSelectStop,
-    providerReady,
-    selectedStop?.busStopCode,
-    stops,
-    theme.colors.iconSelected,
-    theme.colors.map.routeOutline,
-    theme.colors.map.routePrimary,
-    theme.colors.map.stopDefault,
-    theme.colors.map.stopOutline,
-    theme.colors.map.stopRecommended,
-    theme.colors.map.stopSelected,
-  ]);
-
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !providerReady) {
-      return;
-    }
-
-    userMarkerRef.current?.setMap(null);
-    userMarkerRef.current = null;
-    userAccuracyRef.current?.setMap(null);
-    userAccuracyRef.current = null;
-
-    if (!currentLocation) {
-      return;
-    }
-
-    userAccuracyRef.current = new google.maps.Circle({
-      center: toGoogleLatLng(currentLocation),
-      fillColor: theme.colors.map.currentLocationHalo,
-      fillOpacity: 1,
-      map,
-      radius: Math.max(24, currentLocation.accuracyMeters ?? 35),
-      strokeColor: theme.colors.map.currentLocation,
-      strokeOpacity: highContrast ? 1 : 0.8,
-      strokeWeight: highContrast ? 3 : 2,
-    });
-    userMarkerRef.current = new google.maps.Marker({
-      icon: googleSymbolIcon({
-        fill: theme.colors.map.currentLocation,
-        scale: 10,
-        stroke: theme.colors.map.currentLocationOutline,
-        strokeWeight: highContrast ? 4 : 3,
-      }),
-      label: {
-        color: theme.colors.map.currentLocationLabelText,
-        fontSize: "11px",
-        fontWeight: "900",
-        text: "You",
-      },
-      map,
-      position: toGoogleLatLng(currentLocation),
-      title: "Your current location",
-      zIndex: zIndexForMarkerPriority("USER_LOCATION"),
-    });
-  }, [
-    currentLocation,
-    currentLocation?.accuracyMeters,
-    currentLocation?.latitude,
-    currentLocation?.longitude,
-    highContrast,
-    providerReady,
-    theme.colors.map.currentLocation,
-    theme.colors.map.currentLocationHalo,
-    theme.colors.map.currentLocationLabelText,
-    theme.colors.map.currentLocationOutline,
-  ]);
-
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !providerReady) {
-      return;
-    }
-
-    destinationMarkerRef.current?.setMap(null);
-    destinationMarkerRef.current = null;
-
-    if (!mapPickCandidate) {
-      return;
-    }
-
-    destinationMarkerRef.current = new google.maps.Marker({
-      icon: googleSymbolIcon({
-        fill: theme.colors.destination,
-        scale: 12,
-        stroke: theme.colors.map.routeOutline,
-        strokeWeight: highContrast ? 4 : 3,
-      }),
-      map,
-      position: toGoogleLatLng(mapPickCandidate.coordinate),
-      title: `Candidate destination ${mapPickCandidate.label}`,
-      zIndex: zIndexForMarkerPriority("DESTINATION_STOP"),
-    });
-  }, [
-    highContrast,
-    mapPickCandidate,
-    providerReady,
-    theme.colors.destination,
-    theme.colors.map.routeOutline,
-  ]);
-
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !providerReady) {
-      return;
-    }
-
-    routePolylineRef.current?.setMap(null);
-    routePolylineRef.current = null;
-
-    if (!journeyAlternative || !layers.walkingRoute) {
-      return;
-    }
-
-    routePolylineRef.current = new google.maps.Polyline({
-      clickable: false,
-      geodesic: true,
-      map,
-      path: journeyAlternative.routeStops.map((stop) => toGoogleLatLng(stop)),
-      strokeColor: theme.colors.map.routePrimary,
-      strokeOpacity: 0.9,
-      strokeWeight: highContrast ? 7 : 5,
-      zIndex: 500,
-    });
-  }, [
-    highContrast,
-    journeyAlternative,
-    layers.walkingRoute,
-    providerReady,
-    theme.colors.map.routePrimary,
-  ]);
-
-  const providerLabel = mapProviderDisplayName(providerName);
+  const fallbackGuidance = onSelectBusStopManually
+    ? "You can retry or select a bus stop manually."
+    : "Journey details remain available without the map.";
 
   return (
     <View
+      accessibilityRole="alert"
+      accessibilityLabel={`Unable to load map. ${message} ${fallbackGuidance}`}
       style={[
-        styles.stopMapPanel,
-        styles.mapFirstPanel,
+        styles.providerMapUnavailable,
         {
-          backgroundColor: theme.colors.map.background,
+          backgroundColor: theme.colors.map.overlaySurface,
           borderColor: theme.colors.map.overlayBorder,
         },
-        lightMode && lightStyles.stopMapPanel,
         highContrast && !lightMode && styles.highContrastControl,
         highContrast && lightMode && lightStyles.highContrastControl,
       ]}
-      accessible
-      accessibilityLabel={`Nearby bus stop map powered by ${providerLabel}. ${stops.length} stops available.`}
     >
-      <View
-        ref={setMapHost as never}
-        onLayout={handleProviderLayout}
-        style={[
-          styles.mapCanvas,
-          styles.mapFirstCanvas,
-          styles.providerMapCanvas,
-          {
-            backgroundColor: theme.colors.map.background,
-            borderColor: theme.colors.map.overlayBorder,
-          },
-          mapManuallyMoved && styles.mapCanvasMoved,
-        ]}
+      <MapIcon
+        size={30}
+        color={theme.colors.map.controlIcon}
+        strokeWidth={2.8}
+        accessibilityElementsHidden
+        importantForAccessibility="no"
       />
-      {providerError ? (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Google Maps unavailable. Use accessible fallback map controls."
-          accessibilityHint="Keeps journey controls available while the map provider is unavailable."
-          onPress={onMoveMap}
-          style={[
-            styles.providerMapUnavailable,
-            {
-              backgroundColor: theme.colors.map.overlaySurface,
-              borderColor: theme.colors.map.overlayBorder,
-            },
-            highContrast && styles.highContrastControl,
-          ]}
-        >
-          <MapIcon
-            size={28}
-            color={theme.colors.map.controlIcon}
-            strokeWidth={2.8}
-            accessibilityElementsHidden
-            importantForAccessibility="no"
+      <Text
+        style={[
+          styles.providerMapUnavailableTitle,
+          { color: theme.colors.textPrimary },
+          highContrast && !lightMode && styles.highContrastText,
+          highContrast && lightMode && lightStyles.highContrastText,
+        ]}
+      >
+        Unable to load map
+      </Text>
+      <Text
+        style={[
+          styles.providerMapUnavailableText,
+          { color: theme.colors.textSecondary },
+          highContrast && !lightMode && styles.highContrastText,
+          highContrast && lightMode && lightStyles.highContrastText,
+        ]}
+      >
+        {message}
+      </Text>
+      <Text
+        style={[
+          styles.providerMapUnavailableText,
+          { color: theme.colors.textSecondary },
+          highContrast && !lightMode && styles.highContrastText,
+          highContrast && lightMode && lightStyles.highContrastText,
+        ]}
+      >
+        {fallbackGuidance}
+      </Text>
+      <View style={styles.providerMapUnavailableActions}>
+        {onRetryMap ? (
+          <PrimaryButton
+            label="Retry map"
+            icon={RefreshCw}
+            onPress={onRetryMap}
+            lightMode={lightMode}
+            highContrast={highContrast}
           />
-          <Text
-            style={[
-              styles.providerMapUnavailableTitle,
-              { color: theme.colors.textPrimary },
-              highContrast && styles.highContrastText,
-            ]}
-          >
-            Map provider unavailable
-          </Text>
-          <Text
-            style={[
-              styles.providerMapUnavailableText,
-              { color: theme.colors.textSecondary },
-              highContrast && styles.highContrastText,
-            ]}
-          >
-            Nearby stops and journey controls are still available.
-          </Text>
-        </Pressable>
-      ) : null}
+        ) : null}
+        {onSelectBusStopManually ? (
+          <SecondaryButton
+            label="Select bus stop manually"
+            icon={List}
+            onPress={onSelectBusStopManually}
+            lightMode={lightMode}
+            highContrast={highContrast}
+          />
+        ) : null}
+      </View>
     </View>
   );
 }
 
 const NearbyStopsMap = memo(function NearbyStopsMap({
   stops,
+  recommendedStopCode,
   selectedStop,
-  selectedLandmark,
-  landmarks,
   currentLocation,
   mapViewport,
-  mapCameraGeometry,
   layers,
-  mapManuallyMoved,
-  directionsActive,
-  followMode,
-  hasSelectedService,
+  providerRetryKey,
   journeyAlternative,
+  walkingRoute,
+  routeFitKey = 0,
+  routeFitPadding = { top: 92, right: 76, bottom: 280, left: 18 },
+  locationPulseKey = 0,
+  reducedMotion = false,
+  routeStops,
+  destinationCoordinate,
+  activeVehicle,
   mapPickCandidate,
-  headingDegrees,
-  largeText,
   lightMode,
   highContrast,
   showInlineControls = true,
   onSelectStop,
-  onSelectLandmark,
   onMapLayoutChange,
   onMoveMap,
+  onProviderAvailabilityChange,
   onProviderViewportChange,
   onFocusCluster,
-  onRecenter,
-  onRefreshLocation,
-  onShowRoute,
-  onToggleFollow,
-  onToggleLayer,
-  onResetHeading,
+  onRetryMap,
+  onSelectBusStopManually,
 }: NearbyStopsMapProps) {
   const theme = resolveVisualTheme(lightMode, highContrast);
-  const mapTileCells = useMemo(
-    () =>
-      Array.from({ length: 12 }).map((_, index) => (
-        <View key={index} style={styles.mapTileCell} />
-      )),
-    [],
-  );
-  const visibleStops = stops;
-  const mapProjection = useMemo(() => {
-    return createMapProjection(mapViewport.center, mapViewport.zoom);
-  }, [
-    mapViewport.center.latitude,
-    mapViewport.center.longitude,
-    mapViewport.zoom,
-  ]);
-  const positionedStops = useMemo(() => {
-    return visibleStops.map((stop, index) => {
-      const fallbackAngle =
-        (index / Math.max(stops.length, 1)) * Math.PI * 2 - Math.PI / 2;
-      const projected = mapProjection.project(stop);
-      const hasDistinctCoordinate =
-        stop.latitude !== currentLocation?.latitude ||
-        stop.longitude !== currentLocation?.longitude;
-      return {
-        stop,
-        left: hasDistinctCoordinate
-          ? projected.left
-          : (`${50 + Math.cos(fallbackAngle) * 18}%` as const),
-        top: hasDistinctCoordinate
-          ? projected.top
-          : (`${50 + Math.sin(fallbackAngle) * 18}%` as const),
-        x: hasDistinctCoordinate
-          ? projected.x
-          : 50 + Math.cos(fallbackAngle) * 18,
-        y: hasDistinctCoordinate
-          ? projected.y
-          : 50 + Math.sin(fallbackAngle) * 18,
-      };
-    });
-  }, [
-    currentLocation?.latitude,
-    currentLocation?.longitude,
-    mapProjection,
-    stops.length,
-    visibleStops,
-  ]);
-  const positionedLandmarks = useMemo(() => {
-    return landmarks.slice(0, 6).map((landmark) => {
-      const projected = mapProjection.project(landmark);
-      return {
-        landmark,
-        left: projected.left,
-        top: projected.top,
-      };
-    });
-  }, [landmarks, mapProjection]);
-  const selectedPosition = useMemo(
-    () =>
-      positionedStops.find(
-        ({ stop }) => stop.busStopCode === selectedStop?.busStopCode,
-      ),
-    [positionedStops, selectedStop?.busStopCode],
-  );
-  const userLocationPosition = useMemo(
-    () => (currentLocation ? mapProjection.project(currentLocation) : null),
-    [currentLocation?.latitude, currentLocation?.longitude, mapProjection],
-  );
-  const currentPosition =
-    userLocationPosition ?? mapProjection.project(manualStopLookup);
-  const userMarkerCoordinateId = currentLocation
-    ? `current-user-location-${currentLocation.latitude.toFixed(5)}-${currentLocation.longitude.toFixed(5)}`
-    : null;
-  const accuracyDiameter = Math.max(
-    42,
-    Math.min(
-      112,
-      Math.round(
-        ((currentLocation?.accuracyMeters ?? 35) / mapProjection.scaleMeters) *
-          72,
-      ),
-    ),
-  );
-  const clusteredStopDisplay = useMemo(() => {
-    const zoom = mapViewport.zoom;
-    const forceClusterOrdinaryStops = zoom < 15.4;
-    const clusterRadius = zoom < 15.4 ? 34 : zoom < 17 ? 16 : 8;
-    const ordinaryIndividualLimit =
-      zoom < 15.4
-        ? 0
-        : zoom < 17
-          ? selectedStop
-            ? 1
-            : 3
-          : Math.max(maxRenderedMapStops, selectedStop ? 10 : 16);
-    const nearestStopCode = stops[0]?.busStopCode;
-    const boardingStopCode = journeyAlternative?.boardingStop.busStopCode;
-    const destinationStopCode = journeyAlternative?.alightingStop.busStopCode;
-    const routeStopCodes = new Set(
-      [
-        boardingStopCode,
-        destinationStopCode,
-        selectedStop?.busStopCode,
-        ...(journeyAlternative?.routeStops.map((stop) => stop.busStopCode) ??
-          []),
-      ].filter(Boolean),
-    );
-    const priorityMarkers: Array<
-      (typeof positionedStops)[number] & {
-        nearest: boolean;
-        routeRelevant: boolean;
-        selected: boolean;
-      }
-    > = [];
-    const ordinaryStops: Array<(typeof positionedStops)[number]> = [];
+  const openStreetMapProviderConfigured =
+    shouldUseOpenStreetMapProvider(showInlineControls);
+  const nativeMapsProviderConfigured =
+    shouldUseNativeMapsProvider(showInlineControls);
+  const mapProviderConfigured =
+    openStreetMapProviderConfigured || nativeMapsProviderConfigured;
+  const providerLabel = openStreetMapProviderConfigured
+    ? "OpenStreetMap"
+    : "Google Maps";
 
-    positionedStops.forEach((positionedStop) => {
-      const selected =
-        positionedStop.stop.busStopCode === selectedStop?.busStopCode;
-      const nearest = positionedStop.stop.busStopCode === nearestStopCode;
-      const routeRelevant = routeStopCodes.has(positionedStop.stop.busStopCode);
-      if (selected || nearest || routeRelevant) {
-        priorityMarkers.push({
-          ...positionedStop,
-          nearest,
-          routeRelevant,
-          selected,
-        });
-        return;
-      }
-      ordinaryStops.push(positionedStop);
-    });
-    const protectedRects: ScreenRect[] = [
-      userLocationPosition
-        ? rectAroundProjection({
-            geometry: mapCameraGeometry,
-            height: 78,
-            point: userLocationPosition,
-            priority: "USER_LOCATION",
-            width: 82,
-          })
-        : null,
-      ...priorityMarkers
-        .filter(
-          (marker) =>
-            !marker.nearest || marker.selected || userLocationPosition,
-        )
-        .map((marker) =>
-          rectAroundProjection({
-            geometry: mapCameraGeometry,
-            height: marker.selected || marker.nearest ? 76 : 54,
-            point: marker,
-            priority: marker.selected
-              ? "SELECTED_STOP"
-              : marker.nearest
-                ? "NEAREST_STOP"
-                : marker.stop.busStopCode === boardingStopCode
-                  ? "BOARDING_STOP"
-                  : marker.stop.busStopCode === destinationStopCode
-                    ? "DESTINATION_STOP"
-                    : "ROUTE_RELEVANT_STOP",
-            width: marker.selected || marker.nearest ? 84 : 58,
-          }),
-        ),
-    ].filter(Boolean) as ScreenRect[];
-    const clusterConflictsWithPriority = ({
-      count,
-      x,
-      y,
-    }: {
-      count: number;
-      x: number;
-      y: number;
-    }) => {
-      const size = clusterVisualSize(count) + 6;
-      const clusterRect = rectAroundProjection({
-        geometry: mapCameraGeometry,
-        height: size,
-        point: { x, y },
-        priority: "CLUSTER",
-        width: size,
-      });
-      return protectedRects.some(
-        (rect) =>
-          markerPriority[rect.priority] > markerPriority.CLUSTER &&
-          rectsOverlap(clusterRect, rect),
-      );
-    };
-    const ordinaryConflictsWithPriority = (marker: {
-      x: number;
-      y: number;
-    }) => {
-      const normalRect = rectAroundProjection({
-        geometry: mapCameraGeometry,
-        height: 48,
-        point: marker,
-        priority: "NORMAL_BUS_STOP",
-        width: 48,
-      });
-      return protectedRects.some(
-        (rect) =>
-          markerPriority[rect.priority] > markerPriority.NORMAL_BUS_STOP &&
-          rectsOverlap(normalRect, rect),
-      );
-    };
-
-    const clusteredIndexes = new Set<number>();
-    const ordinarySingles: Array<
-      (typeof positionedStops)[number] & {
-        nearest: false;
-        routeRelevant: false;
-        selected: false;
-      }
-    > = [];
-    const clusters: Array<{
-      id: string;
-      center: MapCoordinate;
-      count: number;
-      left: `${number}%`;
-      stops: NearbyBusStop[];
-      top: `${number}%`;
-      x: number;
-      y: number;
-    }> = [];
-
-    ordinaryStops.forEach((seed, seedIndex) => {
-      if (clusteredIndexes.has(seedIndex)) {
-        return;
-      }
-
-      const clusterIndexes = new Set([seedIndex]);
-      const queue = [seedIndex];
-      while (queue.length > 0) {
-        const currentIndex = queue.shift() ?? seedIndex;
-        const current = ordinaryStops[currentIndex];
-        ordinaryStops.forEach((candidate, candidateIndex) => {
-          if (clusterIndexes.has(candidateIndex)) {
-            return;
-          }
-          const distance = Math.hypot(
-            candidate.x - current.x,
-            candidate.y - current.y,
-          );
-          if (distance <= clusterRadius) {
-            clusterIndexes.add(candidateIndex);
-            queue.push(candidateIndex);
-          }
-        });
-      }
-
-      const clusterIndexList = Array.from(clusterIndexes);
-      const clusterItems = clusterIndexList.map(
-        (index) => ordinaryStops[index],
-      );
-      clusterIndexList.forEach((index) => clusteredIndexes.add(index));
-
-      if (forceClusterOrdinaryStops || clusterItems.length > 1) {
-        const count = clusterItems.length;
-        const center = {
-          latitude:
-            clusterItems.reduce((sum, item) => sum + item.stop.latitude, 0) /
-            count,
-          longitude:
-            clusterItems.reduce((sum, item) => sum + item.stop.longitude, 0) /
-            count,
-        };
-        const x = clusterItems.reduce((sum, item) => sum + item.x, 0) / count;
-        const y = clusterItems.reduce((sum, item) => sum + item.y, 0) / count;
-        if (clusterConflictsWithPriority({ count, x, y })) {
-          return;
-        }
-        clusters.push({
-          id: clusterItems.map(({ stop }) => stop.busStopCode).join("-"),
-          center,
-          count,
-          left: `${x}%` as `${number}%`,
-          stops: clusterItems.map(({ stop }) => stop),
-          top: `${y}%` as `${number}%`,
-          x,
-          y,
-        });
-        return;
-      }
-
-      ordinarySingles.push({
-        ...seed,
-        nearest: false,
-        routeRelevant: false,
-        selected: false,
-      });
-      clusteredIndexes.add(seedIndex);
-    });
-
-    const sortedSingles = ordinarySingles
-      .filter((marker) => !ordinaryConflictsWithPriority(marker))
-      .sort(
-        (first, second) =>
-          first.stop.distanceMeters - second.stop.distanceMeters,
-      );
-    const visibleSingles = sortedSingles.slice(0, ordinaryIndividualLimit);
-    const overflowSingles = sortedSingles.slice(ordinaryIndividualLimit);
-    if (overflowSingles.length > 0) {
-      const count = overflowSingles.length;
-      const x = overflowSingles.reduce((sum, item) => sum + item.x, 0) / count;
-      const y = overflowSingles.reduce((sum, item) => sum + item.y, 0) / count;
-      if (!clusterConflictsWithPriority({ count, x, y })) {
-        clusters.push({
-          id: `overflow-${overflowSingles.map(({ stop }) => stop.busStopCode).join("-")}`,
-          center: {
-            latitude:
-              overflowSingles.reduce(
-                (sum, item) => sum + item.stop.latitude,
-                0,
-              ) / count,
-            longitude:
-              overflowSingles.reduce(
-                (sum, item) => sum + item.stop.longitude,
-                0,
-              ) / count,
-          },
-          count,
-          left: `${x}%` as `${number}%`,
-          stops: overflowSingles.map(({ stop }) => stop),
-          top: `${y}%` as `${number}%`,
-          x,
-          y,
-        });
-      }
+  useEffect(() => {
+    if (mapProviderConfigured) {
+      return;
     }
+    onProviderAvailabilityChange?.(false);
+    if (__DEV__ && process.env.NODE_ENV !== "test") {
+      console.warn("[Map] initialization unavailable", {
+        platform: Platform.OS,
+        reason: mapTechnicalConfigurationMessage(),
+      });
+    }
+  }, [mapProviderConfigured, onProviderAvailabilityChange]);
 
-    // Priority: clarity over completeness.
-    // Show fewer, more meaningful points at low zoom.
-    // Expand detail only when the user zooms in or selects a stop.
-    return {
-      clusters,
-      markers: [...priorityMarkers, ...visibleSingles],
-    };
-  }, [
-    journeyAlternative?.alightingStop.busStopCode,
-    journeyAlternative?.boardingStop.busStopCode,
-    journeyAlternative?.routeStops,
-    mapCameraGeometry,
-    mapViewport.zoom,
-    positionedStops,
-    selectedStop,
-    stops,
-    userLocationPosition,
-  ]);
-
-  if (shouldUseGoogleMapsProvider(showInlineControls)) {
+  if (!mapProviderConfigured) {
     return (
-      <GoogleMapsProviderJourneyMap
-        stops={stops}
-        selectedStop={selectedStop}
-        selectedLandmark={selectedLandmark}
-        landmarks={landmarks}
-        currentLocation={currentLocation}
-        mapViewport={mapViewport}
-        mapCameraGeometry={mapCameraGeometry}
-        layers={layers}
-        mapManuallyMoved={mapManuallyMoved}
-        directionsActive={directionsActive}
-        followMode={followMode}
-        hasSelectedService={hasSelectedService}
-        journeyAlternative={journeyAlternative}
-        mapPickCandidate={mapPickCandidate}
-        headingDegrees={headingDegrees}
-        largeText={largeText}
-        lightMode={lightMode}
-        highContrast={highContrast}
-        showInlineControls={showInlineControls}
-        onSelectStop={onSelectStop}
-        onSelectLandmark={onSelectLandmark}
-        onMapLayoutChange={onMapLayoutChange}
-        onMoveMap={onMoveMap}
-        onProviderViewportChange={onProviderViewportChange}
-        onFocusCluster={onFocusCluster}
-        onRecenter={onRecenter}
-        onRefreshLocation={onRefreshLocation}
-        onShowRoute={onShowRoute}
-        onToggleFollow={onToggleFollow}
-        onToggleLayer={onToggleLayer}
-        onResetHeading={onResetHeading}
-      />
+      <View
+        style={[
+          styles.stopMapPanel,
+          !showInlineControls && styles.mapFirstPanel,
+          {
+            backgroundColor: theme.colors.map.background,
+            borderColor: theme.colors.map.overlayBorder,
+          },
+          lightMode && lightStyles.stopMapPanel,
+          highContrast && !lightMode && styles.highContrastControl,
+          highContrast && lightMode && lightStyles.highContrastControl,
+        ]}
+        accessible
+        accessibilityLabel="Map provider unavailable"
+        onLayout={(event) =>
+          onMapLayoutChange?.({
+            height: event.nativeEvent.layout.height,
+            width: event.nativeEvent.layout.width,
+          })
+        }
+      >
+        <MapProviderUnavailableState
+          message={mapConfigurationMessage()}
+          lightMode={lightMode}
+          highContrast={highContrast}
+          onRetryMap={onRetryMap}
+          onSelectBusStopManually={onSelectBusStopManually}
+        />
+      </View>
     );
   }
 
@@ -12098,673 +18583,84 @@ const NearbyStopsMap = memo(function NearbyStopsMap({
         highContrast && lightMode && lightStyles.highContrastControl,
       ]}
       accessible
-      accessibilityLabel={`Nearby bus stop map. ${stops.length} stops shown.`}
+      accessibilityLabel={`Nearby bus stop map powered by ${providerLabel}. ${stops.length} stops available.`}
     >
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Move map manually"
-        accessibilityHint="Pan or zoom the nearby bus stop map."
-        onLayout={(event) =>
-          onMapLayoutChange?.({
-            height: event.nativeEvent.layout.height,
-            width: event.nativeEvent.layout.width,
-          })
+      <JourneyMap
+        stops={stops}
+        recommendedStopCode={recommendedStopCode}
+        selectedStop={selectedStop}
+        currentLocation={currentLocation}
+        viewport={mapViewport}
+        layers={layers}
+        routeStops={
+          walkingRoute?.geometry ??
+          journeyAlternative?.routeStops ??
+          routeStops ??
+          []
         }
-        onPress={onMoveMap}
-        style={[
-          styles.mapCanvas,
-          {
-            backgroundColor: theme.colors.map.background,
-            borderColor: theme.colors.map.overlayBorder,
-          },
-          !showInlineControls && styles.mapFirstCanvas,
-          mapManuallyMoved && styles.mapCanvasMoved,
-        ]}
-      >
-        <View style={styles.mapTileGrid}>
-          {mapTileCells.map((cell) =>
-            React.cloneElement(cell, {
-              style: [
-                styles.mapTileCell,
-                { borderColor: theme.colors.map.grid },
-              ],
-            }),
-          )}
-        </View>
-        {__DEV__ && enableCameraDebugLogs ? (
-          <MapCameraDebugOverlay
-            geometry={mapCameraGeometry}
-            lightMode={lightMode}
-          />
-        ) : null}
-        <View
-          style={[
-            styles.mapLandPatch,
-            { backgroundColor: theme.colors.map.land },
-          ]}
-        />
-        <View
-          style={[
-            styles.mapBuildingPatch,
-            { backgroundColor: theme.colors.map.building },
-          ]}
-        />
-        <View
-          style={[
-            styles.mapParkPatch,
-            { backgroundColor: theme.colors.map.park },
-          ]}
-        />
-        <View
-          style={[
-            styles.mapWaterPatch,
-            { backgroundColor: theme.colors.map.water },
-          ]}
-        />
-        <View
-          style={[
-            styles.mapRoadMajor,
-            {
-              backgroundColor: theme.colors.map.majorRoad,
-              borderColor: theme.colors.map.roadBorder,
-            },
-          ]}
-        />
-        <View
-          style={[
-            styles.mapRoadMinorOne,
-            {
-              backgroundColor: theme.colors.map.minorRoad,
-              borderColor: theme.colors.map.roadBorder,
-            },
-          ]}
-        />
-        <View
-          style={[
-            styles.mapRoadMinorTwo,
-            {
-              backgroundColor: theme.colors.map.minorRoad,
-              borderColor: theme.colors.map.roadBorder,
-            },
-          ]}
-        />
-        <Text
-          style={[
-            styles.mapRoadLabel,
-            { color: theme.colors.map.label },
-            largeText && styles.largeBody,
-          ]}
-        >
-          Kent Ridge Cres
-        </Text>
-        {layers.landmarks &&
-          positionedLandmarks.map(({ landmark, left, top }) => {
-            const destination = selectedLandmark?.id === landmark.id;
-            return (
-              <Pressable
-                key={landmark.id}
-                accessibilityRole="button"
-                accessibilityLabel={`${landmark.name}. ${landmark.category} landmark.`}
-                onPress={() => onSelectLandmark(landmark)}
-                style={[
-                  styles.landmarkMarker,
-                  { left, top },
-                  destination && styles.destinationLandmarkMarker,
-                  lightMode && lightStyles.landmarkMarker,
-                  destination &&
-                    lightMode &&
-                    lightStyles.destinationLandmarkMarker,
-                  highContrast && styles.highContrastMapStopMarker,
-                  destination && {
-                    borderColor: theme.colors.destination,
-                  },
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.landmarkIconText,
-                    lightMode && lightStyles.landmarkText,
-                  ]}
-                >
-                  {landmarkIcon(landmark)}
-                </Text>
-                <Text
-                  style={[
-                    styles.landmarkLabel,
-                    lightMode && lightStyles.landmarkLabel,
-                    destination && styles.destinationLandmarkLabel,
-                  ]}
-                >
-                  {landmark.name}
-                </Text>
-              </Pressable>
-            );
-          })}
-        {currentLocation && userLocationPosition && userMarkerCoordinateId ? (
-          <View
-            style={[
-              styles.accuracyRadius,
-              {
-                backgroundColor: theme.colors.map.currentLocationHalo,
-                borderColor: theme.colors.map.currentLocation,
-                borderRadius: accuracyDiameter / 2,
-                height: accuracyDiameter,
-                left: userLocationPosition.left,
-                marginLeft: -accuracyDiameter / 2,
-                marginTop: -accuracyDiameter / 2,
-                top: userLocationPosition.top,
-                width: accuracyDiameter,
-              },
-              Boolean(
-                currentLocation.accuracyMeters &&
-                currentLocation.accuracyMeters > 100,
-              ) && styles.largeAccuracyRadius,
-            ]}
-            accessible={false}
-            testID={`${userMarkerCoordinateId}-accuracy`}
-          />
-        ) : null}
-        {selectedPosition && layers.walkingRoute ? (
-          <>
-            <View
-              style={[
-                styles.selectedStopRoute,
-                directionsActive && styles.activeWalkingRoute,
-                {
-                  left: selectedPosition.left,
-                  top: selectedPosition.top,
-                  backgroundColor: theme.colors.map.routePrimary,
-                  borderColor: theme.colors.map.routeOutline,
-                },
-                lightMode && lightStyles.selectedStopRoute,
-                highContrast && styles.highContrastSelectedStopRoute,
-              ]}
-              accessible={false}
-            >
-              <Text style={styles.selectedStopRouteText}>
-                {selectedPosition.stop.distanceMeters} m
-              </Text>
-            </View>
-            {directionsActive && layers.walkingRoute ? (
-              <View
-                style={[
-                  styles.routeArrow,
-                  {
-                    left: selectedPosition.left,
-                    top: selectedPosition.top,
-                  },
-                  lightMode && lightStyles.routeArrow,
-                  {
-                    backgroundColor: theme.colors.map.routePrimary,
-                    borderColor: theme.colors.map.routeOutline,
-                  },
-                  highContrast && styles.highContrastRouteArrow,
-                ]}
-                accessible={false}
-              >
-                <Text style={styles.routeArrowText}>›</Text>
-              </View>
-            ) : null}
-          </>
-        ) : null}
-        {layers.selectedService && hasSelectedService && selectedPosition ? (
-          <View
-            style={[
-              styles.serviceBusMarker,
-              {
-                left: selectedPosition.left,
-                top: selectedPosition.top,
-                backgroundColor: theme.colors.actionPrimary,
-                borderColor: theme.colors.map.routeOutline,
-              },
-              lightMode && lightStyles.serviceBusMarker,
-              highContrast && styles.highContrastMapStopMarker,
-            ]}
-            accessibilityRole="image"
-            accessibilityLabel="Selected bus service shown near your chosen stop."
-          >
-            <BusFront
-              size={22}
-              color={controlIconColor({
-                active: true,
-                lightMode,
-                highContrast,
-              })}
-              strokeWidth={3}
-              accessibilityElementsHidden
-              importantForAccessibility="no"
-            />
-          </View>
-        ) : null}
-        {journeyAlternative ? (
-          <JourneyPlanMapPreview
-            alternative={journeyAlternative}
-            project={mapProjection.project}
+        routeMobilityMode={walkingRoute?.mobilityMode}
+        routeWarnings={
+          walkingRoute?.accessibility.warnings.flatMap((warning) =>
+            warning.coordinate
+              ? [{ coordinate: warning.coordinate, label: warning.message }]
+              : [],
+          ) ?? []
+        }
+        routeFitKey={routeFitKey}
+        routeFitPadding={routeFitPadding}
+        destination={
+          walkingRoute && selectedStop
+            ? selectedStop
+            : (mapPickCandidate?.coordinate ?? destinationCoordinate ?? null)
+        }
+        destinationAccessibilityLabel={
+          walkingRoute && selectedStop
+            ? `Destination bus stop, ${selectedStop.description}`
+            : undefined
+        }
+        activeVehicle={activeVehicle ?? null}
+        palette={{
+          background: theme.colors.map.background,
+          currentLocation: theme.colors.map.currentLocation,
+          currentLocationHalo: theme.colors.map.currentLocationHalo,
+          currentLocationLabelSurface:
+            theme.colors.map.currentLocationLabelSurface,
+          currentLocationLabelText: theme.colors.map.currentLocationLabelText,
+          currentLocationOutline: theme.colors.map.currentLocationOutline,
+          routeOutline: theme.colors.map.routeOutline,
+          routePrimary: theme.colors.map.routePrimary,
+          stopDefault: theme.colors.map.stopDefault,
+          stopOutline: theme.colors.map.stopOutline,
+          stopRecommended: theme.colors.map.stopRecommended,
+          stopSelected: theme.colors.map.stopSelected,
+          textOnMarker: theme.colors.iconSelected,
+        }}
+        highContrast={highContrast}
+        lightMode={lightMode}
+        locationPulseKey={locationPulseKey}
+        reducedMotion={reducedMotion}
+        providerRetryKey={providerRetryKey ?? 0}
+        fallback={
+          <MapProviderUnavailableState
+            message={mapConfigurationMessage()}
             lightMode={lightMode}
             highContrast={highContrast}
+            onRetryMap={onRetryMap}
+            onSelectBusStopManually={onSelectBusStopManually}
           />
-        ) : null}
-        {mapPickCandidate ? (
-          <View
-            style={[
-              styles.destinationMapMarker,
-              {
-                backgroundColor: theme.colors.destination,
-                borderColor: theme.colors.map.routeOutline,
-              },
-              highContrast && {
-                borderColor: theme.colors.borderStrong,
-                borderWidth: 3,
-              },
-              {
-                left: mapProjection.project(mapPickCandidate.coordinate).left,
-                top: mapProjection.project(mapPickCandidate.coordinate).top,
-              },
-            ]}
-            accessibilityRole="image"
-            accessibilityLabel={`Candidate destination ${mapPickCandidate.label}`}
-          >
-            <MapPinned
-              size={22}
-              color={theme.colors.iconSelected}
-              strokeWidth={3}
-            />
-          </View>
-        ) : null}
-        {layers.busStops
-          ? clusteredStopDisplay.clusters.map((cluster) => {
-              const singleStop = cluster.count === 1 ? cluster.stops[0] : null;
-              const clusterSize = clusterVisualSize(cluster.count);
-              return (
-                <Pressable
-                  key={cluster.id}
-                  accessibilityRole="button"
-                  accessibilityLabel={
-                    cluster.count === 1
-                      ? `1 nearby bus stop. ${singleStop?.description ?? "Bus stop"}. Activate to select.`
-                      : `${cluster.count} bus stops in this area. Double tap to zoom in.`
-                  }
-                  accessibilityHint={
-                    cluster.count === 1
-                      ? "Selects this nearby bus stop."
-                      : "Zooms into this group of nearby bus stops."
-                  }
-                  onPress={() => {
-                    if (singleStop) {
-                      onSelectStop(singleStop);
-                      return;
-                    }
-                    onFocusCluster(cluster.center);
-                  }}
-                  style={[
-                    styles.stopClusterHitTarget,
-                    {
-                      left: cluster.left,
-                      top: cluster.top,
-                    },
-                  ]}
-                >
-                  <View
-                    style={[
-                      styles.stopClusterMarker,
-                      {
-                        backgroundColor: theme.colors.map.selectionAccent,
-                        borderColor: theme.colors.map.routeOutline,
-                        borderRadius: clusterSize / 2,
-                        height: clusterSize,
-                        opacity: selectedStop ? 0.78 : 1,
-                        width: clusterSize,
-                      },
-                      lightMode && lightStyles.stopClusterMarker,
-                      highContrast && styles.highContrastClusterMarker,
-                    ]}
-                  >
-                    <Text
-                      style={[
-                        styles.stopClusterCount,
-                        cluster.count < 10 && styles.compactStopClusterCount,
-                        lightMode && lightStyles.stopClusterCount,
-                        highContrast && styles.highContrastClusterCount,
-                      ]}
-                    >
-                      {cluster.count}
-                    </Text>
-                  </View>
-                </Pressable>
-              );
-            })
-          : null}
-        {clusteredStopDisplay.markers.map(
-          ({ stop, left, top, x, y, nearest, routeRelevant, selected }) => {
-            if (!layers.busStops && !selected) {
-              return null;
-            }
-            const nearestLabelClear =
-              nearest &&
-              Math.hypot(x - currentPosition.x, y - currentPosition.y) > 14;
-            const dimmed = Boolean(selectedStop && !selected);
-            const markerPriorityKey: MarkerPriorityKey = selected
-              ? "SELECTED_STOP"
-              : nearest
-                ? "NEAREST_STOP"
-                : routeRelevant
-                  ? "ROUTE_RELEVANT_STOP"
-                  : "NORMAL_BUS_STOP";
-            const markerLabel =
-              selected && nearest
-                ? "Nearest, selected"
-                : selected
-                  ? stop.busStopCode
-                  : nearest
-                    ? "Nearest"
-                    : null;
-            return (
-              <Pressable
-                key={stop.busStopCode}
-                accessibilityRole="button"
-                accessibilityLabel={`${selected ? "Selected bus stop. " : nearest ? "Nearest bus stop. " : ""}${stop.description}, bus stop ${stop.busStopCode}, ${stop.distanceMeters} metres away.`}
-                accessibilityState={{ selected }}
-                onPress={() => onSelectStop(stop)}
-                style={[
-                  styles.mapStopMarker,
-                  {
-                    left,
-                    top,
-                    zIndex: zIndexForMarkerPriority(markerPriorityKey),
-                  },
-                  lightMode && lightStyles.mapStopMarker,
-                  nearest && styles.nearestMapStopMarker,
-                  dimmed && styles.dimmedMapStopMarker,
-                  selected && styles.selectedMapStopMarker,
-                  selected && lightMode && lightStyles.selectedMapStopMarker,
-                  highContrast && styles.highContrastMapStopMarker,
-                  selected &&
-                    highContrast &&
-                    styles.highContrastSelectedMapStopMarker,
-                  selected && {
-                    backgroundColor: `${theme.colors.map.selectionAccent}22`,
-                    borderColor: theme.colors.map.selectionAccent,
-                  },
-                ]}
-              >
-                <BusStopMarkerIcon
-                  selected={selected}
-                  nearest={nearest}
-                  visualTheme={theme}
-                />
-                {markerLabel && (selected || nearestLabelClear) ? (
-                  <Text
-                    style={[
-                      styles.nearestStopLabel,
-                      selected && styles.selectedMapStopMarkerLabel,
-                      lightMode && lightStyles.nearestStopLabel,
-                    ]}
-                  >
-                    {markerLabel}
-                  </Text>
-                ) : null}
-              </Pressable>
-            );
-          },
-        )}
-        {currentLocation && userLocationPosition && userMarkerCoordinateId ? (
-          <UserLocationMarker
-            coordinate={currentLocation}
-            project={mapProjection.project}
-            headingDegrees={headingDegrees}
-            visualTheme={theme}
-            highContrast={highContrast}
-            lightMode={lightMode}
-            testID={userMarkerCoordinateId}
-          />
-        ) : null}
-        {showInlineControls ? (
-          <View style={styles.mapControlGroup}>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Re-centre map on my current location."
-              accessibilityHint="Refreshes your current coordinates and recentres the map."
-              onPress={() => {
-                onRecenter();
-                onRefreshLocation();
-              }}
-              style={[
-                styles.recenterControl,
-                lightMode && lightStyles.recenterControl,
-                highContrast &&
-                  !lightMode &&
-                  styles.highContrastSelectedControl,
-                highContrast &&
-                  lightMode &&
-                  lightStyles.highContrastSelectedControl,
-              ]}
-            >
-              <LocateFixed
-                size={29}
-                color={controlIconColor({ lightMode, highContrast })}
-                strokeWidth={2.8}
-                accessibilityElementsHidden
-                importantForAccessibility="no"
-              />
-            </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Return map to north-up orientation."
-              accessibilityHint="Resets the map compass heading."
-              onPress={onResetHeading}
-              style={[
-                styles.recenterControl,
-                lightMode && lightStyles.recenterControl,
-                highContrast &&
-                  !lightMode &&
-                  styles.highContrastSelectedControl,
-                highContrast &&
-                  lightMode &&
-                  lightStyles.highContrastSelectedControl,
-              ]}
-            >
-              <Compass
-                size={29}
-                color={controlIconColor({ lightMode, highContrast })}
-                strokeWidth={2.8}
-                accessibilityElementsHidden
-                importantForAccessibility="no"
-              />
-            </Pressable>
-          </View>
-        ) : null}
-        {showInlineControls ? (
-          <View style={styles.layerControlGroup}>
-            {(
-              [
-                ["busStops", "Stops", MapPin],
-                ["selectedService", "Bus", BusFront],
-                ["landmarks", "POI", MapPinned],
-                ["walkingRoute", "Route", Footprints],
-                ["accessibility", "Access", Accessibility],
-              ] as const
-            ).map(([layer, label, Icon]) => {
-              const active = layers[layer];
-              return (
-                <Pressable
-                  key={layer}
-                  accessibilityRole="switch"
-                  accessibilityLabel={`${label} map layer`}
-                  accessibilityState={{ checked: active }}
-                  onPress={() => onToggleLayer(layer)}
-                  style={[
-                    styles.layerControl,
-                    active && styles.activeLayerControl,
-                    lightMode && lightStyles.layerControl,
-                    active && lightMode && lightStyles.activeLayerControl,
-                    highContrast && !lightMode && styles.highContrastControl,
-                    highContrast &&
-                      lightMode &&
-                      lightStyles.highContrastControl,
-                    active &&
-                      highContrast &&
-                      !lightMode &&
-                      styles.highContrastSelectedControl,
-                    active &&
-                      highContrast &&
-                      lightMode &&
-                      lightStyles.highContrastSelectedControl,
-                  ]}
-                >
-                  <Icon
-                    size={16}
-                    color={controlIconColor({
-                      active,
-                      lightMode,
-                      highContrast,
-                    })}
-                    strokeWidth={3}
-                    accessibilityElementsHidden
-                    importantForAccessibility="no"
-                  />
-                  <Text
-                    style={[
-                      styles.layerControlText,
-                      active && styles.activeLayerControlText,
-                      lightMode && lightStyles.text,
-                      active && lightMode && lightStyles.activeLayerControlText,
-                      highContrast && active && styles.highContrastSelectedText,
-                    ]}
-                  >
-                    {label}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </View>
-        ) : null}
-        {showInlineControls && directionsActive ? (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Show whole route."
-            accessibilityHint="Frames your current location, walking route and selected stop."
-            onPress={onShowRoute}
-            style={[
-              styles.showRouteControl,
-              {
-                backgroundColor: theme.colors.map.controlSurface,
-                borderColor: theme.colors.map.controlBorder,
-              },
-              lightMode && lightStyles.recenterControl,
-              highContrast && !lightMode && styles.highContrastSelectedControl,
-              highContrast &&
-                lightMode &&
-                lightStyles.highContrastSelectedControl,
-            ]}
-          >
-            <Navigation
-              size={20}
-              color={controlIconColor({
-                active: true,
-                lightMode,
-                highContrast,
-              })}
-              strokeWidth={2.8}
-              accessibilityElementsHidden
-              importantForAccessibility="no"
-            />
-            <Text
-              style={[
-                styles.mapControlText,
-                { color: theme.colors.map.controlText },
-                highContrast && styles.highContrastSelectedText,
-              ]}
-            >
-              Route
-            </Text>
-          </Pressable>
-        ) : null}
-        {showInlineControls && selectedStop ? (
-          <Pressable
-            accessibilityRole="switch"
-            accessibilityLabel="Follow Me"
-            accessibilityState={{ checked: followMode }}
-            accessibilityHint="When on, the map follows your current location until you manually pan."
-            onPress={onToggleFollow}
-            style={[
-              styles.followControl,
-              {
-                backgroundColor: followMode
-                  ? theme.colors.selectedSurface
-                  : theme.colors.map.controlSurface,
-                borderColor: followMode
-                  ? theme.colors.map.selectionAccent
-                  : theme.colors.map.controlBorder,
-              },
-              followMode && styles.activeFollowControl,
-              lightMode && lightStyles.recenterControl,
-              highContrast && !lightMode && styles.highContrastSelectedControl,
-              highContrast &&
-                lightMode &&
-                lightStyles.highContrastSelectedControl,
-            ]}
-          >
-            <Text
-              style={[
-                styles.mapControlText,
-                {
-                  color: followMode
-                    ? theme.colors.iconSelected
-                    : theme.colors.map.controlText,
-                },
-              ]}
-            >
-              {followMode ? "Following" : "Follow"}
-            </Text>
-          </Pressable>
-        ) : null}
-        {showInlineControls && mapManuallyMoved ? (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Search this area."
-            accessibilityHint="Loads bus stops around the current map area."
-            onPress={onRefreshLocation}
-            style={[
-              styles.searchAreaControl,
-              {
-                backgroundColor: theme.colors.selectedSurface,
-                borderColor: theme.colors.map.selectionAccent,
-              },
-              lightMode && lightStyles.recenterControl,
-              highContrast && !lightMode && styles.highContrastSelectedControl,
-              highContrast &&
-                lightMode &&
-                lightStyles.highContrastSelectedControl,
-            ]}
-          >
-            <Text
-              style={[
-                styles.mapControlText,
-                { color: theme.colors.iconSelected },
-              ]}
-            >
-              Search this area
-            </Text>
-          </Pressable>
-        ) : null}
-        <View
-          style={[styles.mapScale, lightMode && lightStyles.mapScale]}
-          accessible={false}
-        >
-          <View
-            style={[styles.mapScaleLine, lightMode && lightStyles.mapScaleLine]}
-          />
-          <Text
-            style={[styles.mapScaleText, lightMode && lightStyles.mutedText]}
-          >
-            {mapProjection.scaleMeters} m
-          </Text>
-        </View>
-      </Pressable>
+        }
+        onLayout={(layout) => onMapLayoutChange?.(layout)}
+        onMove={onMoveMap}
+        onProviderAvailabilityChange={(ready) =>
+          onProviderAvailabilityChange?.(ready)
+        }
+        onViewportChange={(viewport) => onProviderViewportChange?.(viewport)}
+        onSelectStop={onSelectStop}
+        onFocusCluster={onFocusCluster}
+      />
     </View>
   );
 });
-
 function MapCameraDebugOverlay({
   geometry,
   lightMode,
@@ -12810,230 +18706,6 @@ function MapCameraDebugOverlay({
   );
 }
 
-function UserLocationMarker({
-  coordinate,
-  project,
-  headingDegrees,
-  visualTheme,
-  highContrast,
-  lightMode,
-  testID,
-}: {
-  coordinate: MapCoordinate;
-  project: (point: MapCoordinate) => MapProjection;
-  headingDegrees: number;
-  visualTheme: ReturnType<typeof resolveVisualTheme>;
-  highContrast: boolean;
-  lightMode: boolean;
-  testID: string;
-}) {
-  const position = project(coordinate);
-
-  return (
-    <View
-      style={[
-        styles.currentLocationMarker,
-        { left: position.left, top: position.top },
-        highContrast && styles.highContrastCurrentLocationMarker,
-      ]}
-      accessibilityRole="image"
-      accessibilityLabel="Your current location."
-      key="current-user-location"
-      testID={testID}
-    >
-      <View
-        style={[
-          styles.headingCone,
-          {
-            borderBottomColor: visualTheme.colors.map.currentLocation,
-            transform: [{ rotate: `${headingDegrees}deg` }],
-          },
-          lightMode && lightStyles.headingCone,
-        ]}
-      />
-      <View
-        style={[
-          styles.currentLocationDot,
-          {
-            backgroundColor: visualTheme.colors.map.currentLocation,
-            borderColor: visualTheme.colors.map.currentLocationOutline,
-          },
-        ]}
-      />
-      <Text
-        style={[
-          styles.currentLocationText,
-          {
-            backgroundColor: visualTheme.colors.map.currentLocationLabelSurface,
-            borderColor: visualTheme.colors.map.currentLocationOutline,
-            color: visualTheme.colors.map.currentLocationLabelText,
-          },
-        ]}
-      >
-        You
-      </Text>
-    </View>
-  );
-}
-
-function JourneyPlanMapPreview({
-  alternative,
-  project,
-  lightMode,
-  highContrast,
-}: {
-  alternative: JourneyAlternative;
-  project: (point: MapCoordinate) => MapProjection;
-  lightMode: boolean;
-  highContrast: boolean;
-}) {
-  const theme = resolveVisualTheme(lightMode, highContrast);
-  const routePoints = [
-    alternative.legs[0].origin.coordinate,
-    alternative.boardingStop,
-    ...alternative.routeStops.slice(1, -1),
-    alternative.alightingStop,
-    alternative.legs[alternative.legs.length - 1].destination.coordinate,
-  ];
-  const projectedPoints = routePoints.map(project);
-  const markers = [
-    {
-      key: "origin",
-      label: "Start",
-      point: projectedPoints[0],
-      style: styles.originJourneyMarker,
-      foreground: theme.colors.textPrimary,
-    },
-    {
-      key: "boarding",
-      label: "Board",
-      point: project(alternative.boardingStop),
-      style: styles.boardingJourneyMarker,
-      foreground: theme.colors.textOnSelected,
-    },
-    {
-      key: "bus",
-      label: `Bus ${alternative.serviceNo}`,
-      point: project(
-        alternative.routeStops[Math.floor(alternative.routeStops.length / 2)] ??
-          alternative.boardingStop,
-      ),
-      style: styles.busJourneyMarker,
-      foreground: colors.textOnWarning,
-    },
-    {
-      key: "alight",
-      label: "Alight",
-      point: project(alternative.alightingStop),
-      style: styles.alightJourneyMarker,
-      foreground: theme.colors.textPrimary,
-    },
-    {
-      key: "destination",
-      label: "Arrive",
-      point: projectedPoints[projectedPoints.length - 1],
-      style: styles.destinationJourneyMarker,
-      foreground: theme.colors.iconSelected,
-    },
-  ];
-
-  return (
-    <View
-      pointerEvents="none"
-      style={styles.journeyPreviewLayer}
-      accessibilityRole="image"
-      accessibilityLabel={`Journey preview. Take Bus ${alternative.serviceNo} from ${alternative.boardingStop.description} to ${alternative.alightingStop.description}.`}
-    >
-      {projectedPoints.slice(0, -1).map((point, index) => {
-        const nextPoint = projectedPoints[index + 1];
-        const horizontalLeft = Math.min(point.x, nextPoint.x);
-        const horizontalWidth = Math.max(4, Math.abs(point.x - nextPoint.x));
-        const verticalTop = Math.min(point.y, nextPoint.y);
-        const verticalHeight = Math.max(4, Math.abs(point.y - nextPoint.y));
-        const walkingSegment =
-          index === 0 || index === projectedPoints.length - 2;
-        return (
-          <React.Fragment key={`${point.x}-${point.y}-${index}`}>
-            <View
-              style={[
-                styles.journeyMapSegment,
-                walkingSegment && styles.walkingMapSegment,
-                highContrast && styles.highContrastJourneyMapSegment,
-                {
-                  backgroundColor: walkingSegment
-                    ? theme.colors.locationCurrent
-                    : theme.colors.routePrimary,
-                  borderColor: theme.colors.map.routeOutline,
-                  left: `${horizontalLeft}%`,
-                  top: `${point.y}%`,
-                  width: `${horizontalWidth}%`,
-                },
-              ]}
-            />
-            <View
-              style={[
-                styles.journeyMapSegment,
-                walkingSegment && styles.walkingMapSegment,
-                highContrast && styles.highContrastJourneyMapSegment,
-                {
-                  backgroundColor: walkingSegment
-                    ? theme.colors.locationCurrent
-                    : theme.colors.routePrimary,
-                  borderColor: theme.colors.map.routeOutline,
-                  height: `${verticalHeight}%`,
-                  left: `${nextPoint.x}%`,
-                  top: `${verticalTop}%`,
-                  width: 4,
-                },
-              ]}
-            />
-          </React.Fragment>
-        );
-      })}
-      {markers.map((marker) => (
-        <View
-          key={marker.key}
-          style={[
-            styles.journeyPreviewMarker,
-            marker.style,
-            marker.key === "origin" && {
-              backgroundColor: theme.colors.surfaceInteractive,
-              borderColor: theme.colors.locationCurrent,
-            },
-            marker.key === "boarding" && {
-              backgroundColor: theme.colors.surfaceSelected,
-              borderColor: theme.colors.map.routeOutline,
-            },
-            marker.key === "alight" && {
-              backgroundColor: theme.colors.surfaceRaised,
-              borderColor: theme.colors.destination,
-            },
-            marker.key === "destination" && {
-              backgroundColor: theme.colors.destination,
-              borderColor: theme.colors.map.routeOutline,
-            },
-            highContrast && styles.highContrastJourneyPreviewMarker,
-            {
-              left: marker.point.left,
-              top: marker.point.top,
-            },
-          ]}
-        >
-          <Text
-            style={[
-              styles.journeyPreviewMarkerText,
-              { color: highContrast ? "#000000" : marker.foreground },
-              lightMode && styles.lightJourneyPreviewMarkerText,
-            ]}
-          >
-            {marker.label}
-          </Text>
-        </View>
-      ))}
-    </View>
-  );
-}
-
 function BusStopMarkerIcon({
   selected,
   nearest,
@@ -13051,6 +18723,7 @@ function BusStopMarkerIcon({
       : visualTheme.colors.busStopDefault;
   const markerSurface = selected ? markerColor : mapTheme.stopSurface;
   const markerDetail = selected ? mapTheme.stopOutline : markerColor;
+  const iconSize = selected ? 15 : nearest ? 11 : 9;
   return (
     <View style={styles.busStopGlyph} accessible={false}>
       <View
@@ -13064,32 +18737,13 @@ function BusStopMarkerIcon({
           },
         ]}
       >
-        <View
-          style={[
-            styles.busStopGlyphWindow,
-            nearest && styles.nearestBusStopGlyphWindow,
-            selected && styles.selectedBusStopGlyphWindow,
-            { backgroundColor: markerDetail },
-          ]}
+        <BusFront
+          size={iconSize}
+          color={markerDetail}
+          strokeWidth={selected ? 2.8 : 2.2}
+          accessibilityElementsHidden
+          importantForAccessibility="no"
         />
-        <View style={styles.busStopGlyphWheels}>
-          <View
-            style={[
-              styles.busStopGlyphWheel,
-              nearest && styles.nearestBusStopGlyphWheel,
-              selected && styles.selectedBusStopGlyphWheel,
-              { backgroundColor: markerDetail },
-            ]}
-          />
-          <View
-            style={[
-              styles.busStopGlyphWheel,
-              nearest && styles.nearestBusStopGlyphWheel,
-              selected && styles.selectedBusStopGlyphWheel,
-              { backgroundColor: markerDetail },
-            ]}
-          />
-        </View>
       </View>
       <View
         style={[
@@ -13106,12 +18760,16 @@ function BusStopMarkerIcon({
 const NearbyStopsList = memo(function NearbyStopsList({
   stops,
   selectedStop,
+  routeStatuses,
+  recommendedStopCode,
   lightMode,
   highContrast,
   onSelectStop,
 }: {
   stops: NearbyBusStop[];
   selectedStop: NearbyBusStop | null;
+  routeStatuses?: Record<string, AccessibleStopRouteStatus>;
+  recommendedStopCode?: string;
   lightMode: boolean;
   highContrast: boolean;
   onSelectStop: (stop: NearbyBusStop) => void;
@@ -13123,6 +18781,12 @@ const NearbyStopsList = memo(function NearbyStopsList({
           key={stop.busStopCode}
           stop={stop}
           selected={selectedStop?.busStopCode === stop.busStopCode}
+          recommended={
+            recommendedStopCode
+              ? stop.busStopCode === recommendedStopCode
+              : undefined
+          }
+          accessibleRouteStatus={routeStatuses?.[stop.busStopCode]}
           onPress={() => onSelectStop(stop)}
           lightMode={lightMode}
           highContrast={highContrast}
@@ -13181,21 +18845,12 @@ const SelectedStopCard = memo(function SelectedStopCard({
       </Text>
       <Text
         style={[
-          styles.bodyText,
+          styles.selectedStopMetadata,
           largeText && styles.largeBody,
-          lightMode && lightStyles.bodyText,
+          lightMode && lightStyles.selectedStopMetadata,
         ]}
       >
-        Bus Stop {stop.busStopCode}
-      </Text>
-      <Text
-        style={[
-          styles.bodyText,
-          largeText && styles.largeBody,
-          lightMode && lightStyles.bodyText,
-        ]}
-      >
-        {stop.distanceMeters} m away - ~{walkingMinutes} min walk
+        Bus Stop {stop.busStopCode} · About {stop.distanceMeters} m away
       </Text>
       {landmark ? (
         <Text
@@ -13208,34 +18863,88 @@ const SelectedStopCard = memo(function SelectedStopCard({
           Near {landmark.name}
         </Text>
       ) : null}
-      <View
-        style={[
-          styles.directionsSummary,
-          lightMode && lightStyles.directionsSummary,
-        ]}
-      >
+      <View style={styles.selectedStopSection}>
         <Text style={[styles.statusLabel, lightMode && lightStyles.mutedText]}>
-          Walking to Stop {stop.busStopCode}
+          Services
         </Text>
-        <Text
+        <View style={styles.selectedStopServicesRow}>
+          {services.map((service) => (
+            <View
+              key={service}
+              style={[
+                styles.selectedStopServicePill,
+                lightMode && lightStyles.selectedStopServicePill,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.selectedStopServicePillText,
+                  lightMode && lightStyles.selectedStopServicePillText,
+                ]}
+              >
+                {service}
+                {service === "191" ? "  3 min" : ""}
+              </Text>
+            </View>
+          ))}
+        </View>
+      </View>
+      <PrimaryButton
+        label="Directions"
+        icon={Route}
+        accessibilityHint={`Show walking directions to ${stop.description}.`}
+        onPress={onDirections}
+        lightMode={lightMode}
+        highContrast={highContrast}
+      />
+      {directionsActive ? (
+        <View
           style={[
-            styles.summaryValue,
-            largeText && styles.largeBody,
-            lightMode && lightStyles.text,
+            styles.directionsSummary,
+            lightMode && lightStyles.directionsSummary,
           ]}
         >
-          {stop.distanceMeters} m - ~{walkingMinutes} min walk
+          <Text
+            style={[styles.statusLabel, lightMode && lightStyles.mutedText]}
+          >
+            Walking to Stop {stop.busStopCode}
+          </Text>
+          <Text
+            style={[
+              styles.summaryValue,
+              largeText && styles.largeBody,
+              lightMode && lightStyles.text,
+            ]}
+          >
+            {stop.distanceMeters} m - ~{walkingMinutes} min walk
+          </Text>
+          <Text
+            style={[
+              styles.bodyText,
+              largeText && styles.largeBody,
+              lightMode && lightStyles.bodyText,
+            ]}
+          >
+            ↑ {firstInstruction}
+          </Text>
+          {directionsActive ? (
+            <Text
+              style={[
+                styles.infoPill,
+                styles.accessibleChip,
+                lightMode && lightStyles.accessibleChip,
+              ]}
+            >
+              Accessible route data incomplete
+            </Text>
+          ) : null}
+        </View>
+      ) : null}
+      <View style={styles.selectedStopSection}>
+        <Text style={[styles.statusLabel, lightMode && lightStyles.mutedText]}>
+          Accessibility
         </Text>
-        <Text
-          style={[
-            styles.bodyText,
-            largeText && styles.largeBody,
-            lightMode && lightStyles.bodyText,
-          ]}
-        >
-          ↑ {firstInstruction}
-        </Text>
-        {directionsActive ? (
+        <View style={styles.infoRow}>
           <Text
             style={[
               styles.infoPill,
@@ -13243,54 +18952,23 @@ const SelectedStopCard = memo(function SelectedStopCard({
               lightMode && lightStyles.accessibleChip,
             ]}
           >
-            Accessible route data incomplete
+            Accessible boarding
           </Text>
-        ) : null}
-      </View>
-      <Text style={[styles.statusLabel, lightMode && lightStyles.mutedText]}>
-        Bus Services
-      </Text>
-      <View style={styles.infoRow}>
-        {services.map((service) => (
-          <Text
-            key={service}
-            style={[
-              styles.infoPill,
-              styles.serviceChip,
-              lightMode && lightStyles.infoPill,
-              lightMode && lightStyles.serviceChip,
-            ]}
-          >
-            {service}
-            {service === "191" ? "  3 min" : ""}
+          <Text style={[styles.infoPill, lightMode && lightStyles.infoPill]}>
+            Route accessibility unavailable
           </Text>
-        ))}
+        </View>
       </View>
-      <Text style={[styles.statusLabel, lightMode && lightStyles.mutedText]}>
-        Accessibility
-      </Text>
-      <View style={styles.infoRow}>
-        <Text
-          style={[
-            styles.infoPill,
-            styles.accessibleChip,
-            lightMode && lightStyles.accessibleChip,
-          ]}
-        >
-          Accessible boarding
-        </Text>
-        <Text style={[styles.infoPill, lightMode && lightStyles.infoPill]}>
-          Route accessibility unavailable
-        </Text>
-      </View>
-      <SecondaryButton
-        label={directionsActive ? "Hear directions" : "Directions"}
-        icon={directionsActive ? Volume2 : Route}
-        accessibilityHint="Announces the selected bus stop name, code, distance and services."
-        onPress={directionsActive ? onHearDirections : onDirections}
-        lightMode={lightMode}
-        highContrast={highContrast}
-      />
+      {directionsActive ? (
+        <SecondaryButton
+          label="Hear directions"
+          icon={Volume2}
+          accessibilityHint="Announces the walking directions to this stop."
+          onPress={onHearDirections}
+          lightMode={lightMode}
+          highContrast={highContrast}
+        />
+      ) : null}
       <SecondaryButton
         label="I can't find this stop"
         icon={CircleQuestionMark}
@@ -13307,7 +18985,7 @@ const SelectedStopCard = memo(function SelectedStopCard({
         lightMode={lightMode}
         highContrast={highContrast}
       />
-      <PrimaryButton
+      <SecondaryButton
         label="Use this as my boarding stop"
         icon={CircleCheck}
         accessibilityHint={`Confirm ${stop.description} as my boarding stop.`}
@@ -13382,6 +19060,7 @@ function TabButton({
   compact: boolean;
   onPress: () => void;
 }) {
+  const runtimeAccessibility = useContext(AccessibilityRuntimeContext);
   const Icon = appIcon(icon);
   const theme = resolveVisualTheme(lightMode, highContrast);
   const iconColor = tabIconColor({
@@ -13390,17 +19069,18 @@ function TabButton({
     lightMode,
     highContrast,
   });
-  const iconSize = compact ? iconSizes.standard : 25;
+  const iconSize = compact ? 25 : 26;
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`${label}, tab, ${selected ? "selected, " : ""}${stateDescription ? `${stateDescription}, ` : ""}${index} of 4`}
+      accessibilityLabel={`${label}, tab, ${selected ? "selected, " : ""}${stateDescription ? `${stateDescription}, ` : ""}${index} of 3`}
       accessibilityState={{ selected, disabled }}
       disabled={disabled}
       onPress={onPress}
       style={[
         styles.tabButton,
         compact && styles.compactTabButton,
+        runtimeAccessibility.largerControls && styles.largerTabButton,
         lightMode && lightStyles.tabButton,
         selected && styles.selectedTabButton,
         lightMode && selected && lightStyles.selectedTabButton,
@@ -13449,6 +19129,8 @@ function TabButton({
         style={[
           styles.tabButtonText,
           compact && styles.compactTabButtonText,
+          runtimeAccessibility.textSize !== "STANDARD" &&
+            styles.largeTabButtonText,
           lightMode && lightStyles.tabButtonText,
           selected && styles.selectedTabButtonText,
           lightMode && selected && lightStyles.selectedTabButtonText,
@@ -13579,14 +19261,16 @@ function StatusToast({
   );
 }
 
-function HomeDiscoveryInlineStatus({
+function JourneyDiscoveryInlineStatus({
   status,
+  interactionBusy = false,
   onPrimaryAction,
   onSecondaryAction,
   lightMode,
   highContrast,
 }: {
-  status: ReturnType<typeof homeDiscoveryStatus>;
+  status: JourneyDiscoveryStatus;
+  interactionBusy?: boolean;
   onPrimaryAction: () => void;
   onSecondaryAction: () => void;
   lightMode: boolean;
@@ -13606,15 +19290,15 @@ function HomeDiscoveryInlineStatus({
   return (
     <View
       style={[
-        styles.homeDiscoveryStatus,
-        status.tone === "error" && styles.homeDiscoveryStatusError,
-        lightMode && lightStyles.homeDiscoveryStatus,
+        styles.journeyDiscoveryStatus,
+        status.tone === "error" && styles.journeyDiscoveryStatusError,
+        lightMode && lightStyles.journeyDiscoveryStatus,
       ]}
       accessible
       accessibilityRole={status.tone === "error" ? "alert" : undefined}
       accessibilityLabel={`${status.title}. ${status.message}`}
     >
-      <View style={styles.homeDiscoveryStatusTitleRow}>
+      <View style={styles.journeyDiscoveryStatusTitleRow}>
         <Icon size={21} color={iconColor} strokeWidth={2.8} />
         <View style={styles.landmarkSearchTextGroup}>
           <Text style={[styles.summaryValue, lightMode && lightStyles.text]}>
@@ -13630,6 +19314,7 @@ function HomeDiscoveryInlineStatus({
           label={status.primary}
           icon={RefreshCw}
           onPress={onPrimaryAction}
+          disabled={interactionBusy}
           lightMode={lightMode}
           highContrast={highContrast}
         />
@@ -13638,8 +19323,13 @@ function HomeDiscoveryInlineStatus({
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={status.secondary}
+          accessibilityState={{ disabled: interactionBusy }}
+          disabled={interactionBusy}
           onPress={onSecondaryAction}
-          style={styles.nearbyStateTextAction}
+          style={[
+            styles.nearbyStateTextAction,
+            interactionBusy && styles.disabledTextAction,
+          ]}
         >
           <List
             size={20}
@@ -13652,9 +19342,10 @@ function HomeDiscoveryInlineStatus({
             style={[
               styles.secondaryButtonText,
               lightMode && lightStyles.secondaryButtonText,
+              interactionBusy && styles.disabledButtonText,
             ]}
           >
-            Choose stop manually -&gt;
+            {status.secondary}
           </Text>
         </Pressable>
       ) : null}
@@ -13671,6 +19362,9 @@ function LoadingState({
   lightMode?: boolean;
   highContrast?: boolean;
 }) {
+  const kind = loadingVisualKindForMessage(message);
+  const supportingMessage = loadingDescriptionForKind(kind);
+
   return (
     <View
       style={[
@@ -13684,9 +19378,17 @@ function LoadingState({
       accessibilityLabel={message}
       accessibilityState={{ busy: true }}
     >
+      <StatusConceptVisual
+        kind={kind}
+        lightMode={lightMode}
+        highContrast={highContrast}
+      />
       <ActivityIndicator size="large" accessibilityLabel={message} />
       <Text style={[styles.bodyText, lightMode && lightStyles.bodyText]}>
         {message}
+      </Text>
+      <Text style={[styles.summaryLabel, lightMode && lightStyles.mutedText]}>
+        {supportingMessage}
       </Text>
     </View>
   );
@@ -13711,15 +19413,28 @@ function ErrorState({
   lightMode?: boolean;
   highContrast?: boolean;
 }) {
+  const theme = resolveVisualTheme(lightMode, highContrast);
   return (
     <View
-      style={styles.errorPanel}
+      style={[
+        styles.errorPanel,
+        {
+          backgroundColor: theme.colors.surfaceRaised,
+          borderColor: theme.colors.statusError,
+        },
+        highContrast && !lightMode && styles.highContrastControl,
+        highContrast && lightMode && lightStyles.highContrastControl,
+      ]}
       accessible
       accessibilityRole="alert"
-      accessibilityLabel={message}
+      accessibilityLabel={`${title}. ${message}`}
     >
-      <Text style={styles.errorTitle}>{title}</Text>
-      <Text style={styles.errorText}>{message}</Text>
+      <Text style={[styles.errorTitle, { color: theme.colors.statusError }]}>
+        {title}
+      </Text>
+      <Text style={[styles.errorText, { color: theme.colors.textPrimary }]}>
+        {message}
+      </Text>
       {primaryActionLabel && onPrimaryAction && (
         <PrimaryButton
           label={primaryActionLabel}
@@ -13815,6 +19530,7 @@ function PrimaryButton({
   lightMode?: boolean;
   highContrast?: boolean;
 }) {
+  const runtimeAccessibility = useContext(AccessibilityRuntimeContext);
   const Icon = icon;
   const theme = resolveVisualTheme(lightMode, highContrast);
   const buttonForeground = disabled
@@ -13841,6 +19557,7 @@ function PrimaryButton({
         highContrast && !lightMode && styles.highContrastSelectedControl,
         highContrast && lightMode && lightStyles.highContrastSelectedControl,
         variant === "attention" && styles.attentionButton,
+        runtimeAccessibility.largerControls && styles.largerControl,
         disabled && styles.disabledButton,
         disabled && {
           backgroundColor: theme.colors.actionSecondary,
@@ -13864,6 +19581,10 @@ function PrimaryButton({
           highContrast && !lightMode && styles.highContrastSelectedText,
           highContrast && lightMode && styles.highContrastSelectedText,
           variant === "attention" && styles.attentionButtonText,
+          runtimeAccessibility.textSize !== "STANDARD" &&
+            styles.largeButtonText,
+          runtimeAccessibility.textSize === "EXTRA_LARGE" &&
+            styles.extraLargeButtonText,
           disabled && styles.disabledButtonText,
           { color: buttonForeground },
         ]}
@@ -13880,6 +19601,7 @@ function SecondaryButton({
   accessibilityHint,
   onPress,
   disabled = false,
+  variant = "default",
   lightMode = false,
   highContrast = false,
 }: {
@@ -13888,19 +19610,23 @@ function SecondaryButton({
   accessibilityHint?: string;
   onPress: () => void;
   disabled?: boolean;
+  variant?: "default" | "destructive";
   lightMode?: boolean;
   highContrast?: boolean;
 }) {
+  const runtimeAccessibility = useContext(AccessibilityRuntimeContext);
   const Icon = icon;
   const iconColor = disabled
     ? colors.disabledText
-    : highContrast
-      ? lightMode
-        ? "#000000"
-        : "#FFFFFF"
-      : lightMode
-        ? lightTheme.primaryStrong
-        : colors.primary;
+    : variant === "destructive" && !highContrast
+      ? lightTheme.danger
+      : highContrast
+        ? lightMode
+          ? "#000000"
+          : "#FFFFFF"
+        : lightMode
+          ? lightTheme.primaryStrong
+          : colors.primary;
   return (
     <Pressable
       accessibilityRole="button"
@@ -13912,8 +19638,10 @@ function SecondaryButton({
       style={[
         styles.secondaryButton,
         lightMode && lightStyles.secondaryButton,
+        variant === "destructive" && styles.destructiveSecondaryButton,
         highContrast && !lightMode && styles.highContrastControl,
         highContrast && lightMode && lightStyles.highContrastControl,
+        runtimeAccessibility.largerControls && styles.largerControl,
         disabled && styles.disabledButton,
       ]}
     >
@@ -13932,7 +19660,86 @@ function SecondaryButton({
           lightMode && lightStyles.secondaryButtonText,
           highContrast && !lightMode && styles.highContrastText,
           highContrast && lightMode && lightStyles.highContrastText,
+          variant === "destructive" &&
+            !highContrast &&
+            styles.destructiveSecondaryButtonText,
+          runtimeAccessibility.textSize !== "STANDARD" &&
+            styles.largeButtonText,
+          runtimeAccessibility.textSize === "EXTRA_LARGE" &&
+            styles.extraLargeButtonText,
           disabled && styles.disabledButtonText,
+        ]}
+      >
+        {label}
+      </Text>
+    </Pressable>
+  );
+}
+
+function TertiaryButton({
+  label,
+  icon,
+  accessibilityHint,
+  onPress,
+  disabled = false,
+  lightMode = false,
+  highContrast = false,
+}: {
+  label: string;
+  icon?: LucideIcon;
+  accessibilityHint?: string;
+  onPress: () => void;
+  disabled?: boolean;
+  lightMode?: boolean;
+  highContrast?: boolean;
+}) {
+  const runtimeAccessibility = useContext(AccessibilityRuntimeContext);
+  const Icon = icon;
+  const theme = resolveVisualTheme(lightMode, highContrast);
+  const contentColor = disabled
+    ? theme.colors.textDisabled
+    : highContrast
+      ? theme.colors.textPrimary
+      : theme.colors.actionPrimary;
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityHint={accessibilityHint}
+      accessibilityState={{ disabled }}
+      disabled={disabled}
+      onPress={onPress}
+      style={[
+        styles.tertiaryButton,
+        lightMode && lightStyles.tertiaryButton,
+        highContrast && !lightMode && styles.highContrastControl,
+        highContrast && lightMode && lightStyles.highContrastControl,
+        runtimeAccessibility.largerControls && styles.largerTertiaryControl,
+        disabled && styles.disabledButton,
+      ]}
+    >
+      {Icon ? (
+        <Icon
+          size={22}
+          color={contentColor}
+          strokeWidth={2.5}
+          accessibilityElementsHidden
+          importantForAccessibility="no"
+        />
+      ) : null}
+      <Text
+        style={[
+          styles.tertiaryButtonText,
+          lightMode && lightStyles.tertiaryButtonText,
+          highContrast && !lightMode && styles.highContrastText,
+          highContrast && lightMode && lightStyles.highContrastText,
+          runtimeAccessibility.textSize !== "STANDARD" &&
+            styles.largeButtonText,
+          runtimeAccessibility.textSize === "EXTRA_LARGE" &&
+            styles.extraLargeButtonText,
+          disabled && styles.disabledButtonText,
+          { color: contentColor },
         ]}
       >
         {label}
@@ -13954,6 +19761,7 @@ function SummaryRow({
   lightMode?: boolean;
   highContrast?: boolean;
 }) {
+  const runtimeAccessibility = useContext(AccessibilityRuntimeContext);
   return (
     <View
       style={[
@@ -13967,7 +19775,15 @@ function SummaryRow({
         {label}
       </Text>
       <View style={styles.serviceAccessibilityRow}>
-        <Text style={[styles.summaryValue, lightMode && lightStyles.text]}>
+        <Text
+          style={[
+            styles.summaryValue,
+            runtimeAccessibility.textSize !== "STANDARD" && styles.largeBody,
+            runtimeAccessibility.textSize === "EXTRA_LARGE" &&
+              styles.extraLargeBody,
+            lightMode && lightStyles.text,
+          ]}
+        >
           {value}
         </Text>
         {valueAccessory}
@@ -14003,25 +19819,29 @@ function serviceOptionsFromArrivals(
   stop: NearbyBusStop,
   services: BusArrivalService[],
 ): BusServiceOption[] {
-  const options = services.map((service) => ({
-    serviceNo: service.serviceNo,
-    destination:
-      service.destination ??
-      service.buses[0]?.destination ??
-      serviceRouteDestination(service.serviceNo, stop) ??
-      "Destination unavailable",
-    buses: [...service.buses].sort((a, b) => a.etaSeconds - b.etaSeconds),
-    arrivalUnavailable: service.buses.length === 0,
-  }));
-  const seen = new Set(options.map((option) => option.serviceNo));
-  return [
-    ...options,
-    ...serviceOptionsFromStopFallback(stop).filter(
-      (option) => !seen.has(option.serviceNo),
-    ),
-  ].sort((a, b) =>
-    a.serviceNo.localeCompare(b.serviceNo, undefined, { numeric: true }),
+  const arrivalsByService = new Map(
+    services.map((service) => [service.serviceNo, service]),
   );
+  return busServicesForStop(stop)
+    .map((serviceNo) => {
+      const liveService = arrivalsByService.get(serviceNo);
+      const buses = [...(liveService?.buses ?? [])].sort(
+        (a, b) => a.etaSeconds - b.etaSeconds,
+      );
+      return {
+        serviceNo,
+        destination:
+          liveService?.destination ??
+          buses[0]?.destination ??
+          serviceRouteDestination(serviceNo, stop) ??
+          "Destination unavailable",
+        buses,
+        arrivalUnavailable: buses.length === 0,
+      };
+    })
+    .sort((a, b) =>
+      a.serviceNo.localeCompare(b.serviceNo, undefined, { numeric: true }),
+    );
 }
 
 function serviceOptionsFromStopFallback(
@@ -14045,6 +19865,7 @@ function toStaticSearchStop(
     description: stop.description,
     latitude: stop.latitude,
     longitude: stop.longitude,
+    services: stop.services ?? [],
   };
 }
 
@@ -14071,7 +19892,7 @@ function currentLocationJourneyPoint(
     label: "Current location",
     description: currentLocation
       ? "Using your current position"
-      : "Using Kent Ridge as your current area",
+      : "Using central Singapore as your current area",
     coordinate: currentLocation ?? manualStopLookup,
   };
 }
@@ -14293,9 +20114,8 @@ function buildJourneyAlternative(
   const stopCount = best.alightingIndex - best.boardingIndex;
   const busMinutes = Math.max(4, stopCount * 3);
   const totalMinutes = walkToMinutes + busMinutes + walkFinalMinutes;
-  const accessibleKnown = busServicesForStopCode(
-    boardingRouteStop.busStopCode,
-  ).includes(serviceNo);
+  const accessibleKnown =
+    boardingRouteStop.services?.includes(serviceNo) ?? false;
   const badges = [
     "Direct bus",
     "No transfer",
@@ -14429,17 +20249,20 @@ function journeyStepsForAlternative(alternative: JourneyAlternative) {
   ];
 }
 
-function searchTransport(query: string): BusStopSearchResults {
+function searchTransport(
+  query: string,
+  availableStops: StaticSearchStop[] = [],
+): BusStopSearchResults {
   const normalizedQuery = normalizeSearchText(query);
   if (!normalizedQuery) {
     return emptySearchResults;
   }
 
-  const scoredStops = localSearchStops
+  const scoredStops = availableStops
     .map((stop) => {
       const description = normalizeSearchText(stop.description);
       const roadName = normalizeSearchText(stop.roadName);
-      const services = busServicesForStopCode(stop.busStopCode);
+      const services = stop.services;
       let score = Number.POSITIVE_INFINITY;
 
       if (stop.busStopCode === normalizedQuery) {
@@ -14480,7 +20303,9 @@ function searchTransport(query: string): BusStopSearchResults {
     .sort((a, b) => a.tier - b.tier || a.name.localeCompare(b.name))
     .slice(0, 5);
 
-  const services = Object.keys(serviceRoutesByNumber)
+  const services = Array.from(
+    new Set(availableStops.flatMap((stop) => stop.services)),
+  )
     .filter((serviceNo) =>
       normalizeSearchText(serviceNo).includes(normalizedQuery),
     )
@@ -14496,6 +20321,16 @@ function searchTransport(query: string): BusStopSearchResults {
 
 function normalizeSearchText(value: string) {
   return value.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function regionalStopRadiusForZoom(zoom: number): number {
+  if (zoom <= 11) return 25_000;
+  if (zoom <= 12) return 18_000;
+  if (zoom <= 13) return 10_000;
+  if (zoom <= 14) return 6_000;
+  if (zoom <= 15) return 3_500;
+  if (zoom <= 16) return 2_000;
+  return 1_200;
 }
 
 function formatServicesForSpeech(services: string[]) {
@@ -14514,6 +20349,32 @@ function serviceRouteDestination(
 ) {
   const route = routeForServiceFromStop(serviceNo, stop);
   return route[route.length - 1]?.description;
+}
+
+function preferredServiceRoute(
+  routes: BusServiceRouteOption[],
+  liveDestination?: string,
+): BusServiceRouteOption | null {
+  if (routes.length === 0) return null;
+  const normalizedLiveDestination = liveDestination
+    ? normalizeSearchText(liveDestination)
+    : "";
+  if (normalizedLiveDestination) {
+    const matchingRoute = routes.find((route) => {
+      const destination = normalizeSearchText(route.destination.description);
+      return (
+        destination === normalizedLiveDestination ||
+        destination.includes(normalizedLiveDestination) ||
+        normalizedLiveDestination.includes(destination)
+      );
+    });
+    if (matchingRoute) return matchingRoute;
+  }
+  return (
+    [...routes].sort(
+      (a, b) => b.stops.length - a.stops.length || a.direction - b.direction,
+    )[0] ?? null
+  );
 }
 
 function buildFallbackRouteStops(
@@ -14631,6 +20492,62 @@ function routeProgressAnnouncement(
     .join(" ");
 }
 
+function friendlyWalkingMinutes(durationSeconds: number) {
+  return Math.max(1, Math.round(durationSeconds / 60));
+}
+
+function friendlyDistance(distanceMeters: number) {
+  const distance = Math.max(0, distanceMeters);
+  if (distance >= 1_000) {
+    const kilometres = Math.round((distance / 1_000) * 10) / 10;
+    return `${kilometres} km`;
+  }
+  const increment = distance < 100 ? 5 : 10;
+  return `${Math.round(distance / increment) * increment} m`;
+}
+
+type WalkingGuidanceDistanceBand = "FAR" | "APPROACHING" | "NEAR" | "NOW";
+
+function walkingGuidanceDistanceBand(
+  distanceMeters: number,
+): WalkingGuidanceDistanceBand {
+  if (distanceMeters <= 25) return "NOW";
+  if (distanceMeters <= 50) return "NEAR";
+  if (distanceMeters <= 100) return "APPROACHING";
+  return "FAR";
+}
+
+function roundedGuidanceDistance(distanceMeters: number) {
+  const distance = Math.max(0, distanceMeters);
+  const increment = distance > 100 ? 50 : distance > 30 ? 10 : 5;
+  return Math.max(increment, Math.round(distance / increment) * increment);
+}
+
+function withoutFinalPunctuation(instruction: string) {
+  return instruction.trim().replace(/[.!?]+$/, "");
+}
+
+function walkingStepAnnouncement(instruction: string, distanceMeters: number) {
+  const instructionText = withoutFinalPunctuation(instruction);
+  if (distanceMeters <= 25) return `${instructionText}.`;
+  return `${instructionText}. Continue for ${roundedGuidanceDistance(
+    distanceMeters,
+  )} metres.`;
+}
+
+function walkingManeuverAnnouncement(
+  instruction: string,
+  distanceMeters: number,
+  now: boolean,
+) {
+  const instructionText = withoutFinalPunctuation(instruction);
+  if (/arrive/i.test(instructionText)) return "Your bus stop is ahead.";
+  if (now) return `${instructionText} now.`;
+  return `${instructionText} in ${roundedGuidanceDistance(
+    distanceMeters,
+  )} metres.`;
+}
+
 type MapCoordinate = {
   latitude: number;
   longitude: number;
@@ -14705,6 +20622,9 @@ function cameraModeForViewportSource(source: ViewportSource): CameraMode {
   if (source === "SELECTED_STOP" || source === "DESTINATION_FOCUS") {
     return "STOP_FOCUS";
   }
+  if (source === "CLUSTER_EXPAND") {
+    return "CLUSTER_FOCUS";
+  }
   if (
     source === "ROUTE" ||
     source === "ACTIVE_JOURNEY" ||
@@ -14730,13 +20650,11 @@ function measuredMapLayoutSize(layout: MapLayoutSize): MapLayoutSize {
 }
 
 function getCurrentMapInsets({
-  bottomSheetState,
   contextualActionVisible = false,
   mapLayout,
   sideControlsVisible = true,
   topControlsVisible = true,
 }: {
-  bottomSheetState: BottomSheetState;
   contextualActionVisible?: boolean;
   mapLayout: MapLayoutSize;
   sideControlsVisible?: boolean;
@@ -14751,14 +20669,9 @@ function getCurrentMapInsets({
     : 0;
   const right = sideControlsVisible ? rightToolbarWidth + mapOverlayMargin : 0;
   const left = mapOverlayMargin + 4;
-  const bottomSheetOverlap = mapBottomSheetHeights[bottomSheetState];
-  const maxBottomWithoutInvalidViewport = Math.max(
-    0,
-    measuredLayout.height - top - minimumUsableMapDimension,
-  );
 
   const insets = {
-    bottom: Math.min(bottomSheetOverlap, maxBottomWithoutInvalidViewport),
+    bottom: 0,
     left,
     right,
     top,
@@ -14808,17 +20721,14 @@ function centerSafeZoneForRect(usableMapRect: UsableMapRect): UsableMapRect {
 }
 
 function createMapCameraGeometry({
-  bottomSheetState,
   contextualActionVisible = false,
   mapLayout,
 }: {
-  bottomSheetState: BottomSheetState;
   contextualActionVisible?: boolean;
   mapLayout: MapLayoutSize;
 }): MapCameraGeometry {
   const measuredLayout = measuredMapLayoutSize(mapLayout);
   const insets = getCurrentMapInsets({
-    bottomSheetState,
     contextualActionVisible,
     mapLayout: measuredLayout,
   });
@@ -14854,7 +20764,6 @@ function cameraPaddingForProvider(geometry: MapCameraGeometry) {
 
 function usableMapTargetPercent(
   geometry: MapCameraGeometry = createMapCameraGeometry({
-    bottomSheetState: "COLLAPSED",
     mapLayout: defaultMapLayoutSize(),
   }),
 ) {
@@ -14877,7 +20786,6 @@ function cameraCenterForUserLocation(
   userLocation: MapCoordinate,
   zoom: number,
   geometry: MapCameraGeometry = createMapCameraGeometry({
-    bottomSheetState: "COLLAPSED",
     mapLayout: defaultMapLayoutSize(),
   }),
 ): MapCoordinate {
@@ -14912,6 +20820,52 @@ function projectedPointInRect(
     x <= rect.x + rect.width &&
     y >= rect.y &&
     y <= rect.y + rect.height
+  );
+}
+
+function coordinateVisibleInGeometry({
+  coordinate,
+  geometry,
+  viewport,
+  inset = 18,
+}: {
+  coordinate: MapCoordinate;
+  geometry: MapCameraGeometry;
+  viewport: MapViewport;
+  inset?: number;
+}) {
+  const projection = createMapProjection(viewport.center, viewport.zoom);
+  return projectedPointInRect(
+    projection.projectRaw(coordinate),
+    insetUsableMapRect(geometry.usableMapRect, inset),
+    geometry,
+  );
+}
+
+function coordinateVisibleInMapCanvas({
+  coordinate,
+  geometry,
+  viewport,
+  inset = 0,
+}: {
+  coordinate: MapCoordinate;
+  geometry: MapCameraGeometry;
+  viewport: MapViewport;
+  inset?: number;
+}) {
+  const projection = createMapProjection(viewport.center, viewport.zoom);
+  return projectedPointInRect(
+    projection.projectRaw(coordinate),
+    insetUsableMapRect(
+      {
+        height: geometry.mapHeight,
+        width: geometry.mapWidth,
+        x: 0,
+        y: 0,
+      },
+      inset,
+    ),
+    geometry,
   );
 }
 
@@ -15136,6 +21090,7 @@ function stopSelectionCameraViewport({
 
 function handleStopSelectionCamera({
   currentLocation,
+  currentGeometry,
   geometry,
   intentId,
   intentRef,
@@ -15144,6 +21099,7 @@ function handleStopSelectionCamera({
   viewport,
 }: {
   currentLocation: MapCoordinate | null;
+  currentGeometry: MapCameraGeometry;
   geometry: MapCameraGeometry;
   intentId: number;
   intentRef: { current: number };
@@ -15156,6 +21112,32 @@ function handleStopSelectionCamera({
   stop: NearbyBusStop;
   viewport: MapViewport;
 }) {
+  const stopAlreadyVisible = coordinateVisibleInMapCanvas({
+    coordinate: stop,
+    geometry: currentGeometry,
+    viewport,
+    inset: 8,
+  });
+  if (stopAlreadyVisible) {
+    if (__DEV__ && enableCameraDebugLogs) {
+      console.debug("NEAREST_STOP_SELECTED", {
+        beforeCoordinate: {
+          latitude: stop.latitude,
+          longitude: stop.longitude,
+        },
+        cameraCenter: viewport.center,
+        selectedCoordinate: {
+          latitude: stop.latitude,
+          longitude: stop.longitude,
+        },
+        mapBottomInset: currentGeometry.insets.bottom,
+        sheetMode: viewport.mode,
+        zoom: viewport.zoom,
+      });
+    }
+    return;
+  }
+
   const nextViewport = stopSelectionCameraViewport({
     currentLocation,
     geometry,
@@ -15240,12 +21222,25 @@ function rectsOverlap(first: UsableMapRect, second: UsableMapRect) {
 
 function clusterVisualSize(count: number) {
   if (count >= 100) {
-    return 46;
+    return 44;
   }
   if (count >= 10) {
-    return 42;
+    return 38;
   }
-  return 38;
+  return 34;
+}
+
+function landmarkVisibleAtZoom(landmark: MapLandmark, zoom: number) {
+  if (landmark.category === "station" || landmark.tier <= 1) {
+    return true;
+  }
+  if (zoom < 15.4) {
+    return false;
+  }
+  if (zoom < 16.4) {
+    return landmark.category === "park";
+  }
+  return true;
 }
 
 function zIndexForMarkerPriority(priority: MarkerPriorityKey) {
@@ -15273,7 +21268,7 @@ function debugMapCameraSnapshot({
     return;
   }
   console.debug({
-    bottomSheetHeight: mapBottomSheetHeights[bottomSheetState],
+    bottomSheetState,
     cameraCenter,
     cameraMode,
     mapHeight: geometry.mapHeight,
@@ -15342,63 +21337,89 @@ function toRadians(degrees: number) {
   return degrees * (Math.PI / 180);
 }
 
-function readSavedPreferences(): {
-  assistanceDefaults: AccessibilityRequirements;
-  appPreferences: AppAccessibilityPreferences;
-} | null {
-  const storage = getLocalStorage();
-  if (!storage) {
-    return null;
-  }
-
+async function readSavedPreferences(): Promise<AccessibilityPreferences | null> {
   try {
-    const raw = storage.getItem(localPreferencesKey);
+    const raw = await AsyncStorage.getItem(localPreferencesKey);
     if (!raw) {
       return null;
     }
 
-    const parsed = JSON.parse(raw) as Partial<{
-      assistanceDefaults: AccessibilityRequirements;
-      appPreferences: AppAccessibilityPreferences;
-    }>;
-
-    return {
-      assistanceDefaults: {
-        ...defaultRequirements,
-        ...parsed.assistanceDefaults,
-      },
-      appPreferences: {
-        ...defaultAppPreferences,
-        ...parsed.appPreferences,
-      },
-    };
+    return parsePersistedAccessibilityPreferences(raw);
   } catch {
     return null;
   }
 }
 
-function savePreferencesLocally(preferences: {
-  assistanceDefaults: AccessibilityRequirements;
-  appPreferences: AppAccessibilityPreferences;
-}) {
-  const storage = getLocalStorage();
-  if (!storage) {
-    return;
-  }
-
+async function savePreferencesLocally(preferences: AccessibilityPreferences) {
   try {
-    storage.setItem(localPreferencesKey, JSON.stringify(preferences));
+    await AsyncStorage.setItem(
+      localPreferencesKey,
+      serializeAccessibilityPreferences(preferences),
+    );
   } catch {
     // Local preference persistence should never block the journey flow.
   }
 }
 
-function getLocalStorage(): Storage | null {
-  if (typeof globalThis === "undefined" || !("localStorage" in globalThis)) {
+async function readSavedActiveJourney(): Promise<PersistedActiveJourney | null> {
+  try {
+    const raw = await AsyncStorage.getItem(localActiveJourneyKey);
+    if (!raw) {
+      return null;
+    }
+    const parsed = JSON.parse(raw) as Partial<PersistedActiveJourney>;
+    if (
+      parsed.version !== 1 ||
+      parsed.journeyPhase === "COMPLETED" ||
+      !parsed.selectedStop?.busStopCode ||
+      !parsed.selectedServiceOption?.serviceNo ||
+      !parsed.selectedBus?.busService
+    ) {
+      await AsyncStorage.removeItem(localActiveJourneyKey);
+      return null;
+    }
+    return parsed as PersistedActiveJourney;
+  } catch {
     return null;
   }
+}
 
-  return globalThis.localStorage;
+async function saveActiveJourneyLocally(journey: PersistedActiveJourney) {
+  try {
+    await AsyncStorage.setItem(localActiveJourneyKey, JSON.stringify(journey));
+  } catch {
+    // Journey persistence should never block current journey guidance.
+  }
+}
+
+async function clearSavedActiveJourney() {
+  try {
+    await AsyncStorage.removeItem(localActiveJourneyKey);
+  } catch {
+    // Clearing stale local continuity data should not block the app.
+  }
+}
+
+function screenForPersistedJourney(journey: PersistedActiveJourney): Screen {
+  if (
+    journey.journeyPhase === "ONBOARD" ||
+    journey.journeyPhase === "DESTINATION_APPROACHING" ||
+    journey.journeyPhase === "DESTINATION_NEXT" ||
+    journey.journeyPhase === "DISEMBARKING" ||
+    journey.journeyPhase === "ALIGHTING"
+  ) {
+    return "ONBOARD";
+  }
+  if (
+    journey.requestId ||
+    journey.journeyPhase === "WALKING_TO_STOP" ||
+    journey.journeyPhase === "WAITING_FOR_BUS" ||
+    journey.journeyPhase === "BUS_ARRIVING" ||
+    journey.journeyPhase === "BOARDING"
+  ) {
+    return "STATUS";
+  }
+  return journey.journeySetupState === "REVIEWING_JOURNEY" ? "CONFIRM" : "BUS";
 }
 
 function readableAssistanceType(type: AssistanceType) {
@@ -15410,6 +21431,31 @@ function readableAssistanceType(type: AssistanceType) {
   return labels[type];
 }
 
+function readableAlightingAssistanceType(type: AssistanceType) {
+  return type === "EXTENDED_DWELL_TIME"
+    ? "Extra alighting time"
+    : readableAssistanceType(type);
+}
+
+function assistanceConfirmationAnnouncement(
+  types: AssistanceType[],
+  phase: AssistancePhase = "BOARDING",
+) {
+  if (types.length === 0) return "Your assistance request was received.";
+  const messages: Record<AssistanceType, string> = {
+    WHEELCHAIR_RAMP:
+      phase === "ALIGHTING"
+        ? "Your ramp request has been received."
+        : "Ramp request received.",
+    BUS_AUDIO_IDENTIFICATION: "Audio identification request received.",
+    EXTENDED_DWELL_TIME:
+      phase === "ALIGHTING"
+        ? "Extra alighting time request received."
+        : "Extra boarding time request received.",
+  };
+  return types.map((type) => messages[type]).join(" ");
+}
+
 function requirementsLabel(requirements: AccessibilityRequirements) {
   const labels = requirementsToAssistanceTypes(requirements).map(
     readableAssistanceType,
@@ -15417,11 +21463,17 @@ function requirementsLabel(requirements: AccessibilityRequirements) {
   return labels.length > 0 ? labels.join(", ") : "No bus assistance defaults";
 }
 
-function appPreferencesLabel(preferences: AppAccessibilityPreferences) {
+function appPreferencesLabel(preferences: AccessibilityPreferences) {
   const labels = [
+    preferences.wheelchairRouting ? "wheelchair routing" : undefined,
     preferences.screenReaderOptimised ? "screen-reader guidance" : undefined,
-    preferences.hapticAlerts ? "haptics" : undefined,
-    preferences.largeText ? "large text" : undefined,
+    preferences.spokenGuidance ? "spoken guidance" : undefined,
+    preferences.vibrationAlerts !== "OFF"
+      ? `${preferences.vibrationAlerts.toLowerCase()} vibration alerts`
+      : undefined,
+    preferences.textSize !== "STANDARD"
+      ? `${preferences.textSize.toLowerCase().replace("_", " ")} text`
+      : undefined,
     preferences.highContrast ? "high contrast" : undefined,
     preferences.repeatAudio ? "repeat announcements" : undefined,
     `${preferences.themeMode} mode`,
@@ -15460,34 +21512,36 @@ function readConnectivityState(): ConnectivityState {
   return "online";
 }
 
-function homeDiscoveryStatus(discovery: TransportDiscoveryState) {
+function journeyDiscoveryStatus(
+  discovery: TransportDiscoveryState,
+): JourneyDiscoveryStatus | null {
   if (discovery.connectivity === "offline") {
     return {
       title: "You're offline",
       message: "Reconnect to refresh nearby stops, or choose a stop manually.",
       tone: "error" as const,
       primary: "Try again",
-      secondary: "Choose stop manually",
+      secondary: "Select bus stop manually",
     };
   }
 
   if (discovery.location === "permission_denied") {
     return {
-      title: "Location is off",
-      message: "You can still choose a bus stop manually.",
-      tone: "info" as const,
+      title: "Location access is off",
+      message: "Allow location access to automatically find nearby bus stops.",
+      tone: "error" as const,
       primary: "Try again",
-      secondary: "Choose stop manually",
+      secondary: "Select bus stop manually",
     };
   }
 
   if (discovery.location === "unavailable" && discovery.locationRequested) {
     return {
-      title: "Couldn't find your location",
-      message: "Try again or choose a bus stop manually.",
+      title: "We couldn't find your location",
+      message: "Check your location settings or choose a bus stop manually.",
       tone: "error" as const,
       primary: "Try again",
-      secondary: "Choose stop manually",
+      secondary: "Select bus stop manually",
     };
   }
 
@@ -15504,7 +21558,7 @@ function homeDiscoveryStatus(discovery: TransportDiscoveryState) {
         : "Try again or choose a bus stop manually.",
       tone: "error" as const,
       primary: "Try again",
-      secondary: "Choose stop manually",
+      secondary: "Select bus stop manually",
     };
   }
 
@@ -15514,7 +21568,7 @@ function homeDiscoveryStatus(discovery: TransportDiscoveryState) {
       message: "Move the map or search another area.",
       tone: "info" as const,
       primary: "Try again",
-      secondary: "Choose stop manually",
+      secondary: "Select bus stop manually",
     };
   }
 
@@ -15531,39 +21585,74 @@ function homeDiscoveryStatus(discovery: TransportDiscoveryState) {
   return null;
 }
 
-function requirementsMatch(
-  first: AccessibilityRequirements,
-  second: AccessibilityRequirements,
-) {
-  return (
-    first.wheelchairRamp === second.wheelchairRamp &&
-    first.extendedDwellTime === second.extendedDwellTime &&
-    first.busAudioIdentification === second.busAudioIdentification
-  );
+function resolveFindBusPanelState({
+  discovery,
+  loadingKind,
+  loadingMessage,
+  loadingVisible,
+}: {
+  discovery: TransportDiscoveryState;
+  loadingKind: "LOCATING" | "MAP_LOADING";
+  loadingMessage: string;
+  loadingVisible: boolean;
+}): FindBusPanelState {
+  if (loadingVisible) {
+    return {
+      kind: loadingKind,
+      message: loadingMessage,
+    };
+  }
+
+  const status = journeyDiscoveryStatus(discovery);
+  if (!status) {
+    return { kind: "IDLE" };
+  }
+
+  if (
+    discovery.location === "permission_denied" ||
+    (discovery.location === "unavailable" && discovery.locationRequested)
+  ) {
+    return { kind: "LOCATION_ERROR", status };
+  }
+
+  if (
+    discovery.connectivity === "offline" ||
+    discovery.nearbyStopsStatus === "network_error" ||
+    discovery.nearbyStopsStatus === "service_error" ||
+    discovery.nearbyStopsStatus === "empty"
+  ) {
+    return { kind: "DISCOVERY_ERROR", status };
+  }
+
+  return { kind: "NOTICE", status };
 }
 
 function appPreferencesMatch(
-  first: AppAccessibilityPreferences,
-  second: AppAccessibilityPreferences,
+  first: AccessibilityPreferences,
+  second: AccessibilityPreferences,
 ) {
   return (
-    first.screenReaderOptimised === second.screenReaderOptimised &&
-    first.repeatAudio === second.repeatAudio &&
-    first.hapticAlerts === second.hapticAlerts &&
-    first.largeText === second.largeText &&
-    first.highContrast === second.highContrast &&
-    first.themeMode === second.themeMode
+    JSON.stringify(mergeAccessibilityPreferences(first)) ===
+    JSON.stringify(mergeAccessibilityPreferences(second))
   );
 }
 
 function profilePreferencesChanged(
   profile: PassengerProfile,
-  requirements: AccessibilityRequirements,
-  preferences: AppAccessibilityPreferences,
+  preferences: AccessibilityPreferences,
 ) {
-  return (
-    !requirementsMatch(profile.assistanceDefaults, requirements) ||
-    !appPreferencesMatch(profile.appPreferences, preferences)
+  return !appPreferencesMatch(
+    accessibilityPreferencesForProfile(profile),
+    preferences,
+  );
+}
+
+function accessibilityPreferencesForProfile(
+  profile: PassengerProfile,
+): AccessibilityPreferences {
+  return mergeAccessibilityPreferences(
+    profile.accessibilityPreferences ?? profile.appPreferences,
+    profile.assistanceDefaults,
   );
 }
 
@@ -15593,6 +21682,13 @@ function requestStatusLabel(status: AssistanceRequestStatus | null) {
   return "Sending request";
 }
 
+function canApplyRequestStatus(
+  current: AssistanceRequestStatus | null,
+  next: AssistanceRequestStatus,
+) {
+  return canTransitionAssistanceRequestStatus(current, next);
+}
+
 function vehicleStatusLabel(status: VehicleStatus | null) {
   if (status === "APPROACHING") {
     return "Your bus is approaching";
@@ -15617,26 +21713,24 @@ function readableVerificationMethod(method?: VerificationMethod) {
 }
 
 function getActiveTab(screen: Screen): AppTab {
-  if (screen === "STOP" || screen === "BUS") {
-    return "JOURNEY";
-  }
   if (
-    screen === "ONBOARD" ||
-    screen === "ALIGHTING_STOP" ||
-    screen === "COMPLETED"
+    screen === "STOP" ||
+    screen === "BUS" ||
+    screen === "CONFIRM" ||
+    screen === "STATUS"
   ) {
     return "JOURNEY";
   }
-  if (screen === "ACCESSIBILITY" || screen === "CONFIRM") {
-    return "ASSISTANCE";
+  if (screen === "ONBOARD" || screen === "ALIGHTING_STOP") {
+    return "JOURNEY";
   }
-  if (screen === "STATUS") {
+  if (screen === "ACCESSIBILITY") {
     return "ASSISTANCE";
   }
   if (screen === "PROFILE" || screen === "AUTH") {
     return "PROFILE";
   }
-  return "HOME";
+  return "JOURNEY";
 }
 
 function eventLabel(event: StatusUpdateMessage) {
@@ -15664,31 +21758,7 @@ function stopAccessibilityLabel(stop: NearbyBusStop) {
 }
 
 function busServicesForStop(stop: NearbyBusStop) {
-  return busServicesForStopCode(stop.busStopCode);
-}
-
-function busServicesForStopCode(busStopCode: string) {
-  const knownServices: Record<string, string[]> = {
-    "18301": ["95", "151", "A1", "A2"],
-    "18309": ["95"],
-    "18311": ["A1", "A2"],
-    "18321": ["95", "151", "A1"],
-    "18331": ["95", "151", "183"],
-    "18339": ["95", "151", "183"],
-    "18341": ["151", "183", "188", "200"],
-    "18349": ["95", "151", "183", "188"],
-    "18139": ["151", "183", "188"],
-    "18121": ["151"],
-    "18129": ["183"],
-    "19011": ["95", "A1", "A2"],
-    "19019": ["95", "200"],
-    "15131": ["151", "183"],
-    "15139": ["151", "183"],
-    "17171": ["188"],
-    "17179": ["188"],
-  };
-
-  return knownServices[busStopCode] ?? [];
+  return stop.services;
 }
 
 function landmarkIcon(landmark: MapLandmark) {
@@ -15730,7 +21800,7 @@ function routeAnnouncement(stop: NearbyBusStop, landmark: MapLandmark | null) {
 
 function stopAnnouncement(stop: NearbyBusStop) {
   const services = busServicesForStop(stop).join(", ");
-  return `${stop.description}, bus stop ${stop.busStopCode}, approximately ${stop.distanceMeters} metres away. Services ${services}.`;
+  return `${stop.description}, bus stop ${stop.busStopCode}, approximately ${stop.distanceMeters} metres away.${services ? ` Services ${services}.` : ""}`;
 }
 
 const styles = StyleSheet.create({
@@ -15742,9 +21812,12 @@ const styles = StyleSheet.create({
     backgroundColor: "#000000",
   },
   container: {
+    alignSelf: "center",
+    maxWidth: 600,
     padding: spacing.xl,
     paddingBottom: 170,
-    gap: spacing.lg,
+    gap: 16,
+    width: "100%",
   },
   appScroll: {
     flex: 1,
@@ -15765,6 +21838,9 @@ const styles = StyleSheet.create({
     paddingBottom: 132,
     gap: 16,
   },
+  journeyEntryContainer: {
+    paddingBottom: bottomNavigationHeight + spacing.lg,
+  },
   appTitle: {
     color: colors.text,
     fontSize: typography.pageTitle,
@@ -15773,18 +21849,18 @@ const styles = StyleSheet.create({
   brandHeader: {
     alignItems: "center",
     flexDirection: "row",
-    gap: 14,
+    gap: 12,
   },
   compactBrandHeader: {
-    gap: 10,
+    gap: 8,
   },
   brandLogoImage: {
-    height: 84,
-    width: 84,
-  },
-  compactBrandLogoImage: {
     height: 64,
     width: 64,
+  },
+  compactBrandLogoImage: {
+    height: 52,
+    width: 52,
   },
   brandMark: {
     alignItems: "center",
@@ -15926,18 +22002,20 @@ const styles = StyleSheet.create({
   },
   brandTitle: {
     color: colors.text,
-    fontSize: 32,
+    fontSize: 28,
     fontWeight: "900",
+    lineHeight: 34,
   },
   compactBrandTitle: {
-    fontSize: 27,
-    lineHeight: 32,
+    fontSize: 24,
+    lineHeight: 29,
   },
   brandSubtitle: {
     color: colors.primary,
-    fontSize: 15,
+    fontSize: 16,
     fontWeight: "700",
     letterSpacing: 0,
+    lineHeight: 22,
   },
   compactBrandSubtitle: {
     fontSize: 13,
@@ -16127,10 +22205,10 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 0,
     left: 0,
-    minHeight: 66,
-    paddingHorizontal: 4,
-    paddingTop: 3,
-    paddingBottom: 4,
+    minHeight: 72,
+    paddingHorizontal: 6,
+    paddingTop: 5,
+    paddingBottom: 6,
     position: "absolute",
     right: 0,
     zIndex: mapLayerZ.navigation,
@@ -16139,6 +22217,10 @@ const styles = StyleSheet.create({
     gap: 4,
     padding: 4,
   },
+  largerTabBar: {
+    minHeight: 82,
+    paddingTop: 7,
+  },
   tabButton: {
     alignItems: "center",
     backgroundColor: "transparent",
@@ -16146,15 +22228,19 @@ const styles = StyleSheet.create({
     flex: 1,
     gap: 2,
     justifyContent: "center",
-    minHeight: 52,
-    paddingHorizontal: 4,
-    paddingVertical: 4,
+    minHeight: 60,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
   },
   compactTabButton: {
     gap: 2,
-    minHeight: 54,
+    minHeight: 56,
     paddingHorizontal: 3,
     paddingVertical: 6,
+  },
+  largerTabButton: {
+    minHeight: 68,
+    paddingVertical: 7,
   },
   selectedTabButton: {
     backgroundColor: "transparent",
@@ -16166,24 +22252,28 @@ const styles = StyleSheet.create({
   },
   tabButtonText: {
     color: colors.text,
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: "800",
     textAlign: "center",
   },
   compactTabButtonText: {
-    fontSize: 12,
-    lineHeight: 15,
+    fontSize: 14,
+    lineHeight: 18,
+  },
+  largeTabButtonText: {
+    fontSize: 16,
+    lineHeight: 20,
   },
   tabIconBadge: {
     alignItems: "center",
     backgroundColor: "transparent",
     borderRadius: 8,
-    height: 32,
+    height: 36,
     justifyContent: "center",
-    width: 32,
+    width: 40,
   },
   compactTabIconBadge: {
-    height: 30,
+    height: 32,
     width: 36,
   },
   tabLogoImage: {
@@ -16210,8 +22300,8 @@ const styles = StyleSheet.create({
     borderColor: colors.primary,
     borderRadius: 14,
     borderWidth: 1,
-    height: 36,
-    width: 44,
+    height: 40,
+    width: 48,
   },
   tabStatusDot: {
     backgroundColor: colors.success,
@@ -16261,28 +22351,6 @@ const styles = StyleSheet.create({
     top: 8,
     transform: [{ rotate: "-45deg" }],
     width: 15,
-  },
-  homeIcon: {
-    alignItems: "center",
-    height: 22,
-    justifyContent: "flex-end",
-    width: 24,
-  },
-  homeRoof: {
-    borderColor: colors.primarySoft,
-    borderRightWidth: 4,
-    borderTopWidth: 4,
-    height: 16,
-    position: "absolute",
-    top: 1,
-    transform: [{ rotate: "-45deg" }],
-    width: 16,
-  },
-  homeBody: {
-    backgroundColor: colors.primarySoft,
-    borderRadius: 2,
-    height: 11,
-    width: 16,
   },
   navBusIcon: {
     alignItems: "center",
@@ -16372,16 +22440,119 @@ const styles = StyleSheet.create({
   sectionHeader: {
     gap: 4,
   },
+  journeyIntroPanel: {
+    alignItems: "center",
+    backgroundColor: "#102C2E",
+    borderRadius: radius.md,
+    flexDirection: "row",
+    gap: spacing.md,
+    justifyContent: "space-between",
+    minHeight: 116,
+    overflow: "hidden",
+    paddingHorizontal: spacing.lg,
+    paddingVertical: 14,
+  },
+  stackedJourneyIntroPanel: {
+    alignItems: "center",
+    flexDirection: "column",
+    gap: spacing.md,
+    justifyContent: "flex-start",
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.lg,
+  },
+  journeyIntroTextGroup: {
+    flex: 1,
+    gap: spacing.xs,
+    minWidth: 0,
+  },
+  stackedJourneyIntroTextGroup: {
+    alignSelf: "stretch",
+    flexBasis: "auto",
+    flexGrow: 0,
+    flexShrink: 0,
+    width: "100%",
+  },
+  journeyIntroCopy: {
+    color: colors.text,
+    flexShrink: 1,
+    fontSize: 18,
+    fontWeight: "700",
+    lineHeight: 25,
+  },
+  largeJourneyIntroCopy: {
+    fontSize: 20,
+    lineHeight: 30,
+    maxWidth: "100%",
+  },
+  journeyIntroArtwork: {
+    alignItems: "center",
+    flexBasis: "36%",
+    flexGrow: 0,
+    flexShrink: 0,
+    justifyContent: "center",
+    minWidth: 120,
+  },
+  stackedJourneyIntroArtwork: {
+    flexBasis: "auto",
+    flexGrow: 0,
+    flexShrink: 1,
+    minWidth: 0,
+    width: "100%",
+  },
+  journeyLocationLoadingPanel: {
+    alignSelf: "stretch",
+    borderRadius: radius.md,
+    gap: spacing.md,
+    minHeight: 196,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.lg,
+  },
+  journeyLocationLoadingStatus: {
+    alignItems: "center",
+    gap: spacing.sm,
+  },
+  journeyLocationLoadingTitle: {
+    fontSize: 19,
+    fontWeight: "900",
+    lineHeight: 26,
+    textAlign: "center",
+  },
+  journeyLocationLoadingSupport: {
+    fontSize: 16,
+    fontWeight: "700",
+    lineHeight: 22,
+    textAlign: "center",
+  },
+  journeyLocationLongWaitActions: {
+    gap: spacing.sm,
+  },
+  journeyFindBusActions: {
+    alignSelf: "stretch",
+    gap: spacing.sm,
+  },
+  locationLoadingDots: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: spacing.xs,
+    minHeight: 12,
+  },
+  locationLoadingDot: {
+    borderRadius: 999,
+    height: 8,
+    width: 8,
+  },
   eyebrow: {
     color: colors.primarySoft,
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: "900",
+    lineHeight: 20,
     textTransform: "uppercase",
   },
   heading: {
     color: colors.text,
     fontSize: typography.sectionTitle,
     fontWeight: "800",
+    lineHeight: 36,
   },
   toggleRow: {
     backgroundColor: colors.surface,
@@ -16414,6 +22585,52 @@ const styles = StyleSheet.create({
     alignItems: "center",
     flexDirection: "row",
     gap: spacing.md,
+  },
+  stackedToggleHeaderRow: {
+    alignItems: "flex-start",
+    flexDirection: "column",
+  },
+  toggleIllustrationSlot: {
+    alignItems: "center",
+    flexShrink: 1,
+    justifyContent: "center",
+    minHeight: 72,
+    minWidth: 84,
+  },
+  stackedToggleIllustrationSlot: {
+    alignSelf: "center",
+    minWidth: 0,
+    width: "100%",
+  },
+  featureConceptVisual: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 8,
+    height: 72,
+    justifyContent: "center",
+    width: 112,
+  },
+  smallAaText: {
+    fontSize: 18,
+    fontWeight: "900",
+    lineHeight: 24,
+  },
+  largeAaText: {
+    fontSize: 34,
+    fontWeight: "900",
+    lineHeight: 40,
+  },
+  contrastConceptVisual: {
+    borderRadius: 8,
+    borderWidth: 2,
+    gap: 0,
+    overflow: "hidden",
+  },
+  contrastHalf: {
+    alignItems: "center",
+    flex: 1,
+    height: "100%",
+    justifyContent: "center",
   },
   optionVisualGroup: {
     alignItems: "center",
@@ -16602,6 +22819,218 @@ const styles = StyleSheet.create({
     lineHeight: 23,
     minWidth: 0,
   },
+  textPreviewPanel: {
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    borderWidth: borders.default,
+    gap: spacing.xs,
+    padding: spacing.md,
+  },
+  preferenceOverview: {
+    gap: spacing.md,
+  },
+  nextActionCard: {
+    backgroundColor: colors.surface,
+    borderColor: colors.primary,
+    borderRadius: radius.md,
+    borderWidth: 2,
+    gap: spacing.xs,
+    padding: spacing.lg,
+  },
+  simplifiedNextActionCard: {
+    borderColor: colors.highlight,
+    borderWidth: 3,
+    paddingVertical: spacing.xl,
+  },
+  nextActionEyebrow: {
+    color: colors.primarySoft,
+    fontSize: 15,
+    fontWeight: "900",
+    lineHeight: 20,
+    textTransform: "uppercase",
+  },
+  nextActionTitle: {
+    color: colors.text,
+    fontSize: 23,
+    fontWeight: "900",
+    lineHeight: 30,
+  },
+  simplifiedNextActionTitle: {
+    fontSize: 28,
+    lineHeight: 36,
+  },
+  nextActionDetail: {
+    color: colors.muted,
+    fontSize: 18,
+    fontWeight: "700",
+    lineHeight: 25,
+  },
+  nextActionTextStatus: {
+    color: colors.text,
+    fontSize: 15,
+    fontWeight: "700",
+    lineHeight: 21,
+    marginTop: spacing.xs,
+  },
+  preferenceSummaryCard: {
+    alignItems: "center",
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    borderWidth: borders.default,
+    flexDirection: "row",
+    gap: spacing.md,
+    padding: spacing.md,
+  },
+  stackedPreferenceSummaryCard: {
+    alignItems: "stretch",
+    flexDirection: "column",
+  },
+  preferenceSummaryEdit: {
+    alignItems: "center",
+    borderColor: colors.primary,
+    borderRadius: radius.sm,
+    borderWidth: borders.default,
+    justifyContent: "center",
+    minHeight: 44,
+    paddingHorizontal: spacing.md,
+  },
+  preferenceSummaryEditText: {
+    color: colors.text,
+    fontSize: 16,
+    fontWeight: "900",
+    lineHeight: 21,
+  },
+  preferencePresetGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.sm,
+  },
+  preferencePresetButton: {
+    alignItems: "center",
+    backgroundColor: colors.surface,
+    borderColor: colors.primary,
+    borderRadius: radius.md,
+    borderWidth: borders.default,
+    flexGrow: 1,
+    justifyContent: "center",
+    minHeight: 52,
+    minWidth: 120,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  preferencePresetText: {
+    color: colors.text,
+    fontSize: 16,
+    fontWeight: "800",
+    lineHeight: 22,
+    textAlign: "center",
+  },
+  preferenceCategoryList: {
+    gap: spacing.sm,
+  },
+  preferenceCategoryCard: {
+    alignItems: "center",
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    borderWidth: borders.default,
+    flexDirection: "row",
+    gap: spacing.md,
+    minHeight: 72,
+    padding: spacing.md,
+  },
+  preferenceCategoryCopy: {
+    flex: 1,
+    gap: spacing.xs,
+    minWidth: 0,
+  },
+  preferenceCategoryTitle: {
+    color: colors.text,
+    fontSize: 19,
+    fontWeight: "900",
+    lineHeight: 25,
+  },
+  preferenceCategoryDescription: {
+    color: colors.metadata,
+    fontSize: 15,
+    fontWeight: "600",
+    lineHeight: 21,
+  },
+  preferenceCategoryChevron: {
+    transform: [{ rotate: "-90deg" }],
+  },
+  preferenceCategorySettings: {
+    gap: spacing.md,
+  },
+  preferenceSectionHeading: {
+    color: colors.text,
+    fontSize: 20,
+    fontWeight: "900",
+    lineHeight: 26,
+    marginTop: spacing.xs,
+  },
+  preferenceChoiceSection: {
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    borderWidth: borders.default,
+    gap: spacing.md,
+    padding: spacing.md,
+  },
+  preferenceChoiceRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.sm,
+  },
+  stackedPreferenceChoiceRow: {
+    flexDirection: "column",
+  },
+  preferenceChoiceButton: {
+    alignItems: "center",
+    backgroundColor: colors.surfaceSecondary,
+    borderColor: colors.border,
+    borderRadius: radius.sm,
+    borderWidth: borders.default,
+    flexGrow: 1,
+    justifyContent: "center",
+    minHeight: 48,
+    minWidth: 92,
+    paddingHorizontal: spacing.sm,
+  },
+  preferenceChoiceText: {
+    color: colors.text,
+    fontSize: 15,
+    fontWeight: "800",
+    lineHeight: 20,
+    textAlign: "center",
+  },
+  selectedPreferenceChoice: {
+    backgroundColor: colors.primary,
+    borderColor: colors.highlight,
+    borderWidth: 3,
+  },
+  selectedPreferenceChoiceText: {
+    color: colors.textOnPrimary,
+  },
+  largerControl: {
+    minHeight: 68,
+    paddingVertical: spacing.lg,
+  },
+  largerTertiaryControl: {
+    minHeight: 52,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  largeButtonText: {
+    fontSize: 20,
+    lineHeight: 26,
+  },
+  extraLargeButtonText: {
+    fontSize: 23,
+    lineHeight: 30,
+  },
   compactSelectionIndicator: {
     alignItems: "center",
     height: 40,
@@ -16648,6 +23077,23 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     padding: spacing.lg,
   },
+  destructiveSecondaryButton: {
+    borderColor: colors.danger,
+    borderWidth: 2,
+  },
+  tertiaryButton: {
+    alignItems: "center",
+    alignSelf: "flex-start",
+    backgroundColor: "transparent",
+    borderRadius: radius.sm,
+    flexDirection: "row",
+    gap: 8,
+    justifyContent: "center",
+    minHeight: 48,
+    minWidth: 48,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+  },
   disabledButton: {
     backgroundColor: colors.disabledBackground,
     borderColor: colors.disabledBorder,
@@ -16660,16 +23106,31 @@ const styles = StyleSheet.create({
   disabledButtonText: {
     color: colors.disabledText,
   },
+  disabledTextAction: {
+    opacity: 0.55,
+  },
   primaryButtonText: {
     color: colors.textOnPrimary,
+    flexShrink: 1,
     fontSize: 19,
     fontWeight: "800",
     textAlign: "center",
   },
   secondaryButtonText: {
     color: colors.text,
+    flexShrink: 1,
     fontSize: 19,
     fontWeight: "800",
+    textAlign: "center",
+  },
+  destructiveSecondaryButtonText: {
+    color: colors.danger,
+  },
+  tertiaryButtonText: {
+    color: colors.primarySoft,
+    fontSize: 17,
+    fontWeight: "800",
+    lineHeight: 22,
     textAlign: "center",
   },
   buttonIcon: {
@@ -16808,7 +23269,7 @@ const styles = StyleSheet.create({
     padding: spacing.md,
     position: "absolute",
     right: mapOverlayMargin,
-    top: mapOverlayMargin,
+    top: mapTopOverlayMargin,
     zIndex: mapLayerZ.search,
   },
   busStopSearchHeader: {
@@ -16904,7 +23365,7 @@ const styles = StyleSheet.create({
     left: mapOverlayMargin,
     position: "absolute",
     right: mapOverlayMargin,
-    top: mapOverlayMargin,
+    top: mapTopOverlayMargin,
     zIndex: mapLayerZ.overlays,
   },
   mapTopControlRow: {
@@ -16927,6 +23388,27 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     minHeight: 44,
     paddingHorizontal: 16,
+  },
+  regionalStopsStatus: {
+    alignItems: "center",
+    alignSelf: "flex-start",
+    borderRadius: 999,
+    borderWidth: 1,
+    flexDirection: "row",
+    gap: 7,
+    minHeight: 36,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  regionalStopsStatusText: {
+    flexShrink: 1,
+  },
+  regionalStopsRetry: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 5,
+    minHeight: 44,
+    paddingHorizontal: 4,
   },
   mapBackButton: {
     alignItems: "center",
@@ -16997,7 +23479,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     flexDirection: "row",
     gap: 6,
-    minHeight: 42,
+    minHeight: touchTarget.min,
     paddingHorizontal: 10,
   },
   quickDestinationRow: {
@@ -17010,7 +23492,7 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     borderRadius: 8,
     borderWidth: 1,
-    minHeight: 42,
+    minHeight: touchTarget.min,
     paddingHorizontal: 10,
     paddingVertical: 8,
   },
@@ -17090,7 +23572,7 @@ const styles = StyleSheet.create({
     gap: 8,
     position: "absolute",
     right: mapOverlayMargin,
-    top: 92,
+    top: mapSideControlTopOffset,
     width: rightToolbarWidth,
     zIndex: mapLayerZ.sideControls,
   },
@@ -17104,9 +23586,6 @@ const styles = StyleSheet.create({
   },
   highContrastMapOptionsScrim: {
     backgroundColor: "rgba(0, 0, 0, 0.42)",
-  },
-  mapSideControlsExpanded: {
-    top: 92,
   },
   mapCompassControl: {
     alignItems: "center",
@@ -17123,6 +23602,9 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.22,
     shadowRadius: 5,
     width: 56,
+  },
+  subtleMapCompassControl: {
+    opacity: 0.82,
   },
   mapCompassText: {
     color: colors.text,
@@ -17191,6 +23673,11 @@ const styles = StyleSheet.create({
     paddingVertical: 5,
     width: rightToolbarWidth,
   },
+  largerMapControl: {
+    height: 68,
+    minHeight: 68,
+    paddingVertical: 8,
+  },
   activeMapSideControl: {
     backgroundColor: "#0F4E5A",
     borderColor: colors.highlight,
@@ -17201,9 +23688,9 @@ const styles = StyleSheet.create({
   },
   mapSideControlText: {
     color: colors.text,
-    fontSize: 9,
+    fontSize: 11,
     fontWeight: "800",
-    lineHeight: 12,
+    lineHeight: 14,
     textAlign: "center",
   },
   mapMorePanel: {
@@ -17350,8 +23837,12 @@ const styles = StyleSheet.create({
     maxHeight: mapBottomSheetHeights.COLLAPSED,
     minHeight: 92,
   },
+  mapBottomSheetGuidance: {
+    maxHeight: 300,
+    minHeight: 190,
+  },
   mapBottomSheetHiddenPeek: {
-    maxHeight: mapBottomSheetHeights.HIDDEN_PEEK + 4,
+    maxHeight: mapBottomSheetHeights.HIDDEN_PEEK,
     minHeight: mapBottomSheetHeights.HIDDEN_PEEK,
   },
   mapBottomSheetContentFit: {
@@ -17362,24 +23853,36 @@ const styles = StyleSheet.create({
     maxHeight: mapBottomSheetHeights.MEDIUM,
     minHeight: 250,
   },
+  mapBottomSheetSelectedStop: {
+    maxHeight: 430,
+    minHeight: 430,
+  },
   mapBottomSheetExpanded: {
     maxHeight: mapBottomSheetHeights.EXPANDED,
     minHeight: 430,
   },
   mapBottomSheetHeader: {
     alignItems: "center",
+    gap: 5,
     justifyContent: "center",
     minHeight: 50,
     paddingBottom: 7,
     paddingHorizontal: 18,
     paddingTop: 7,
   },
+  mapBottomSheetGrabber: {
+    borderRadius: 999,
+    height: 4,
+    opacity: 0.78,
+    width: 42,
+  },
   sheetHeaderRow: {
     alignItems: "center",
     flexDirection: "row",
     gap: 8,
-    justifyContent: "center",
+    justifyContent: "space-between",
     minHeight: 24,
+    width: "100%",
   },
   sheetPeekLabel: {
     color: colors.text,
@@ -17395,6 +23898,124 @@ const styles = StyleSheet.create({
     gap: 10,
     paddingBottom: 24,
     paddingHorizontal: 16,
+  },
+  guidanceSheetContent: {
+    paddingBottom: 14,
+  },
+  directionsTitleRow: {
+    alignItems: "flex-start",
+    flexDirection: "row",
+    gap: 10,
+  },
+  directionsLoadingRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 12,
+    minHeight: 58,
+  },
+  directionsStatePanel: {
+    gap: 10,
+  },
+  walkingRouteSummary: {
+    alignItems: "baseline",
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  directionsSummaryMetric: {
+    color: colors.text,
+    fontSize: 24,
+    fontWeight: "900",
+    lineHeight: 30,
+  },
+  routeEndpointRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 10,
+    minHeight: 28,
+  },
+  routeEndpointMarker: {
+    backgroundColor: colors.location,
+    borderColor: "#FFFFFF",
+    borderRadius: 999,
+    borderWidth: 3,
+    height: 18,
+    marginHorizontal: 1,
+    width: 18,
+  },
+  routeEndpointLine: {
+    backgroundColor: colors.primary,
+    height: 20,
+    marginLeft: 9,
+    width: 3,
+  },
+  walkingStepList: {
+    gap: 10,
+  },
+  walkingStepRow: {
+    alignItems: "flex-start",
+    flexDirection: "row",
+    gap: 10,
+    minHeight: 40,
+  },
+  currentInstructionCard: {
+    alignItems: "flex-start",
+    borderRadius: 12,
+    borderWidth: 2,
+    flexDirection: "row",
+    gap: 12,
+    padding: 12,
+  },
+  walkingInstructionText: {
+    color: colors.text,
+    fontSize: 25,
+    fontWeight: "900",
+    lineHeight: 31,
+  },
+  walkingInstructionTextLarge: {
+    fontSize: 32,
+    lineHeight: 40,
+  },
+  walkingInstructionDistance: {
+    color: colors.text,
+    fontSize: 28,
+    fontWeight: "900",
+    lineHeight: 34,
+  },
+  walkingInstructionDistanceLarge: {
+    fontSize: 34,
+    lineHeight: 42,
+  },
+  offRoutePanel: {
+    backgroundColor: "rgba(245, 198, 90, 0.16)",
+    borderColor: colors.warning,
+    borderRadius: 8,
+    borderWidth: 2,
+    gap: 8,
+    padding: 10,
+  },
+  arrivalPanel: {
+    alignItems: "flex-start",
+    gap: 10,
+  },
+  routingAttribution: {
+    fontSize: 11,
+    fontWeight: "800",
+    lineHeight: 16,
+    minHeight: 24,
+    textDecorationLine: "underline",
+  },
+  selectedStopSheetBody: {
+    flex: 1,
+    flexShrink: 1,
+    minHeight: 0,
+  },
+  selectedStopActions: {
+    borderTopWidth: 1,
+    gap: 8,
+    paddingBottom: 12,
+    paddingHorizontal: 16,
+    paddingTop: 10,
   },
   mapBottomSheetCompactContent: {
     paddingBottom: 24,
@@ -17418,7 +24039,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 14,
   },
-  homeDiscoveryStatus: {
+  journeyDiscoveryStatus: {
     backgroundColor: "rgba(81, 207, 232, 0.12)",
     borderColor: colors.focusIndicator,
     borderRadius: 8,
@@ -17427,11 +24048,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.md,
   },
-  homeDiscoveryStatusError: {
+  journeyDiscoveryStatusError: {
     backgroundColor: "rgba(239, 133, 133, 0.12)",
     borderColor: colors.error,
   },
-  homeDiscoveryStatusTitleRow: {
+  journeyDiscoveryStatusTitleRow: {
     alignItems: "flex-start",
     flexDirection: "row",
     gap: spacing.sm,
@@ -17497,26 +24118,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "800",
   },
-  mapCanvas: {
-    backgroundColor: "#DCE9E7",
-    borderColor: "#8BA7AA",
-    borderRadius: 8,
-    borderWidth: 2,
-    height: 370,
-    overflow: "hidden",
-    position: "relative",
-  },
-  mapFirstCanvas: {
-    borderRadius: 0,
-    flex: 1,
-    height: "100%",
-  },
-  providerMapCanvas: {
-    left: 0,
-    position: "absolute",
-    top: 0,
-    width: "100%",
-  },
   providerMapUnavailable: {
     alignItems: "center",
     borderRadius: 8,
@@ -17541,8 +24142,10 @@ const styles = StyleSheet.create({
     lineHeight: 19,
     textAlign: "center",
   },
-  mapCanvasMoved: {
-    borderColor: colors.highlight,
+  providerMapUnavailableActions: {
+    alignSelf: "stretch",
+    gap: 8,
+    marginTop: 6,
   },
   mapCameraDebugLayer: {
     bottom: 0,
@@ -17581,327 +24184,6 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(255, 255, 255, 0.86)",
     color: "#000000",
   },
-  mapTileGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    height: "100%",
-    width: "100%",
-  },
-  mapTileCell: {
-    borderColor: "rgba(65, 98, 101, 0.18)",
-    borderRightWidth: 0.5,
-    borderTopWidth: 0.5,
-    height: "33.3333%",
-    opacity: 0.24,
-    width: "25%",
-  },
-  mapLandPatch: {
-    borderRadius: 10,
-    height: "100%",
-    left: 0,
-    opacity: 0.72,
-    position: "absolute",
-    top: 0,
-    width: "100%",
-  },
-  mapBuildingPatch: {
-    borderRadius: 6,
-    height: "18%",
-    left: "58%",
-    opacity: 0.68,
-    position: "absolute",
-    top: "18%",
-    transform: [{ rotate: "9deg" }],
-    width: "24%",
-  },
-  mapParkPatch: {
-    backgroundColor: "#BFDCC8",
-    borderRadius: 8,
-    height: "36%",
-    left: "4%",
-    position: "absolute",
-    top: "7%",
-    transform: [{ rotate: "-8deg" }],
-    width: "42%",
-    opacity: 0.62,
-  },
-  mapWaterPatch: {
-    backgroundColor: "#B7DDE8",
-    borderRadius: 8,
-    bottom: "7%",
-    height: "20%",
-    position: "absolute",
-    right: "-5%",
-    transform: [{ rotate: "12deg" }],
-    width: "40%",
-    opacity: 0.62,
-  },
-  mapRoadMajor: {
-    backgroundColor: "#FFFFFF",
-    borderColor: "#B3BEC0",
-    borderWidth: 2,
-    height: 34,
-    left: "-12%",
-    position: "absolute",
-    top: "48%",
-    transform: [{ rotate: "-11deg" }],
-    width: "126%",
-  },
-  mapRoadMinorOne: {
-    backgroundColor: "#F8FAFA",
-    borderColor: "#CAD4D6",
-    borderWidth: 1,
-    height: 22,
-    left: "34%",
-    position: "absolute",
-    top: "-8%",
-    transform: [{ rotate: "20deg" }],
-    width: "9%",
-  },
-  mapRoadMinorTwo: {
-    backgroundColor: "#F8FAFA",
-    borderColor: "#CAD4D6",
-    borderWidth: 1,
-    height: 20,
-    left: "0%",
-    position: "absolute",
-    top: "72%",
-    transform: [{ rotate: "16deg" }],
-    width: "70%",
-  },
-  mapRoadLabel: {
-    color: "#385258",
-    fontSize: 10,
-    fontWeight: "500",
-    left: "34%",
-    position: "absolute",
-    top: "42%",
-    transform: [{ rotate: "-11deg" }],
-  },
-  accuracyRadius: {
-    backgroundColor: "rgba(141, 214, 232, 0.10)",
-    borderColor: "rgba(141, 214, 232, 0.18)",
-    borderRadius: 54,
-    borderWidth: 1,
-    height: 108,
-    left: "50%",
-    marginLeft: -54,
-    marginTop: -54,
-    position: "absolute",
-    top: "50%",
-    width: 108,
-    zIndex: 2,
-  },
-  largeAccuracyRadius: {
-    borderWidth: 1.5,
-  },
-  currentLocationMarker: {
-    alignItems: "center",
-    backgroundColor: "transparent",
-    height: 58,
-    justifyContent: "center",
-    left: "50%",
-    marginLeft: -29,
-    marginTop: -29,
-    position: "absolute",
-    top: "50%",
-    width: 58,
-    zIndex: 12,
-  },
-  headingCone: {
-    borderBottomColor: colors.location,
-    borderBottomWidth: 16,
-    borderLeftColor: "transparent",
-    borderLeftWidth: 8,
-    borderRightColor: "transparent",
-    borderRightWidth: 8,
-    height: 0,
-    opacity: 0,
-    position: "absolute",
-    top: -10,
-    width: 0,
-  },
-  highContrastCurrentLocationMarker: {
-    borderColor: "#000000",
-  },
-  currentLocationDot: {
-    backgroundColor: colors.location,
-    borderColor: colors.text,
-    borderRadius: 10,
-    borderWidth: 3,
-    height: 20,
-    width: 20,
-  },
-  currentLocationText: {
-    color: colors.location,
-    borderRadius: 6,
-    borderWidth: 1.5,
-    fontSize: 11,
-    fontWeight: "900",
-    lineHeight: 14,
-    marginTop: 3,
-    overflow: "hidden",
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-  },
-  serviceBusMarker: {
-    alignItems: "center",
-    backgroundColor: colors.primary,
-    borderColor: colors.textOnPrimary,
-    borderRadius: 18,
-    borderWidth: 2,
-    height: 36,
-    justifyContent: "center",
-    marginLeft: 14,
-    marginTop: 18,
-    position: "absolute",
-    width: 36,
-    zIndex: 4,
-  },
-  journeyPreviewLayer: {
-    bottom: 0,
-    left: 0,
-    position: "absolute",
-    right: 0,
-    top: 0,
-    zIndex: 1,
-  },
-  journeyMapSegment: {
-    backgroundColor: colors.primary,
-    borderColor: colors.primaryDark,
-    borderRadius: 999,
-    borderWidth: 1,
-    height: 5,
-    position: "absolute",
-  },
-  walkingMapSegment: {
-    backgroundColor: colors.location,
-    borderStyle: "dashed",
-  },
-  highContrastJourneyMapSegment: {
-    backgroundColor: "#FFFF00",
-    borderColor: "#000000",
-    borderWidth: 2,
-  },
-  journeyPreviewMarker: {
-    alignItems: "center",
-    backgroundColor: colors.surface,
-    borderColor: colors.text,
-    borderRadius: 8,
-    borderWidth: 2,
-    marginLeft: -26,
-    marginTop: -15,
-    minHeight: 30,
-    minWidth: 52,
-    paddingHorizontal: 5,
-    paddingVertical: 4,
-    position: "absolute",
-    zIndex: 3,
-  },
-  originJourneyMarker: {
-    borderColor: colors.location,
-  },
-  boardingJourneyMarker: {
-    backgroundColor: colors.primary,
-    borderColor: colors.textOnPrimary,
-  },
-  busJourneyMarker: {
-    backgroundColor: colors.warning,
-    borderColor: colors.textOnWarning,
-  },
-  alightJourneyMarker: {
-    backgroundColor: colors.surfaceSecondary,
-    borderColor: colors.destination,
-  },
-  destinationJourneyMarker: {
-    backgroundColor: colors.destination,
-    borderColor: colors.textOnDestination,
-  },
-  highContrastJourneyPreviewMarker: {
-    backgroundColor: "#FFFFFF",
-    borderColor: "#000000",
-    borderWidth: 3,
-  },
-  journeyPreviewMarkerText: {
-    color: colors.text,
-    fontSize: 9,
-    fontWeight: "900",
-    lineHeight: 12,
-    textAlign: "center",
-  },
-  lightJourneyPreviewMarkerText: {
-    color: lightTheme.text,
-  },
-  destinationMapMarker: {
-    alignItems: "center",
-    backgroundColor: colors.destination,
-    borderColor: colors.textOnDestination,
-    borderRadius: 20,
-    borderWidth: 2,
-    height: 40,
-    justifyContent: "center",
-    marginLeft: -20,
-    marginTop: -38,
-    position: "absolute",
-    width: 40,
-    zIndex: 5,
-  },
-  mapStopMarker: {
-    alignItems: "center",
-    backgroundColor: "transparent",
-    borderColor: "transparent",
-    borderRadius: 8,
-    borderWidth: 0,
-    height: 48,
-    justifyContent: "center",
-    marginLeft: -24,
-    marginTop: -24,
-    minHeight: 48,
-    minWidth: 48,
-    position: "absolute",
-    width: 48,
-  },
-  nearestMapStopMarker: {
-    zIndex: 3,
-  },
-  dimmedMapStopMarker: {
-    opacity: 0.65,
-  },
-  selectedMapStopMarker: {
-    backgroundColor: "rgba(134, 197, 218, 0.14)",
-    borderColor: colors.primary,
-    borderWidth: 2,
-    borderRadius: 28,
-    height: 56,
-    marginLeft: -28,
-    marginTop: -28,
-    width: 56,
-    zIndex: 2,
-  },
-  highContrastMapStopMarker: {
-    backgroundColor: "#FFFFFF",
-    borderColor: "#000000",
-  },
-  highContrastSelectedMapStopMarker: {
-    backgroundColor: "#FFFF00",
-    borderColor: "#000000",
-  },
-  highContrastClusterMarker: {
-    backgroundColor: "#7FE8FF",
-    borderColor: "#000000",
-    borderWidth: 3,
-  },
-  highContrastClusterCount: {
-    color: "#001B22",
-  },
-  mapStopMarkerText: {
-    color: colors.textOnPrimary,
-    fontSize: 24,
-    fontWeight: "900",
-  },
-  selectedMapStopMarkerText: {
-    fontSize: 26,
-  },
   busStopGlyph: {
     alignItems: "center",
     justifyContent: "center",
@@ -17910,206 +24192,45 @@ const styles = StyleSheet.create({
     alignItems: "center",
     backgroundColor: colors.surface,
     borderColor: colors.primary,
-    borderRadius: 5,
-    borderWidth: 2,
-    height: 22,
-    justifyContent: "space-around",
-    paddingVertical: 3,
-    width: 26,
+    borderRadius: 9,
+    borderWidth: 1.2,
+    height: 18,
+    justifyContent: "center",
+    width: 18,
   },
   nearestBusStopGlyphBody: {
     borderColor: colors.location,
+    borderRadius: 11,
+    height: 22,
+    width: 22,
   },
   selectedBusStopGlyphBody: {
     backgroundColor: colors.primary,
     borderColor: colors.textOnPrimary,
-    height: 28,
-    width: 34,
-  },
-  busStopGlyphWindow: {
-    backgroundColor: colors.primary,
-    borderRadius: 2,
-    height: 8,
-    width: 17,
-  },
-  selectedBusStopGlyphWindow: {
-    backgroundColor: colors.textOnPrimary,
-    width: 21,
-  },
-  busStopGlyphWheels: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    width: 17,
-  },
-  busStopGlyphWheel: {
-    backgroundColor: colors.primary,
-    borderRadius: 3,
-    height: 5,
-    width: 5,
-  },
-  selectedBusStopGlyphWheel: {
-    backgroundColor: colors.textOnPrimary,
+    borderRadius: 15,
+    borderWidth: 2,
+    height: 30,
+    width: 30,
   },
   busStopGlyphPointer: {
     borderLeftColor: "transparent",
-    borderLeftWidth: 5,
+    borderLeftWidth: 3,
     borderRightColor: "transparent",
-    borderRightWidth: 5,
+    borderRightWidth: 3,
     borderTopColor: colors.primary,
-    borderTopWidth: 7,
+    borderTopWidth: 5,
     height: 0,
-    marginTop: -1,
+    marginTop: -2,
     width: 0,
   },
   selectedBusStopGlyphPointer: {
     borderTopColor: colors.textOnPrimary,
-    borderLeftWidth: 6,
-    borderRightWidth: 6,
-    borderTopWidth: 8,
-  },
-  nearestBusStopGlyphWindow: {
-    backgroundColor: colors.location,
-  },
-  nearestBusStopGlyphWheel: {
-    backgroundColor: colors.location,
+    borderLeftWidth: 5,
+    borderRightWidth: 5,
+    borderTopWidth: 7,
   },
   nearestBusStopGlyphPointer: {
     borderTopColor: colors.location,
-  },
-  nearestStopLabel: {
-    backgroundColor: colors.surface,
-    borderColor: colors.location,
-    borderRadius: radius.sm,
-    borderWidth: 1,
-    color: colors.location,
-    fontSize: 9,
-    fontWeight: "900",
-    paddingHorizontal: 4,
-    position: "absolute",
-    top: 36,
-  },
-  selectedMapStopMarkerLabel: {
-    borderColor: colors.primary,
-    color: colors.text,
-    minWidth: 44,
-    textAlign: "center",
-  },
-  stopClusterHitTarget: {
-    alignItems: "center",
-    height: 48,
-    justifyContent: "center",
-    marginLeft: -24,
-    marginTop: -24,
-    minHeight: 48,
-    minWidth: 48,
-    position: "absolute",
-    width: 48,
-    zIndex: markerPriority.CLUSTER,
-  },
-  stopClusterMarker: {
-    alignItems: "center",
-    backgroundColor: colors.primary,
-    borderColor: colors.textOnPrimary,
-    borderRadius: 19,
-    borderWidth: 3,
-    height: 38,
-    justifyContent: "center",
-    width: 38,
-  },
-  stopClusterCount: {
-    color: colors.textOnPrimary,
-    fontSize: 17,
-    fontWeight: "900",
-    lineHeight: 21,
-  },
-  compactStopClusterCount: {
-    fontSize: 16,
-    lineHeight: 20,
-  },
-  stopClusterLabel: {
-    color: colors.metadata,
-    fontSize: 10,
-    fontWeight: "800",
-    lineHeight: 12,
-  },
-  selectedStopRoute: {
-    backgroundColor: colors.warning,
-    borderRadius: 999,
-    borderWidth: 2,
-    height: 8,
-    marginLeft: -55,
-    marginTop: -2,
-    opacity: 0.95,
-    position: "absolute",
-    transform: [{ rotate: "-35deg" }],
-    width: 110,
-    zIndex: 1,
-  },
-  activeWalkingRoute: {
-    backgroundColor: colors.location,
-    height: 9,
-    opacity: 1,
-    width: 126,
-  },
-  selectedStopRouteText: {
-    color: colors.textOnWarning,
-    fontSize: 10,
-    fontWeight: "900",
-    left: 36,
-    position: "absolute",
-    top: -16,
-    transform: [{ rotate: "35deg" }],
-  },
-  highContrastSelectedStopRoute: {
-    backgroundColor: "#FFFF00",
-    height: 5,
-    opacity: 1,
-  },
-  routeArrow: {
-    alignItems: "center",
-    backgroundColor: colors.primary,
-    borderColor: colors.textOnPrimary,
-    borderRadius: 14,
-    borderWidth: 2,
-    height: 28,
-    justifyContent: "center",
-    marginLeft: -2,
-    marginTop: -34,
-    position: "absolute",
-    transform: [{ rotate: "-35deg" }],
-    width: 28,
-    zIndex: 3,
-  },
-  routeArrowText: {
-    color: colors.textOnPrimary,
-    fontSize: 26,
-    fontWeight: "900",
-    lineHeight: 26,
-  },
-  highContrastRouteArrow: {
-    backgroundColor: "#FFFF00",
-    borderColor: "#000000",
-  },
-  landmarkMarker: {
-    alignItems: "center",
-    backgroundColor: colors.surface,
-    borderColor: colors.border,
-    borderRadius: 8,
-    borderWidth: 1,
-    gap: 1,
-    marginLeft: -28,
-    marginTop: -12,
-    minWidth: 56,
-    opacity: 0.72,
-    paddingHorizontal: 4,
-    paddingVertical: 2,
-    position: "absolute",
-    zIndex: 2,
-  },
-  destinationLandmarkMarker: {
-    borderColor: colors.destination,
-    borderWidth: 2,
-    opacity: 0.92,
   },
   landmarkIconText: {
     color: colors.metadata,
@@ -18121,21 +24242,6 @@ const styles = StyleSheet.create({
     fontSize: 8,
     fontWeight: "800",
     textAlign: "center",
-  },
-  destinationLandmarkLabel: {
-    color: colors.text,
-  },
-  mapStopMarkerLabel: {
-    backgroundColor: colors.surface,
-    borderColor: colors.primary,
-    borderRadius: 6,
-    borderWidth: 1,
-    color: colors.text,
-    fontSize: 11,
-    fontWeight: "900",
-    paddingHorizontal: 4,
-    position: "absolute",
-    top: 50,
   },
   recenterControl: {
     alignItems: "center",
@@ -18282,8 +24388,37 @@ const styles = StyleSheet.create({
     borderColor: colors.highlight,
     borderRadius: radius.md,
     borderWidth: borders.selected,
-    gap: spacing.md,
+    gap: 12,
     padding: spacing.lg,
+  },
+  selectedStopMetadata: {
+    color: colors.metadata,
+    fontSize: 15,
+    fontWeight: "800",
+    lineHeight: 20,
+  },
+  selectedStopSection: {
+    gap: 8,
+  },
+  selectedStopServicesRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 6,
+  },
+  selectedStopServicePill: {
+    backgroundColor: colors.surfaceSecondary,
+    borderColor: colors.primary,
+    borderRadius: 8,
+    borderWidth: 1,
+    minHeight: 28,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+  },
+  selectedStopServicePillText: {
+    color: colors.primary,
+    fontSize: 13,
+    fontWeight: "900",
+    lineHeight: 17,
   },
   directionsSummary: {
     backgroundColor: colors.surface,
@@ -18307,6 +24442,10 @@ const styles = StyleSheet.create({
     borderWidth: borders.default,
     gap: spacing.md,
     padding: spacing.lg,
+  },
+  largerServiceCard: {
+    minHeight: 116,
+    paddingVertical: spacing.xl,
   },
   arrivalTopRow: {
     alignItems: "center",
@@ -18453,26 +24592,34 @@ const styles = StyleSheet.create({
   stopSheetSection: {
     gap: spacing.sm,
   },
+  stopServiceRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
   stopServiceChip: {
     alignItems: "center",
-    backgroundColor: colors.surfaceSecondary,
-    borderColor: colors.border,
     borderRadius: radius.sm,
-    borderWidth: 1,
+    borderWidth: 2,
     flexDirection: "row",
-    gap: 6,
+    gap: 7,
     minHeight: touchTarget.min,
-    paddingHorizontal: 12,
+    paddingHorizontal: 14,
+  },
+  compactStopServiceChip: {
+    gap: 4,
+    paddingHorizontal: 8,
   },
   selectedStopServiceChip: {
-    backgroundColor: colors.primaryDark,
+    borderWidth: 3,
+  },
+  highContrastServiceChip: {
     borderWidth: 3,
   },
   stopServiceChipText: {
-    color: colors.text,
-    fontSize: 16,
+    fontSize: 18,
     fontWeight: "900",
-    lineHeight: 20,
+    lineHeight: 22,
   },
   servicePreviewPanel: {
     borderRadius: radius.md,
@@ -18512,6 +24659,184 @@ const styles = StyleSheet.create({
     color: colors.body,
     fontSize: 17,
     lineHeight: 24,
+  },
+  buttonPressed: {
+    opacity: 0.82,
+  },
+  focusedAssistPanel: {
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderRadius: 18,
+    borderWidth: 2,
+    gap: spacing.md,
+    padding: spacing.lg,
+  },
+  focusedAssistEyebrow: {
+    color: colors.highlight,
+    fontSize: 18,
+    fontWeight: "900",
+    letterSpacing: 1.4,
+    lineHeight: 25,
+    textAlign: "center",
+  },
+  focusedAssistServicePrefix: {
+    color: colors.metadata,
+    fontSize: 16,
+    fontWeight: "900",
+    letterSpacing: 1.2,
+    lineHeight: 22,
+    textAlign: "center",
+  },
+  focusedAssistServiceNumber: {
+    color: colors.text,
+    fontSize: 72,
+    fontWeight: "900",
+    lineHeight: 82,
+    textAlign: "center",
+  },
+  focusedAssistServiceNumberExtraLarge: {
+    fontSize: 86,
+    lineHeight: 98,
+  },
+  focusedAssistAccessibleRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.sm,
+    justifyContent: "center",
+  },
+  focusedAssistRampAction: {
+    alignItems: "center",
+    alignSelf: "stretch",
+    backgroundColor: "#0B6670",
+    borderColor: "#FFFFFF",
+    borderRadius: 18,
+    borderWidth: 2,
+    gap: spacing.sm,
+    justifyContent: "center",
+    minHeight: 168,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.xl,
+  },
+  focusedAssistRampActionLarge: {
+    minHeight: 196,
+  },
+  focusedAssistAlightingAction: {
+    alignItems: "center",
+    alignSelf: "stretch",
+    backgroundColor: "#0B6670",
+    borderColor: "#FFFFFF",
+    borderRadius: 16,
+    borderWidth: 2,
+    gap: spacing.sm,
+    justifyContent: "center",
+    minHeight: 112,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.lg,
+  },
+  focusedAssistHighContrastAction: {
+    backgroundColor: "#000000",
+    borderColor: "#FFFF00",
+    borderWidth: 4,
+  },
+  focusedAssistActionLabel: {
+    color: "#FFFFFF",
+    fontSize: 24,
+    fontWeight: "900",
+    lineHeight: 32,
+    textAlign: "center",
+  },
+  focusedAssistActionService: {
+    color: "#FFFFFF",
+    fontSize: 19,
+    fontWeight: "800",
+    lineHeight: 26,
+    textAlign: "center",
+  },
+  focusedAssistStopSummary: {
+    alignItems: "center",
+    gap: spacing.xs,
+  },
+  focusedAssistDiagnostic: {
+    color: colors.metadata,
+    fontSize: 12,
+    lineHeight: 16,
+    textAlign: "center",
+  },
+  focusedAssistBusChoice: {
+    backgroundColor: colors.surfaceSecondary,
+    borderColor: colors.border,
+    borderRadius: 14,
+    borderWidth: 2,
+    gap: spacing.xs,
+    minHeight: 88,
+    padding: spacing.md,
+  },
+  focusedAssistHighContrastChoice: {
+    borderColor: "#FFFFFF",
+    borderWidth: 3,
+  },
+  focusedAssistBusChoiceService: {
+    color: colors.text,
+    fontSize: 28,
+    fontWeight: "900",
+    lineHeight: 36,
+  },
+  focusedAssistStatus: {
+    alignItems: "center",
+    borderColor: "#986B16",
+    borderRadius: 16,
+    borderWidth: 3,
+    gap: spacing.sm,
+    padding: spacing.lg,
+  },
+  focusedAssistStatusPending: {
+    backgroundColor: "#FFF1CC",
+    borderColor: "#A96C00",
+  },
+  focusedAssistStatusSuccess: {
+    backgroundColor: "#DDF6E7",
+    borderColor: "#08783F",
+  },
+  focusedAssistStatusError: {
+    backgroundColor: "#FDE3E0",
+    borderColor: "#B42318",
+  },
+  focusedAssistStatusLight: {
+    shadowColor: "#000000",
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+  },
+  focusedAssistStatusHighContrast: {
+    borderColor: "#000000",
+    borderWidth: 4,
+  },
+  focusedAssistStatusTitle: {
+    color: "#102A30",
+    fontSize: 23,
+    fontWeight: "900",
+    lineHeight: 31,
+    textAlign: "center",
+  },
+  focusedAssistStatusMessage: {
+    color: "#203438",
+    fontSize: 18,
+    fontWeight: "700",
+    lineHeight: 26,
+    textAlign: "center",
+  },
+  focusedAssistOnboardService: {
+    color: colors.text,
+    fontSize: 34,
+    fontWeight: "900",
+    lineHeight: 43,
+    textAlign: "center",
+  },
+  focusedAssistHelpLabel: {
+    alignItems: "center",
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.sm,
   },
   summaryRow: {
     backgroundColor: colors.surface,
@@ -18582,6 +24907,143 @@ const styles = StyleSheet.create({
     gap: 8,
     padding: 18,
   },
+  waitingScreen: {
+    gap: spacing.lg,
+  },
+  waitingJourneyCard: {
+    borderRadius: radius.md,
+    borderWidth: 2,
+    gap: spacing.lg,
+    padding: spacing.lg,
+  },
+  waitingServiceRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.sm,
+  },
+  waitingServiceNumber: {
+    flexShrink: 1,
+    fontSize: 30,
+    fontWeight: "900",
+    lineHeight: 37,
+  },
+  waitingArrivalText: {
+    fontSize: 17,
+    fontWeight: "700",
+    lineHeight: 24,
+    marginTop: spacing.xs,
+  },
+  waitingDetailGroup: {
+    gap: 3,
+  },
+  waitingDetailLabel: {
+    fontSize: 15,
+    fontWeight: "800",
+    lineHeight: 21,
+  },
+  waitingDetailValue: {
+    fontSize: 20,
+    fontWeight: "800",
+    lineHeight: 27,
+  },
+  waitingStopCount: {
+    fontSize: 16,
+    fontWeight: "700",
+    lineHeight: 23,
+  },
+  waitingDivider: {
+    height: 1,
+    width: "100%",
+  },
+  waitingSection: {
+    gap: spacing.md,
+  },
+  waitingSectionTitle: {
+    fontSize: 17,
+    fontWeight: "900",
+    letterSpacing: 1.1,
+    lineHeight: 23,
+    textTransform: "uppercase",
+  },
+  waitingAssistancePanel: {
+    borderRadius: radius.md,
+    borderWidth: 1,
+    overflow: "hidden",
+  },
+  waitingAssistanceRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.sm,
+    justifyContent: "space-between",
+    minHeight: 64,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  waitingAssistanceRowBorder: {
+    borderTopWidth: 1,
+  },
+  waitingAssistanceCopy: {
+    flex: 1,
+    flexBasis: 142,
+    minWidth: 0,
+  },
+  waitingAssistanceLabel: {
+    fontSize: 18,
+    fontWeight: "800",
+    lineHeight: 25,
+  },
+  waitingStatusBadge: {
+    alignItems: "center",
+    borderRadius: 999,
+    borderWidth: 2,
+    justifyContent: "center",
+    minHeight: 38,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+  },
+  waitingStatusText: {
+    fontSize: 15,
+    fontWeight: "900",
+    lineHeight: 20,
+  },
+  waitingAssistanceNote: {
+    fontSize: 15,
+    fontWeight: "700",
+    lineHeight: 21,
+  },
+  waitingInstructionList: {
+    gap: spacing.md,
+  },
+  waitingInstructionRow: {
+    alignItems: "flex-start",
+    flexDirection: "row",
+    gap: spacing.md,
+  },
+  waitingInstructionNumber: {
+    alignItems: "center",
+    borderRadius: 999,
+    borderWidth: 1,
+    height: 32,
+    justifyContent: "center",
+    width: 32,
+  },
+  waitingInstructionNumberText: {
+    fontSize: 16,
+    fontWeight: "900",
+    lineHeight: 21,
+  },
+  waitingInstructionText: {
+    flex: 1,
+    fontSize: 18,
+    fontWeight: "600",
+    lineHeight: 26,
+    paddingTop: 3,
+  },
+  waitingActions: {
+    gap: spacing.sm,
+  },
   journeyAlertPanel: {
     backgroundColor: colors.warning,
     borderColor: colors.textOnWarning,
@@ -18601,6 +25063,9 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: "800",
     lineHeight: 25,
+  },
+  boardingConfirmationGroup: {
+    gap: spacing.sm,
   },
   eventRow: {
     backgroundColor: colors.surface,
@@ -18632,6 +25097,100 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     gap: spacing.md,
     padding: spacing.lg,
+  },
+  statusConceptVisual: {
+    alignItems: "center",
+    alignSelf: "center",
+    flexDirection: "row",
+    height: 112,
+    justifyContent: "center",
+    minWidth: 150,
+    position: "relative",
+    width: 178,
+  },
+  compactStatusConceptVisual: {
+    alignSelf: "flex-start",
+    height: 72,
+    minWidth: 118,
+    width: 132,
+  },
+  locationPulseRing: {
+    borderRadius: 44,
+    borderWidth: 3,
+    height: 88,
+    position: "absolute",
+    width: 88,
+  },
+  statusGroundRow: {
+    alignItems: "center",
+    bottom: 6,
+    flexDirection: "row",
+    gap: 18,
+    position: "absolute",
+  },
+  statusBusStopSign: {
+    borderRadius: 6,
+    borderWidth: 2,
+    height: 28,
+    width: 22,
+  },
+  audioWaveGroup: {
+    flexDirection: "row",
+    gap: 5,
+    marginHorizontal: 6,
+  },
+  audioWave: {
+    borderRadius: 12,
+    borderRightWidth: 3,
+    height: 30,
+    width: 10,
+  },
+  audioWaveWide: {
+    borderRadius: 16,
+    borderRightWidth: 3,
+    height: 42,
+    width: 14,
+  },
+  journeyProgressVisual: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 7,
+  },
+  journeyProgressDot: {
+    borderRadius: 8,
+    height: 16,
+    width: 16,
+  },
+  journeyProgressDotOpen: {
+    borderRadius: 8,
+    borderWidth: 3,
+    height: 16,
+    width: 16,
+  },
+  journeyProgressLine: {
+    borderRadius: 3,
+    height: 6,
+    width: 24,
+  },
+  requestSignalDisc: {
+    alignItems: "center",
+    borderRadius: 26,
+    borderWidth: 2,
+    height: 52,
+    justifyContent: "center",
+    width: 52,
+  },
+  statusSignalMarks: {
+    gap: 6,
+    marginHorizontal: 8,
+  },
+  statusSignalMark: {
+    borderRadius: 4,
+    height: 6,
+    width: 18,
+  },
+  statusSignalMarkWide: {
+    width: 28,
   },
   errorPanel: {
     backgroundColor: "rgba(239, 133, 133, 0.16)",
@@ -18706,37 +25265,85 @@ const styles = StyleSheet.create({
     fontSize: 21,
     lineHeight: 29,
   },
+  extraLargeBody: {
+    fontSize: 24,
+    lineHeight: 33,
+  },
+  largeHeading: {
+    fontSize: 29,
+    lineHeight: 38,
+  },
+  extraLargeHeading: {
+    fontSize: 34,
+    lineHeight: 43,
+  },
+  extraLargeStopSearchInput: {
+    fontSize: 22,
+    lineHeight: 30,
+    minHeight: 60,
+  },
   attentionButtonText: {
     color: colors.text,
   },
   onboardHero: {
     backgroundColor: colors.primaryDark,
     borderRadius: 8,
-    gap: 6,
+    borderColor: colors.primary,
+    borderWidth: 2,
+    gap: 8,
     padding: 20,
+  },
+  onboardDestinationNextHero: {
+    borderColor: colors.warning,
+    borderWidth: 4,
+    padding: 18,
+  },
+  onboardDestinationReachedHero: {
+    borderColor: colors.accessible,
+    borderWidth: 4,
+    padding: 18,
+  },
+  highContrastOnboardHero: {
+    backgroundColor: "#000000",
+    borderColor: "#FFFFFF",
+    borderWidth: 4,
   },
   onboardEyebrow: {
     color: colors.highlight,
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: "900",
     textTransform: "uppercase",
   },
-  onboardBus: {
+  onboardService: {
     color: "#ffffff",
-    fontSize: 42,
+    fontSize: 28,
     fontWeight: "900",
+    lineHeight: 36,
+  },
+  onboardAlertLabel: {
+    color: colors.warning,
+    fontSize: 24,
+    fontWeight: "900",
+    lineHeight: 31,
+    marginTop: 4,
+  },
+  onboardNextStopLabel: {
+    color: colors.primarySoft,
+    fontSize: 17,
+    fontWeight: "800",
+    marginTop: 4,
   },
   onboardDestination: {
     color: "#FFFFFF",
-    fontSize: 22,
-    fontWeight: "800",
-    lineHeight: 28,
+    fontSize: 30,
+    fontWeight: "900",
+    lineHeight: 38,
   },
-  onboardArrivalText: {
+  onboardInstruction: {
     color: "#FFFFFF",
-    fontSize: 18,
+    fontSize: 19,
     fontWeight: "700",
-    lineHeight: 25,
+    lineHeight: 27,
   },
   priorityPanel: {
     backgroundColor: colors.accessible,
@@ -18745,6 +25352,56 @@ const styles = StyleSheet.create({
     borderWidth: 3,
     gap: 8,
     padding: 18,
+  },
+  alightingPriorityPanel: {
+    borderColor: colors.warning,
+    borderWidth: 4,
+  },
+  alightingCardTitle: {
+    color: colors.text,
+    fontSize: 24,
+    fontWeight: "900",
+    lineHeight: 31,
+  },
+  alightingStatusRow: {
+    alignItems: "flex-start",
+    borderColor: colors.border,
+    borderRadius: 8,
+    borderWidth: 1,
+    flexDirection: "row",
+    gap: 12,
+    minHeight: 64,
+    padding: 12,
+  },
+  alightingStatusCopy: {
+    flex: 1,
+    gap: 2,
+  },
+  alightingStatusTitle: {
+    color: colors.text,
+    fontSize: 18,
+    fontWeight: "900",
+    lineHeight: 25,
+  },
+  alightingStatusDetail: {
+    color: colors.body,
+    fontSize: 17,
+    fontWeight: "700",
+    lineHeight: 24,
+  },
+  assistanceRequestedStatus: {
+    gap: 6,
+    paddingVertical: 4,
+  },
+  alightingSafetyInstruction: {
+    color: colors.text,
+    fontSize: 19,
+    fontWeight: "900",
+    lineHeight: 27,
+  },
+  onboardMoreOptions: {
+    gap: 8,
+    marginTop: 2,
   },
   onboardMapPanel: {
     backgroundColor: colors.surface,
@@ -18760,6 +25417,13 @@ const styles = StyleSheet.create({
   },
   onboardMapControls: {
     gap: 8,
+  },
+  onboardProviderMap: {
+    borderRadius: 8,
+    height: 320,
+    minHeight: 260,
+    overflow: "hidden",
+    width: "100%",
   },
   onboardCompassControl: {
     alignItems: "center",
@@ -18782,6 +25446,49 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     gap: 8,
     padding: 10,
+  },
+  activeJourneyOptions: {
+    backgroundColor: colors.lightSurface,
+    borderColor: colors.border,
+    borderRadius: 8,
+    borderWidth: 2,
+    gap: 8,
+    padding: 12,
+  },
+  activeJourneyOptionsTitle: {
+    color: colors.text,
+    fontSize: 20,
+    fontWeight: "900",
+    lineHeight: 27,
+  },
+  journeyEndDivider: {
+    backgroundColor: colors.border,
+    height: 1,
+    marginVertical: 4,
+    width: "100%",
+  },
+  journeyEndBackdrop: {
+    alignItems: "center",
+    backgroundColor: "rgba(0, 0, 0, 0.72)",
+    flex: 1,
+    justifyContent: "center",
+    padding: 20,
+  },
+  journeyEndDialog: {
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderRadius: 10,
+    borderWidth: 2,
+    gap: 12,
+    maxWidth: 440,
+    padding: 20,
+    width: "100%",
+  },
+  journeyEndTitle: {
+    color: colors.text,
+    fontSize: 26,
+    fontWeight: "900",
+    lineHeight: 34,
   },
   returnJourneyBanner: {
     alignItems: "center",
@@ -18957,6 +25664,9 @@ const lightStyles = StyleSheet.create({
     backgroundColor: lightTheme.surface,
     borderColor: lightTheme.border,
   },
+  journeyIntroPanel: {
+    backgroundColor: "#DDF4EC",
+  },
   componentIconBadge: {
     backgroundColor: lightTheme.surfaceSecondary,
     borderColor: lightTheme.primary,
@@ -19060,7 +25770,7 @@ const lightStyles = StyleSheet.create({
     backgroundColor: lightTheme.surface,
     borderColor: lightTheme.border,
   },
-  homeDiscoveryStatus: {
+  journeyDiscoveryStatus: {
     backgroundColor: lightTheme.surfaceSecondary,
     borderColor: lightTheme.border,
   },
@@ -19116,6 +25826,16 @@ const lightStyles = StyleSheet.create({
     backgroundColor: lightTheme.surface,
     borderColor: lightTheme.primary,
   },
+  selectedStopMetadata: {
+    color: lightTheme.textSecondary,
+  },
+  selectedStopServicePill: {
+    backgroundColor: lightTheme.surface,
+    borderColor: lightTheme.primary,
+  },
+  selectedStopServicePillText: {
+    color: lightTheme.primary,
+  },
   directionsSummary: {
     backgroundColor: lightTheme.surfaceSecondary,
     borderColor: lightTheme.location,
@@ -19124,64 +25844,17 @@ const lightStyles = StyleSheet.create({
     backgroundColor: "#FFFFFF",
     borderColor: lightTheme.location,
   },
-  mapStopMarker: {
-    backgroundColor: "transparent",
-    borderColor: "transparent",
-  },
-  selectedMapStopMarker: {
-    backgroundColor: "rgba(11, 102, 112, 0.16)",
-    borderColor: lightTheme.primary,
-  },
   nearestBusStopGlyphBody: {
     borderColor: lightTheme.location,
-  },
-  nearestBusStopGlyphWindow: {
-    backgroundColor: lightTheme.location,
-  },
-  nearestBusStopGlyphWheel: {
-    backgroundColor: lightTheme.location,
   },
   nearestBusStopGlyphPointer: {
     borderTopColor: lightTheme.location,
   },
-  mapStopMarkerText: {
-    color: lightTheme.primary,
-  },
-  selectedMapStopMarkerText: {
-    color: lightTheme.textOnPrimary,
-  },
   selectedBusStopGlyphBody: {
     borderColor: lightTheme.textOnPrimary,
   },
-  selectedBusStopGlyphWindow: {
-    backgroundColor: lightTheme.textOnPrimary,
-  },
-  selectedBusStopGlyphWheel: {
-    backgroundColor: lightTheme.textOnPrimary,
-  },
   selectedBusStopGlyphPointer: {
     borderTopColor: lightTheme.textOnPrimary,
-  },
-  selectedStopRoute: {
-    backgroundColor: lightTheme.warning,
-  },
-  routeArrow: {
-    backgroundColor: lightTheme.primary,
-    borderColor: lightTheme.textOnPrimary,
-  },
-  serviceBusMarker: {
-    backgroundColor: lightTheme.primary,
-    borderColor: lightTheme.textOnPrimary,
-  },
-  headingCone: {
-    borderBottomColor: lightTheme.location,
-  },
-  landmarkMarker: {
-    backgroundColor: lightTheme.surface,
-    borderColor: lightTheme.border,
-  },
-  destinationLandmarkMarker: {
-    borderColor: lightTheme.destination,
   },
   landmarkText: {
     color: lightTheme.textSecondary,
@@ -19194,26 +25867,6 @@ const lightStyles = StyleSheet.create({
   },
   mapScaleLine: {
     backgroundColor: lightTheme.textSecondary,
-  },
-  nearestStopLabel: {
-    backgroundColor: lightTheme.surface,
-    borderColor: lightTheme.location,
-    color: lightTheme.textOnLocation,
-  },
-  stopClusterMarker: {
-    backgroundColor: lightTheme.primary,
-    borderColor: lightTheme.textOnPrimary,
-  },
-  stopClusterCount: {
-    color: lightTheme.textOnPrimary,
-  },
-  stopClusterLabel: {
-    color: lightTheme.textSecondary,
-  },
-  mapStopMarkerLabel: {
-    backgroundColor: lightTheme.surface,
-    borderColor: lightTheme.primary,
-    color: lightTheme.text,
   },
   primaryButton: {
     backgroundColor: lightTheme.primary,
@@ -19228,6 +25881,12 @@ const lightStyles = StyleSheet.create({
   },
   secondaryButtonText: {
     color: lightTheme.primary,
+  },
+  tertiaryButton: {
+    backgroundColor: "transparent",
+  },
+  tertiaryButtonText: {
+    color: lightTheme.primaryStrong,
   },
   tabBar: {
     backgroundColor: lightTheme.surface,

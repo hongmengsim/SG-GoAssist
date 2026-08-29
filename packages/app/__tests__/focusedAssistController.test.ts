@@ -251,6 +251,36 @@ describe("Focused Assist context", () => {
     expect(context.state).toBe("ACKNOWLEDGED");
     expect(context.state).not.toBe("RAMP_READY");
   });
+
+  it("keeps a confirmed request authoritative when live updates disconnect", () => {
+    const bus: BusAtStop = {
+      id: "BUS-151",
+      serviceNo: "151",
+      vehicleId: "BUS-151",
+      wheelchairAccessible: true,
+      confidence: "HIGH",
+      source: "DEMO",
+      activeJourneyMatch: false,
+    };
+    const context = deriveFocusedAssistContext(
+      contextInput({
+        arrivals: [service151Arrival],
+        request: {
+          requestId: "REQ-151",
+          status: AssistanceRequestStatus.ACKNOWLEDGED,
+          assistanceType: "WHEELCHAIR_RAMP",
+          submitting: false,
+          bus,
+          stop,
+          error:
+            "Live request updates are unavailable. Your request may still be active.",
+        },
+      }),
+      new DemoBusPresenceProvider(),
+    );
+
+    expect(context.state).toBe("ACKNOWLEDGED");
+  });
 });
 
 describe("Focused Assist semantic controller", () => {

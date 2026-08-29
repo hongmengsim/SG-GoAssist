@@ -150,14 +150,8 @@ export interface AccessibilityPreferences {
   themeMode: "light" | "dark";
 }
 
-export interface AppAccessibilityPreferences {
-  screenReaderOptimised: boolean;
-  hapticAlerts: boolean;
-  largeText: boolean;
-  highContrast: boolean;
-  repeatAudio: boolean;
-  themeMode: "light" | "dark";
-}
+/** @deprecated Use AccessibilityPreferences. */
+export type AppAccessibilityPreferences = AccessibilityPreferences;
 
 export interface PassengerProfile {
   profileId: string;
@@ -167,8 +161,10 @@ export interface PassengerProfile {
   verificationMethod?: VerificationMethod;
   verifiedCredentialLast4?: string;
   verifiedAt?: string;
-  assistanceDefaults: AccessibilityRequirements;
-  appPreferences: AppAccessibilityPreferences;
+  accessibilityPreferences: AccessibilityPreferences;
+  /** Legacy fields are read only while migrating older saved profiles. */
+  assistanceDefaults?: AccessibilityRequirements;
+  appPreferences?: Partial<AccessibilityPreferences>;
   createdAt: string;
   updatedAt: string;
 }

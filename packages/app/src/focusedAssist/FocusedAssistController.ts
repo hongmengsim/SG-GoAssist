@@ -153,11 +153,7 @@ export function deriveFocusedAssistContext(
   const requestState = stateForRequest(input.request.status);
   if (input.request.submitting || requestState) {
     return {
-      state: input.request.error
-        ? "ERROR"
-        : input.request.submitting
-          ? "REQUESTING"
-          : requestState!,
+      state: input.request.submitting ? "REQUESTING" : requestState!,
       stop: input.request.stop ?? stopResolution.stop,
       buses,
       selectedBus,
