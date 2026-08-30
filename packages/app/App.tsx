@@ -49,6 +49,7 @@ import {
   Clock,
   Compass,
   DoorOpen,
+  Eye,
   Footprints,
   List,
   LocateFixed,
@@ -63,6 +64,7 @@ import {
   Settings,
   SlidersHorizontal,
   Sun as SunGlyph,
+  Type,
   Undo2,
   User,
   Volume2,
@@ -208,10 +210,17 @@ type AppTab = "JOURNEY" | "ASSISTANCE" | "PROFILE";
 type JourneyCompletionKind = "ENDED_EARLY" | "FINISHED";
 type AccessibilityPreferenceSection =
   "MOBILITY" | "VISION" | "HEARING" | "JOURNEY_SUPPORT" | "INTERACTION";
-const AccessibilityRuntimeContext = createContext({
+type AccessibilityRuntimeValue = {
+  largerControls: boolean;
+  reducedMotion: boolean;
+  textSize: AccessibilityTextSize;
+  preserveViewport: (getAnchor: () => View | null, update: () => void) => void;
+};
+const AccessibilityRuntimeContext = createContext<AccessibilityRuntimeValue>({
   largerControls: false,
   reducedMotion: false,
-  textSize: "STANDARD" as AccessibilityTextSize,
+  textSize: "STANDARD",
+  preserveViewport: (_getAnchor, update) => update(),
 });
 export type JourneyNextAction = {
   step: number;
@@ -642,8 +651,8 @@ const spacing = {
   xxl: 32,
 };
 const radius = {
-  sm: 6,
-  md: 8,
+  sm: 10,
+  md: 16,
   pill: 999,
 };
 const borders = {
@@ -816,6 +825,20 @@ const nativeGoogleMapsConfigured =
 const liveStatusErrorMessage =
   "We are having trouble updating live bus status. Your request is still saved.";
 const focusedAssistLocationTimeoutMs = 8000;
+const deviceLocationTimeoutMs = 8000;
+const recentDeviceLocationMaxAgeMs = 30_000;
+const lastKnownDeviceLocationMaxAgeMs = 5 * 60_000;
+const lastKnownDeviceLocationAccuracyMeters = 1_000;
+
+type DeviceLocationResult = {
+  timestamp: number;
+  coords: {
+    latitude: number;
+    longitude: number;
+    accuracyMeters?: number;
+    headingDegrees?: number;
+  };
+};
 
 function settleWithin<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -834,6 +857,79 @@ function settleWithin<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
       },
     );
   });
+}
+
+function deviceLocationResult(
+  position: Pick<Location.LocationObject, "coords" | "timestamp">,
+): DeviceLocationResult {
+  const { latitude, longitude } = position.coords;
+  if (
+    !Number.isFinite(latitude) ||
+    !Number.isFinite(longitude) ||
+    latitude < -90 ||
+    latitude > 90 ||
+    longitude < -180 ||
+    longitude > 180
+  ) {
+    throw new Error("The device returned invalid location coordinates.");
+  }
+
+  return {
+    timestamp: Number.isFinite(position.timestamp)
+      ? position.timestamp
+      : Date.now(),
+    coords: {
+      latitude,
+      longitude,
+      accuracyMeters: position.coords.accuracy ?? undefined,
+      headingDegrees:
+        position.coords.heading !== null && position.coords.heading >= 0
+          ? position.coords.heading
+          : undefined,
+    },
+  };
+}
+
+async function getReliableDeviceLocation(
+  recentLocation: DeviceLocationResult | null,
+): Promise<DeviceLocationResult> {
+  const now = Date.now();
+  if (
+    recentLocation &&
+    now - recentLocation.timestamp < recentDeviceLocationMaxAgeMs
+  ) {
+    return recentLocation;
+  }
+
+  const lastKnownLocationPromise =
+    typeof Location.getLastKnownPositionAsync === "function"
+      ? Location.getLastKnownPositionAsync({
+          maxAge: lastKnownDeviceLocationMaxAgeMs,
+          requiredAccuracy: lastKnownDeviceLocationAccuracyMeters,
+        }).catch(() => null)
+      : Promise.resolve(null);
+
+  try {
+    const freshPosition = await settleWithin(
+      Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced,
+      }),
+      deviceLocationTimeoutMs,
+    );
+    return deviceLocationResult(freshPosition);
+  } catch (freshLocationError) {
+    const lastKnownPosition = await lastKnownLocationPromise;
+    if (lastKnownPosition) {
+      return deviceLocationResult(lastKnownPosition);
+    }
+    if (
+      recentLocation &&
+      now - recentLocation.timestamp < lastKnownDeviceLocationMaxAgeMs
+    ) {
+      return recentLocation;
+    }
+    throw freshLocationError;
+  }
 }
 
 function logMapConfiguration(stage: string) {
@@ -1034,9 +1130,9 @@ const colors = {
 };
 
 const lightTheme = {
-  background: "#F7FAFA",
+  background: "#F3F8F8",
   surface: "#FFFFFF",
-  surfaceSecondary: "#E5ECEE",
+  surfaceSecondary: "#EAF2F3",
   text: "#203438",
   textSecondary: "#52676C",
   primary: "#0B6670",
@@ -1054,16 +1150,16 @@ const lightTheme = {
   textOnDestination: "#FFFFFF",
   danger: "#B83F3F",
   textOnDanger: "#FFFFFF",
-  border: "#A9BABE",
+  border: "#B7C9CC",
 };
 
 const visualThemes = {
   light: {
     colors: {
-      backgroundPrimary: "#F7FAFA",
-      backgroundSecondary: "#EEF6F7",
+      backgroundPrimary: "#F3F8F8",
+      backgroundSecondary: "#EAF4F4",
       surfacePrimary: "#FFFFFF",
-      surfaceRaised: "#F2F7F8",
+      surfaceRaised: "#F6FAFA",
       textPrimary: "#203438",
       textSecondary: "#52676C",
       textMuted: "#60767B",
@@ -1078,11 +1174,11 @@ const visualThemes = {
       borderStrong: "#486269",
       actionPrimary: "#0B6670",
       actionPrimaryText: "#FFFFFF",
-      actionSecondary: "#E5ECEE",
+      actionSecondary: "#EAF2F3",
       surfaceInteractive: "#FFFFFF",
       surfaceSelected: "#0B6670",
       textOnSelected: "#FFFFFF",
-      borderInteractive: "#7FA1A8",
+      borderInteractive: "#86A7AD",
       borderSelected: "#0B6670",
       profileBadgeSurface: "#F2F8F9",
       profileBadgeBorder: "#0B6670",
@@ -1549,6 +1645,18 @@ export function shouldStackAccessibilityChoices({
   );
 }
 
+export function shouldStackPreferenceSummary({
+  width,
+  textSize,
+}: {
+  width: number;
+  textSize: AccessibilityTextSize;
+}) {
+  const minimumInlineWidth =
+    textSize === "EXTRA_LARGE" ? 880 : textSize === "LARGE" ? 760 : 600;
+  return width < minimumInlineWidth;
+}
+
 export function deriveJourneyNextAction({
   journeyPhase,
   selectedStopName,
@@ -1691,6 +1799,10 @@ function createPlatformHapticAdapter() {
 
 function SgGoAssistApp() {
   const { fontScale, height, width } = useWindowDimensions();
+  const preserveViewport = useCallback(
+    (_getAnchor: () => View | null, update: () => void) => update(),
+    [],
+  );
   const isCompactWidth = width < 380;
   const [screen, setScreen] = useState<Screen>("JOURNEY_IDLE");
   const [profiles, setProfiles] = useState<PassengerProfile[]>(demoProfiles);
@@ -1698,6 +1810,8 @@ function SgGoAssistApp() {
     null,
   );
   const [isEditingProfileNeeds, setIsEditingProfileNeeds] = useState(false);
+  const [profileDraftPreferences, setProfileDraftPreferences] =
+    useState<AccessibilityPreferences | null>(null);
   const [profilePreferenceSection, setProfilePreferenceSection] =
     useState<AccessibilityPreferenceSection | null>(null);
   const [authName, setAuthName] = useState("");
@@ -1740,6 +1854,15 @@ function SgGoAssistApp() {
   const activeJourneyHydratedRef = useRef(false);
   const latestPreferencesRef = useRef(appPreferences);
   latestPreferencesRef.current = appPreferences;
+  const editorPreferences = profileDraftPreferences ?? appPreferences;
+  const setEditorPreferences = useCallback<
+    React.Dispatch<React.SetStateAction<AccessibilityPreferences>>
+  >((update) => {
+    setProfileDraftPreferences((current) => {
+      const base = current ?? latestPreferencesRef.current;
+      return typeof update === "function" ? update(base) : update;
+    });
+  }, []);
   const largeText = isLargeText(appPreferences);
   const extraLargeText = appPreferences.textSize === "EXTRA_LARGE";
   const shouldStackJourneyIntro = shouldStackJourneyEntry({
@@ -2331,9 +2454,9 @@ function SgGoAssistApp() {
   const hasUnsavedProfileNeeds = useMemo(
     () =>
       activeProfile
-        ? profilePreferencesChanged(activeProfile, appPreferences)
+        ? profilePreferencesChanged(activeProfile, editorPreferences)
         : false,
-    [activeProfile, appPreferences],
+    [activeProfile, editorPreferences],
   );
   const currentRouteStop = routeStops[currentStopIndex] ?? null;
   const nextRouteStop = routeStops[currentStopIndex + 1] ?? null;
@@ -4795,6 +4918,7 @@ function SgGoAssistApp() {
       accessibilityRequirementsFromPreferences(profilePreferences);
     setActiveProfile(profile);
     setIsEditingProfileNeeds(false);
+    setProfileDraftPreferences(null);
     setProfilePreferenceSection(null);
     if (!selectedBus || requestStatus) {
       setJourneyRequirements(profileRequirements);
@@ -4810,10 +4934,11 @@ function SgGoAssistApp() {
     if (!activeProfile || !hasUnsavedProfileNeeds) {
       return;
     }
+    const preferencesToSave = profileDraftPreferences ?? appPreferences;
 
     const updatedProfile: PassengerProfile = {
       ...activeProfile,
-      accessibilityPreferences: appPreferences,
+      accessibilityPreferences: preferencesToSave,
       assistanceDefaults: undefined,
       appPreferences: undefined,
       updatedAt: new Date().toISOString(),
@@ -4827,8 +4952,10 @@ function SgGoAssistApp() {
           : profile,
       ),
     );
+    setAppPreferences(preferencesToSave);
+    setProfileDraftPreferences(null);
     setVisualAlert("Preferences saved");
-    if (appPreferences.vibrationAlerts !== "OFF") {
+    if (preferencesToSave.vibrationAlerts !== "OFF") {
       void Haptics.notificationAsync(
         Haptics.NotificationFeedbackType.Success,
       ).catch(() => undefined);
@@ -4844,6 +4971,7 @@ function SgGoAssistApp() {
     }
 
     setAppPreferences(accessibilityPreferencesForProfile(activeProfile));
+    setProfileDraftPreferences(null);
     setIsEditingProfileNeeds(false);
     setProfilePreferenceSection(null);
   }
@@ -4871,6 +4999,7 @@ function SgGoAssistApp() {
   function signOut() {
     setActiveProfile(null);
     setIsEditingProfileNeeds(false);
+    setProfileDraftPreferences(null);
     setProfilePreferenceSection(null);
     setJourneyRequirements(defaultRequirements);
     setAppPreferences(defaultAppPreferences);
@@ -5234,7 +5363,10 @@ function SgGoAssistApp() {
             ? "idle"
             : current.nearbyStopsStatus,
       }));
-      const permission = await Location.requestForegroundPermissionsAsync();
+      const permission = await settleWithin(
+        Location.requestForegroundPermissionsAsync(),
+        deviceLocationTimeoutMs,
+      );
       if (locationLookupRequestId !== locationLookupRequestRef.current) {
         return;
       }
@@ -5248,39 +5380,42 @@ function SgGoAssistApp() {
         return;
       }
 
-      const position = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.Balanced,
-      }).then((freshPosition) => {
-        if (locationLookupRequestId !== locationLookupRequestRef.current) {
-          return null;
-        }
-        const coords = {
-          latitude: freshPosition.coords.latitude,
-          longitude: freshPosition.coords.longitude,
-          accuracyMeters: freshPosition.coords.accuracy ?? undefined,
-          headingDegrees:
-            freshPosition.coords.heading !== null &&
-            freshPosition.coords.heading >= 0
-              ? freshPosition.coords.heading
-              : undefined,
-        };
-        const cachedPosition = { timestamp: Date.now(), coords };
-        lastLocationResultRef.current = cachedPosition;
-        setTransportDiscovery((current) => ({
-          ...current,
-          location: locationStateForCoords(coords),
-          locationPermission: "granted",
-          locationRequested: true,
-          lastSuccessfulLocation: coords,
-        }));
-        return cachedPosition;
-      });
-      if (
-        !position ||
-        locationLookupRequestId !== locationLookupRequestRef.current
-      ) {
+      const position = await getReliableDeviceLocation(
+        lastLocationResultRef.current,
+      );
+      if (locationLookupRequestId !== locationLookupRequestRef.current) {
         return;
       }
+      lastLocationResultRef.current = position;
+      setTransportDiscovery((current) => ({
+        ...current,
+        location: locationStateForCoords(position.coords),
+        locationPermission: "granted",
+        locationRequested: true,
+        lastSuccessfulLocation: position.coords,
+      }));
+      const focusZoom = 15;
+      runCameraCommand(
+        "initialLocation",
+        "USER_LOCATION",
+        (current) => ({
+          ...current,
+          center: cameraCenterForUserLocation(
+            position.coords,
+            focusZoom,
+            mapCameraGeometryRef.current,
+          ),
+          zoom: focusZoom,
+          bearing: 0,
+          pitch: 0,
+        }),
+        "FOLLOW_USER",
+      );
+      initialCameraAppliedRef.current = true;
+      setFollowState("FOLLOW_USER");
+      setLocationPulseKey((current) => current + 1);
+      setMapViewMode("MAP");
+      setScreen("STOP");
       let result: NearbyBusStopsResponse | null = null;
       try {
         result = await loadNearbyStopsFor(position.coords, {
@@ -5288,8 +5423,7 @@ function SgGoAssistApp() {
           announce: true,
           originLabel: "Nearby bus stops",
           viewportSource: "USER_LOCATION",
-          updateCamera:
-            !initialCameraAppliedRef.current || mapCameraMode === "FOLLOW_USER",
+          updateCamera: false,
         });
       } catch (apiError) {
         if (
@@ -5320,6 +5454,7 @@ function SgGoAssistApp() {
       if (!result) {
         return;
       }
+      setFollowState("FOLLOW_USER");
     } catch (apiError) {
       if (apiError instanceof DOMException && apiError.name === "AbortError") {
         return;
@@ -6160,7 +6295,10 @@ function SgGoAssistApp() {
       locationRequested: true,
     }));
     try {
-      const permission = await Location.requestForegroundPermissionsAsync();
+      const permission = await settleWithin(
+        Location.requestForegroundPermissionsAsync(),
+        deviceLocationTimeoutMs,
+      );
       if (permission.status !== "granted") {
         setTransportDiscovery((current) => ({
           ...current,
@@ -6172,27 +6310,10 @@ function SgGoAssistApp() {
         return;
       }
 
-      const recentLocation = lastLocationResultRef.current;
-      const position =
-        recentLocation && Date.now() - recentLocation.timestamp < 30_000
-          ? recentLocation
-          : await Location.getCurrentPositionAsync({
-              accuracy: Location.Accuracy.Balanced,
-            }).then((freshPosition) => {
-              const coords = {
-                latitude: freshPosition.coords.latitude,
-                longitude: freshPosition.coords.longitude,
-                accuracyMeters: freshPosition.coords.accuracy ?? undefined,
-                headingDegrees:
-                  freshPosition.coords.heading !== null &&
-                  freshPosition.coords.heading >= 0
-                    ? freshPosition.coords.heading
-                    : undefined,
-              };
-              const cachedPosition = { timestamp: Date.now(), coords };
-              lastLocationResultRef.current = cachedPosition;
-              return cachedPosition;
-            });
+      const position = await getReliableDeviceLocation(
+        lastLocationResultRef.current,
+      );
+      lastLocationResultRef.current = position;
 
       if (cameraIntentId !== cameraIntentIdRef.current) {
         setTransportDiscovery((current) => ({
@@ -6850,6 +6971,7 @@ function SgGoAssistApp() {
         largerControls: appPreferences.largerControls,
         reducedMotion,
         textSize: appPreferences.textSize,
+        preserveViewport,
       }}
     >
       <SafeAreaView
@@ -6917,6 +7039,9 @@ function SgGoAssistApp() {
               onEdit={() => {
                 setScreen("PROFILE");
                 setProfilePreferenceSection(null);
+                setProfileDraftPreferences(
+                  activeProfile ? { ...appPreferences } : null,
+                );
                 setIsEditingProfileNeeds(Boolean(activeProfile));
               }}
             />
@@ -6932,12 +7057,15 @@ function SgGoAssistApp() {
                 lightMode={lightMode}
                 largeText={largeText}
                 compactLayout={isCompactWidth}
-                onSelectMode={(themeMode) =>
+                onSelectMode={(themeMode) => {
                   setAppPreferences((current) => ({
                     ...current,
                     themeMode,
-                  }))
-                }
+                  }));
+                  setProfileDraftPreferences((current) =>
+                    current ? { ...current, themeMode } : current,
+                  );
+                }}
               />
               <Text style={themedBodyStyle()}>
                 Save your assistance needs for easier, safer and more
@@ -7033,12 +7161,15 @@ function SgGoAssistApp() {
                 lightMode={lightMode}
                 largeText={largeText}
                 compactLayout={isCompactWidth}
-                onSelectMode={(themeMode) =>
+                onSelectMode={(themeMode) => {
                   setAppPreferences((current) => ({
                     ...current,
                     themeMode,
-                  }))
-                }
+                  }));
+                  setProfileDraftPreferences((current) =>
+                    current ? { ...current, themeMode } : current,
+                  );
+                }}
               />
               {!isEditingProfileNeeds &&
                 activeProfile.verificationStatus !== "VERIFIED" && (
@@ -7147,6 +7278,7 @@ function SgGoAssistApp() {
                     icon={Settings}
                     onPress={() => {
                       setProfilePreferenceSection(null);
+                      setProfileDraftPreferences({ ...appPreferences });
                       setIsEditingProfileNeeds(true);
                     }}
                     lightMode={lightMode}
@@ -7156,41 +7288,28 @@ function SgGoAssistApp() {
               )}
               {isEditingProfileNeeds && (
                 <>
-                  {profilePreferenceSection ? (
-                    <>
-                      <SecondaryButton
-                        label="Back to accessibility"
-                        icon={ArrowLeft}
-                        onPress={() => setProfilePreferenceSection(null)}
-                        lightMode={lightMode}
-                        highContrast={appPreferences.highContrast}
-                      />
-                      <AccessibilityCategorySettings
-                        section={profilePreferenceSection}
-                        preferences={appPreferences}
-                        hapticsSupported={hapticsSupported}
-                        setPreferences={setAppPreferences}
-                      />
-                    </>
-                  ) : (
-                    <>
-                      <Text style={themedHeadingStyle()}>Accessibility</Text>
-                      <Text style={themedBodyStyle()}>
-                        Choose capabilities that help you travel. Every setting
-                        remains individually editable, and no request is sent
-                        until you start a journey.
-                      </Text>
-                      <AccessibilityPreferencesOverview
-                        preferences={appPreferences}
-                        onApplyPreset={(preset) =>
-                          setAppPreferences((current) =>
-                            applyAccessibilityPreset(current, preset),
-                          )
-                        }
-                        onOpenSection={setProfilePreferenceSection}
-                      />
-                    </>
-                  )}
+                  <Text style={themedHeadingStyle()}>Accessibility</Text>
+                  <Text style={themedBodyStyle()}>
+                    Choose what helps you travel. Nothing is requested until
+                    you start a journey.
+                  </Text>
+                  <AccessibilityPreferencesOverview
+                    preferences={editorPreferences}
+                    layoutPreferences={appPreferences}
+                    hapticsSupported={hapticsSupported}
+                    expandedSection={profilePreferenceSection}
+                    setPreferences={setEditorPreferences}
+                    onApplyPreset={(preset) =>
+                      setEditorPreferences((current) =>
+                        applyAccessibilityPreset(current, preset),
+                      )
+                    }
+                    onToggleSection={(section) =>
+                      setProfilePreferenceSection((current) =>
+                        current === section ? null : section,
+                      )
+                    }
+                  />
                   <Text style={themedHeadingStyle()}>Preferences</Text>
                   <Text style={themedBodyStyle()}>
                     Save these accessibility, display and guidance choices to
@@ -7202,12 +7321,14 @@ function SgGoAssistApp() {
                     onPress={saveActiveProfile}
                     disabled={!hasUnsavedProfileNeeds}
                     lightMode={lightMode}
-                    highContrast={appPreferences.highContrast}
+                    highContrast={editorPreferences.highContrast}
+                    largerControls={editorPreferences.largerControls}
                   />
                   <SecondaryButton
                     label="Cancel editing"
                     lightMode={lightMode}
-                    highContrast={appPreferences.highContrast}
+                    highContrast={editorPreferences.highContrast}
+                    largerControls={editorPreferences.largerControls}
                     onPress={cancelProfileNeedsEditing}
                   />
                 </>
@@ -9137,7 +9258,9 @@ function LocationLoadingPanel({
 }) {
   const theme = resolveVisualTheme(lightMode, highContrast);
   const panelSurface =
-    lightMode && !highContrast ? "#DDF4EC" : theme.colors.backgroundSecondary;
+    lightMode && !highContrast
+      ? theme.colors.surfaceRaised
+      : theme.colors.backgroundSecondary;
 
   return (
     <View
@@ -9146,8 +9269,10 @@ function LocationLoadingPanel({
         styles.journeyLocationLoadingPanel,
         {
           backgroundColor: panelSurface,
-          borderColor: highContrast ? theme.colors.borderStrong : "transparent",
-          borderWidth: highContrast ? 2 : 0,
+          borderColor: highContrast
+            ? theme.colors.borderStrong
+            : theme.colors.borderDefault,
+          borderWidth: highContrast ? 2 : 1,
         },
       ]}
     >
@@ -9159,11 +9284,9 @@ function LocationLoadingPanel({
         accessibilityState={{ busy: true }}
         accessibilityLiveRegion="polite"
       >
-        <FeatureIllustration
-          source={illustrations.locationLoading}
-          size="large"
-          testID="location-loading-artwork"
-          decorative
+        <LocationSearchVisual
+          lightMode={lightMode}
+          highContrast={highContrast}
         />
         <Text
           style={[
@@ -9182,21 +9305,30 @@ function LocationLoadingPanel({
           This should only take a moment.
         </Text>
         <View
-          style={styles.locationLoadingDots}
+          style={styles.locationLoadingProgress}
           accessibilityElementsHidden
           importantForAccessibility="no"
         >
           {[0, 1, 2].map((dot) => (
-            <View
-              key={dot}
-              style={[
-                styles.locationLoadingDot,
-                {
-                  backgroundColor: theme.colors.statusInformation,
-                  opacity: 1 - dot * 0.24,
-                },
-              ]}
-            />
+            <React.Fragment key={dot}>
+              {dot > 0 ? (
+                <View
+                  style={[
+                    styles.locationLoadingProgressLine,
+                    { backgroundColor: theme.colors.borderDefault },
+                  ]}
+                />
+              ) : null}
+              <View
+                style={[
+                  styles.locationLoadingProgressDot,
+                  {
+                    backgroundColor: theme.colors.statusInformation,
+                    opacity: 1 - dot * 0.22,
+                  },
+                ]}
+              />
+            </React.Fragment>
           ))}
         </View>
       </View>
@@ -9217,6 +9349,107 @@ function LocationLoadingPanel({
           />
         </View>
       ) : null}
+    </View>
+  );
+}
+
+function LocationSearchVisual({
+  lightMode,
+  highContrast,
+}: {
+  lightMode: boolean;
+  highContrast: boolean;
+}) {
+  const theme = resolveVisualTheme(lightMode, highContrast);
+  const pulseStyle = usePulseAnimation();
+  return (
+    <View
+      testID="location-loading-artwork"
+      style={[
+        styles.locationSearchVisual,
+        {
+          backgroundColor: theme.colors.surfacePrimary,
+          borderColor: theme.colors.borderDefault,
+        },
+      ]}
+      accessibilityElementsHidden
+      importantForAccessibility="no"
+    >
+      <View
+        style={[
+          styles.locationSearchGridHorizontal,
+          { backgroundColor: theme.colors.borderDefault },
+        ]}
+      />
+      <View
+        style={[
+          styles.locationSearchGridVertical,
+          { backgroundColor: theme.colors.borderDefault },
+        ]}
+      />
+      <Animated.View
+        style={[
+          styles.locationSearchOuterRing,
+          { borderColor: theme.colors.statusInformation },
+          pulseStyle,
+        ]}
+      />
+      <View
+        style={[
+          styles.locationSearchInnerRing,
+          { borderColor: theme.colors.borderInteractive },
+        ]}
+      />
+      <View
+        style={[
+          styles.locationSearchPinBadge,
+          {
+            backgroundColor: theme.colors.actionPrimary,
+            borderColor: theme.colors.surfacePrimary,
+          },
+        ]}
+      >
+        <MapPin
+          size={30}
+          color={theme.colors.actionPrimaryText}
+          strokeWidth={2.8}
+        />
+      </View>
+      <View
+        style={[
+          styles.locationSearchBusBadge,
+          {
+            backgroundColor: theme.colors.surfacePrimary,
+            borderColor: theme.colors.borderStrong,
+          },
+        ]}
+      >
+        <BusFront
+          size={25}
+          color={theme.colors.iconPrimary}
+          strokeWidth={2.8}
+        />
+      </View>
+      <View
+        style={[
+          styles.locationSearchWaypoint,
+          styles.locationSearchWaypointTop,
+          {
+            backgroundColor: theme.colors.surfacePrimary,
+            borderColor: theme.colors.statusInformation,
+          },
+        ]}
+      />
+      <View
+        style={[
+          styles.locationSearchWaypoint,
+          styles.locationSearchWaypointBottom,
+          {
+            backgroundColor: theme.colors.statusInformation,
+            borderColor: theme.colors.surfacePrimary,
+          },
+        ]}
+      />
     </View>
   );
 }
@@ -9302,6 +9535,8 @@ function JourneyFindBusIllustration() {
       testID="journey-hero-artwork"
       source={illustrations.homeFindBus}
       size="hero"
+      style={styles.journeyFindBusArtworkFrame}
+      imageStyle={styles.journeyFindBusArtworkImage}
       decorative
     />
   );
@@ -9593,6 +9828,7 @@ function FocusedAssistScreen({
 }) {
   const largeText = isLargeText(appPreferences);
   const extraLargeText = appPreferences.textSize === "EXTRA_LARGE";
+  const theme = resolveVisualTheme(lightMode, highContrast);
   const bodyStyle = [
     styles.bodyText,
     largeText && styles.largeBody,
@@ -9615,6 +9851,14 @@ function FocusedAssistScreen({
     highContrast && !lightMode && styles.highContrastControl,
     highContrast && lightMode && lightStyles.highContrastControl,
   ];
+  const eyebrowStyle = [
+    styles.focusedAssistEyebrow,
+    { color: theme.colors.statusInformation },
+  ];
+  const servicePrefixStyle = [
+    styles.focusedAssistServicePrefix,
+    { color: theme.colors.textSecondary },
+  ];
   const requestActive =
     context.request.status === AssistanceRequestStatus.SENDING ||
     context.request.status === AssistanceRequestStatus.ACKNOWLEDGED;
@@ -9626,7 +9870,10 @@ function FocusedAssistScreen({
         accessible
         accessibilityLabel="Finding your bus stop. Checking nearby stops and buses."
       >
-        <ActivityIndicator size="large" color="#0B6670" />
+        <ActivityIndicator
+          size="large"
+          color={theme.colors.statusInformation}
+        />
         <Text style={headingStyle}>Finding your bus stop...</Text>
         <Text style={bodyStyle}>Checking nearby stops and buses.</Text>
       </View>
@@ -9637,7 +9884,7 @@ function FocusedAssistScreen({
     const uncertain = context.stopResolution.reason === "POOR_ACCURACY";
     return (
       <View style={panelStyle}>
-        <Text style={styles.focusedAssistEyebrow}>IMMEDIATE ASSISTANCE</Text>
+        <Text style={eyebrowStyle}>IMMEDIATE ASSISTANCE</Text>
         <Text style={headingStyle} accessibilityRole="header">
           {uncertain
             ? "We're not sure which bus stop you're at."
@@ -9675,7 +9922,7 @@ function FocusedAssistScreen({
       context.request.status === AssistanceRequestStatus.SENDING;
     return (
       <View style={panelStyle}>
-        <Text style={styles.focusedAssistEyebrow}>
+        <Text style={eyebrowStyle}>
           {context.destinationIsNext ? "YOUR STOP IS NEXT" : "ONBOARD ASSIST"}
         </Text>
         <Text
@@ -9730,7 +9977,7 @@ function FocusedAssistScreen({
   if (context.state === "AT_STOP_NO_BUS") {
     return (
       <View style={panelStyle}>
-        <Text style={styles.focusedAssistEyebrow}>YOU'RE AT</Text>
+        <Text style={eyebrowStyle}>YOU'RE AT</Text>
         <Text style={headingStyle}>{context.stop?.description}</Text>
         <Text style={bodyStyle}>Stop {context.stop?.busStopCode}</Text>
         <Text style={bodyStyle}>
@@ -9750,7 +9997,7 @@ function FocusedAssistScreen({
   if (context.state === "MULTIPLE_BUSES_PRESENT") {
     return (
       <View style={panelStyle}>
-        <Text style={styles.focusedAssistEyebrow}>ASSIST</Text>
+        <Text style={eyebrowStyle}>ASSIST</Text>
         <Text style={headingStyle} accessibilityRole="header">
           Which bus do you need?
         </Text>
@@ -9813,7 +10060,7 @@ function FocusedAssistScreen({
   const statusContent = focusedAssistStatusContent(context, simplified);
   return (
     <View style={panelStyle}>
-      <Text style={styles.focusedAssistEyebrow} accessibilityRole="header">
+      <Text style={eyebrowStyle} accessibilityRole="header">
         {simplified
           ? oneTouch
             ? "BUS HERE"
@@ -9824,11 +10071,12 @@ function FocusedAssistScreen({
               ? "YOUR BUS IS APPROACHING"
               : "BUS APPEARS TO BE ARRIVING"}
       </Text>
-      <Text style={styles.focusedAssistServicePrefix}>SERVICE</Text>
+      <Text style={servicePrefixStyle}>SERVICE</Text>
       <Text
         style={[
           styles.focusedAssistServiceNumber,
           extraLargeText && styles.focusedAssistServiceNumberExtraLarge,
+          { color: theme.colors.textPrimary },
         ]}
         accessibilityLabel={`Service ${bus.serviceNo}`}
       >
@@ -10742,6 +10990,7 @@ function JourneyNextActionCard({
   highContrast: boolean;
 }) {
   const runtimeAccessibility = useContext(AccessibilityRuntimeContext);
+  const theme = resolveVisualTheme(lightMode, highContrast);
   const displayedTitle = plainLanguage
     ? action.title
     : `Next action: ${action.title}`;
@@ -10757,15 +11006,38 @@ function JourneyNextActionCard({
         styles.nextActionCard,
         simplified && styles.simplifiedNextActionCard,
         lightMode && lightStyles.surface,
+        lightMode && lightStyles.nextActionCard,
         highContrast && !lightMode && styles.highContrastControl,
         highContrast && lightMode && lightStyles.highContrastControl,
       ]}
     >
-      <Text
-        style={[styles.nextActionEyebrow, lightMode && lightStyles.mutedText]}
-      >
-        {simplified ? `STEP ${action.step}` : "NEXT"}
-      </Text>
+      <View style={styles.nextActionHeader}>
+        <View
+          style={[
+            styles.nextActionStepBadge,
+            {
+              backgroundColor: theme.colors.actionPrimary,
+              borderColor: theme.colors.borderStrong,
+            },
+          ]}
+          accessibilityElementsHidden
+          importantForAccessibility="no"
+        >
+          <Text
+            style={[
+              styles.nextActionStepBadgeText,
+              { color: theme.colors.actionPrimaryText },
+            ]}
+          >
+            {action.step}
+          </Text>
+        </View>
+        <Text
+          style={[styles.nextActionEyebrow, lightMode && lightStyles.mutedText]}
+        >
+          {simplified ? `STEP ${action.step}` : "NEXT"}
+        </Text>
+      </View>
       <Text
         style={[
           styles.nextActionTitle,
@@ -10810,7 +11082,8 @@ function AccessibilityPreferenceSummary({
 }) {
   const { width } = useWindowDimensions();
   const lightMode = preferences.themeMode === "light";
-  const stack = shouldStackAccessibilityChoices({
+  const theme = resolveVisualTheme(lightMode, preferences.highContrast);
+  const stack = shouldStackPreferenceSummary({
     width,
     textSize: preferences.textSize,
   });
@@ -10839,13 +11112,44 @@ function AccessibilityPreferenceSummary({
       ]}
       accessibilityLabel={`Accessibility preferences. ${highlights.slice(0, 3).join(", ") || "Standard settings"}.`}
     >
-      <View style={styles.preferenceCategoryCopy}>
-        <Text style={[styles.summaryLabel, lightMode && lightStyles.mutedText]}>
-          Accessibility preferences
-        </Text>
-        <Text style={[styles.summaryValue, lightMode && lightStyles.text]}>
-          {highlights.slice(0, 3).join(" · ") || "Standard settings"}
-        </Text>
+      <View style={styles.preferenceSummaryLead}>
+        <View
+          style={[
+            styles.preferenceSummaryIcon,
+            {
+              backgroundColor: theme.colors.backgroundSecondary,
+              borderColor: theme.colors.borderInteractive,
+            },
+          ]}
+          accessibilityElementsHidden
+          importantForAccessibility="no"
+        >
+          <Accessibility
+            size={25}
+            color={theme.colors.iconPrimary}
+            strokeWidth={2.6}
+          />
+        </View>
+        <View style={styles.preferenceCategoryCopy}>
+          <Text
+            style={[
+              styles.summaryLabel,
+              styles.preferenceSummaryLabel,
+              lightMode && lightStyles.mutedText,
+            ]}
+          >
+            Accessibility preferences
+          </Text>
+          <Text
+            style={[
+              styles.summaryValue,
+              styles.preferenceSummaryValue,
+              lightMode && lightStyles.text,
+            ]}
+          >
+            {highlights.slice(0, 3).join(" · ") || "Standard settings"}
+          </Text>
+        </View>
       </View>
       <Pressable
         accessibilityRole="button"
@@ -10856,6 +11160,13 @@ function AccessibilityPreferenceSummary({
           preferences.largerControls && styles.largerTertiaryControl,
         ]}
       >
+        <View accessibilityElementsHidden importantForAccessibility="no">
+          <SlidersHorizontal
+            size={18}
+            color={theme.colors.iconPrimary}
+            strokeWidth={2.6}
+          />
+        </View>
         <Text
           style={[
             styles.preferenceSummaryEditText,
@@ -10871,54 +11182,104 @@ function AccessibilityPreferenceSummary({
 
 function AccessibilityPreferencesOverview({
   preferences,
+  layoutPreferences,
+  hapticsSupported,
+  expandedSection,
+  setPreferences,
   onApplyPreset,
-  onOpenSection,
+  onToggleSection,
 }: {
   preferences: AccessibilityPreferences;
+  layoutPreferences: AccessibilityPreferences;
+  hapticsSupported: boolean;
+  expandedSection: AccessibilityPreferenceSection | null;
+  setPreferences: React.Dispatch<
+    React.SetStateAction<AccessibilityPreferences>
+  >;
   onApplyPreset: (preset: AccessibilityPreset) => void;
-  onOpenSection: (section: AccessibilityPreferenceSection) => void;
+  onToggleSection: (section: AccessibilityPreferenceSection) => void;
 }) {
   const { width } = useWindowDimensions();
+  const runtimeAccessibility = useContext(AccessibilityRuntimeContext);
+  const presetAnchorRefs = useRef<
+    Partial<Record<AccessibilityPreset, View | null>>
+  >({});
+  const categoryAnchorRefs = useRef<
+    Partial<Record<AccessibilityPreferenceSection, View | null>>
+  >({});
   const lightMode = preferences.themeMode === "light";
+  const theme = resolveVisualTheme(lightMode, preferences.highContrast);
+  const [appliedPreset, setAppliedPreset] =
+    useState<AccessibilityPreset | null>(null);
   const stackChoices = shouldStackAccessibilityChoices({
     width,
-    textSize: preferences.textSize,
+    textSize: layoutPreferences.textSize,
   });
-  const presets: Array<{ label: string; value: AccessibilityPreset }> = [
-    { label: "Wheelchair", value: "WHEELCHAIR" },
-    { label: "Low vision", value: "LOW_VISION" },
-    { label: "Hearing assistance", value: "HEARING_ASSISTANCE" },
-    { label: "Simplified journey", value: "SIMPLIFIED_JOURNEY" },
+  const presets: Array<{
+    label: string;
+    description: string;
+    icon: LucideIcon;
+    value: AccessibilityPreset;
+  }> = [
+    {
+      label: "Mobility support",
+      description: "Ramp help, extra time and accessible routes",
+      icon: Accessibility,
+      value: "WHEELCHAIR",
+    },
+    {
+      label: "Low-vision support",
+      description: "Larger text, contrast and spoken guidance",
+      icon: Volume2,
+      value: "LOW_VISION",
+    },
+    {
+      label: "Hearing support",
+      description: "Visual, vibration and written updates",
+      icon: Bell,
+      value: "HEARING_ASSISTANCE",
+    },
+    {
+      label: "Simpler journeys",
+      description: "Clear next actions and confirmations",
+      icon: List,
+      value: "SIMPLIFIED_JOURNEY",
+    },
   ];
   const sections: Array<{
     title: string;
-    description: string;
+    settingCount: number;
+    icon: LucideIcon;
     value: AccessibilityPreferenceSection;
   }> = [
     {
       title: "Mobility",
-      description:
-        "Wheelchair-aware routes, boarding time and accessible stops",
+      settingCount: 7,
+      icon: Accessibility,
       value: "MOBILITY",
     },
     {
       title: "Vision",
-      description: "Text size, contrast, spoken guidance and map alternatives",
+      settingCount: 7,
+      icon: Eye,
       value: "VISION",
     },
     {
       title: "Hearing",
-      description: "Visual, vibration and written announcement equivalents",
+      settingCount: 3,
+      icon: Bell,
       value: "HEARING",
     },
     {
       title: "Journey support",
-      description: "Next actions, simple language, confirmations and warnings",
+      settingCount: 8,
+      icon: Route,
       value: "JOURNEY_SUPPORT",
     },
     {
       title: "Interaction",
-      description: "Larger controls, message duration and reduced motion",
+      settingCount: 3,
+      icon: SlidersHorizontal,
       value: "INTERACTION",
     },
   ];
@@ -10926,11 +11287,10 @@ function AccessibilityPreferencesOverview({
   return (
     <View style={styles.preferenceOverview}>
       <Text style={[styles.summaryValue, lightMode && lightStyles.text]}>
-        Quick setup
+        Quick presets
       </Text>
       <Text style={[styles.summaryLabel, lightMode && lightStyles.mutedText]}>
-        Presets turn on a useful group of settings. You can still change every
-        setting below.
+        Choose a starting point. You can fine-tune any setting afterwards.
       </Text>
       <View
         style={[
@@ -10938,57 +11298,174 @@ function AccessibilityPreferencesOverview({
           stackChoices && styles.stackedPreferenceChoiceRow,
         ]}
       >
-        {presets.map((preset) => (
-          <Pressable
-            key={preset.value}
-            accessibilityRole="button"
-            accessibilityLabel={`Apply ${preset.label} preset`}
-            onPress={() => onApplyPreset(preset.value)}
-            style={[
-              styles.preferencePresetButton,
-              lightMode && lightStyles.secondaryButton,
-              preferences.highContrast &&
-                (lightMode
-                  ? lightStyles.highContrastControl
-                  : styles.highContrastControl),
-              preferences.largerControls && styles.largerControl,
-            ]}
-          >
-            <Text
+        {presets.map((preset) => {
+          const selected = appliedPreset === preset.value;
+          const PresetIcon = preset.icon;
+          return (
+            <Pressable
+              key={preset.value}
+              ref={(node) => {
+                presetAnchorRefs.current[preset.value] = node;
+              }}
+              accessibilityRole="button"
+              accessibilityLabel={`Apply ${preset.label} preset`}
+              accessibilityHint={preset.description}
+              accessibilityState={{ selected }}
+              onPress={() => {
+                runtimeAccessibility.preserveViewport(
+                  () => presetAnchorRefs.current[preset.value] ?? null,
+                  () => {
+                    onApplyPreset(preset.value);
+                    setAppliedPreset(preset.value);
+                  },
+                );
+              }}
               style={[
-                styles.preferencePresetText,
-                lightMode && lightStyles.text,
+                styles.preferencePresetButton,
+                lightMode && lightStyles.secondaryButton,
+                selected && {
+                  backgroundColor: theme.colors.selectedSurface,
+                  borderColor: theme.colors.borderSelected,
+                },
+                preferences.highContrast &&
+                  (lightMode
+                    ? lightStyles.highContrastControl
+                    : styles.highContrastControl),
+                layoutPreferences.largerControls && styles.largerControl,
+                stackChoices && styles.stackedPreferencePresetButton,
               ]}
             >
-              {preset.label}
-            </Text>
-          </Pressable>
-        ))}
+              <View
+                style={[
+                  styles.preferencePresetIcon,
+                  {
+                    backgroundColor: selected
+                      ? theme.colors.surfacePrimary
+                      : theme.colors.backgroundSecondary,
+                  },
+                ]}
+              >
+                <PresetIcon
+                  size={24}
+                  color={
+                    selected
+                      ? theme.colors.actionPrimary
+                      : theme.colors.iconPrimary
+                  }
+                  strokeWidth={2.8}
+                  accessibilityElementsHidden
+                  importantForAccessibility="no"
+                />
+              </View>
+              <View style={styles.preferencePresetCopy}>
+                <Text
+                  style={[
+                    styles.preferencePresetText,
+                    lightMode && lightStyles.text,
+                    selected && { color: theme.colors.textOnSelected },
+                  ]}
+                >
+                  {preset.label}
+                </Text>
+                <Text
+                  style={[
+                    styles.preferencePresetDescription,
+                    lightMode && lightStyles.mutedText,
+                    selected && { color: theme.colors.textOnSelected },
+                  ]}
+                >
+                  {preset.description}
+                </Text>
+              </View>
+              {selected ? (
+                <CheckCircle2
+                  size={22}
+                  color={theme.colors.iconSelected}
+                  strokeWidth={3}
+                  accessibilityElementsHidden
+                  importantForAccessibility="no"
+                />
+              ) : null}
+            </Pressable>
+          );
+        })}
       </View>
-      <View style={styles.preferenceCategoryList}>
-        {sections.map((section) => (
-          <Pressable
+      <View style={styles.preferenceCustomizeHeader}>
+        <Text style={[styles.summaryValue, lightMode && lightStyles.text]}>
+          Customize settings
+        </Text>
+        <Text style={[styles.summaryLabel, lightMode && lightStyles.mutedText]}>
+          Open a category, then check the features you need.
+        </Text>
+      </View>
+      <View
+        style={[
+          styles.preferenceCategoryList,
+          {
+            backgroundColor: theme.colors.surfacePrimary,
+            borderColor: theme.colors.borderDefault,
+          },
+          preferences.highContrast &&
+            (lightMode
+              ? lightStyles.highContrastControl
+              : styles.highContrastControl),
+        ]}
+      >
+        {sections.map((section, index) => {
+          const expanded = expandedSection === section.value;
+          const CategoryIcon = section.icon;
+          return (
+          <View
             key={section.value}
-            accessibilityRole="button"
-            accessibilityLabel={`${section.title} accessibility settings`}
-            accessibilityHint={section.description}
-            onPress={() => onOpenSection(section.value)}
+            ref={(node) => {
+              categoryAnchorRefs.current[section.value] = node;
+            }}
             style={[
-              styles.preferenceCategoryCard,
-              lightMode && lightStyles.surface,
-              preferences.highContrast &&
-                (lightMode
-                  ? lightStyles.highContrastControl
-                  : styles.highContrastControl),
-              preferences.largerControls && styles.largerControl,
+              styles.preferenceCategoryItem,
+              index < sections.length - 1 && {
+                borderBottomColor: theme.colors.borderDefault,
+                borderBottomWidth: 1,
+              },
             ]}
           >
-            <View style={styles.preferenceCategoryCopy}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`${section.title} accessibility settings`}
+              accessibilityHint={`${expanded ? "Collapse" : "Open"} ${section.settingCount} individual settings`}
+              accessibilityState={{ expanded }}
+              onPress={() =>
+                runtimeAccessibility.preserveViewport(
+                  () => categoryAnchorRefs.current[section.value] ?? null,
+                  () => onToggleSection(section.value),
+                )
+              }
+              style={[
+                styles.preferenceCategoryRow,
+                expanded && {
+                  backgroundColor: theme.colors.backgroundSecondary,
+                },
+                layoutPreferences.largerControls && styles.largerControl,
+              ]}
+            >
+              <View
+                style={[
+                  styles.preferenceCategoryIcon,
+                  { backgroundColor: theme.colors.actionSecondary },
+                ]}
+                accessibilityElementsHidden
+                importantForAccessibility="no"
+              >
+                <CategoryIcon
+                  size={22}
+                  color={theme.colors.iconPrimary}
+                  strokeWidth={2.7}
+                />
+              </View>
               <Text
                 style={[
                   styles.preferenceCategoryTitle,
-                  isLargeText(preferences) && styles.largeBody,
-                  preferences.textSize === "EXTRA_LARGE" &&
+                  isLargeText(layoutPreferences) && styles.largeBody,
+                  layoutPreferences.textSize === "EXTRA_LARGE" &&
                     styles.extraLargeBody,
                   lightMode && lightStyles.text,
                 ]}
@@ -10997,22 +11474,42 @@ function AccessibilityPreferencesOverview({
               </Text>
               <Text
                 style={[
-                  styles.preferenceCategoryDescription,
+                  styles.preferenceCategoryCount,
                   lightMode && lightStyles.mutedText,
                 ]}
               >
-                {section.description}
+                {section.settingCount} options
               </Text>
-            </View>
-            <ChevronDown
-              accessibilityElementsHidden
-              importantForAccessibility="no"
-              color={lightMode ? colors.text : "#ffffff"}
-              size={22}
-              style={styles.preferenceCategoryChevron}
-            />
-          </Pressable>
-        ))}
+              <ChevronDown
+                accessibilityElementsHidden
+                importantForAccessibility="no"
+                color={lightMode ? colors.text : "#ffffff"}
+                size={22}
+                style={[
+                  styles.preferenceCategoryChevron,
+                  expanded && styles.expandedPreferenceCategoryChevron,
+                ]}
+              />
+            </Pressable>
+            {expanded ? (
+              <View
+                style={[
+                  styles.preferenceAccordionContent,
+                  { borderTopColor: theme.colors.borderDefault },
+                ]}
+              >
+                <AccessibilityCategorySettings
+                  section={section.value}
+                  preferences={preferences}
+                  layoutPreferences={layoutPreferences}
+                  hapticsSupported={hapticsSupported}
+                  setPreferences={setPreferences}
+                />
+              </View>
+            ) : null}
+          </View>
+          );
+        })}
       </View>
     </View>
   );
@@ -11023,123 +11520,254 @@ type BooleanAccessibilityPreference = Exclude<
   "textSize" | "vibrationAlerts" | "themeMode"
 >;
 
+const accessibilityFeatureIcons: Record<
+  BooleanAccessibilityPreference,
+  LucideIcon
+> = {
+  wheelchairAssistance: Accessibility,
+  wheelchairRouting: Route,
+  avoidSteepSlopes: Route,
+  preferSmoothSurfaces: Footprints,
+  extraBoardingTime: Clock,
+  alightingAssistance: DoorOpen,
+  preferAccessibleStops: MapPin,
+  highContrast: Eye,
+  spokenGuidance: Volume2,
+  audioBusIdentification: BusFront,
+  reduceMapDependence: List,
+  screenReaderOptimised: Eye,
+  visualJourneyAlerts: Bell,
+  textAnnouncementEquivalent: List,
+  simplifiedJourney: List,
+  alwaysShowNextAction: Navigation,
+  plainLanguage: List,
+  confirmImportantActions: CircleCheck,
+  largerControls: SlidersHorizontal,
+  longerMessageDuration: Clock,
+  reducedMotion: SlidersHorizontal,
+  warnBusApproaching: BusFront,
+  warnBusArrives: MapPin,
+  warnTwoStopsBeforeDestination: Bell,
+  warnDestinationNext: Bell,
+  repeatAudio: Volume2,
+};
+
+function CompactPreferenceRow({
+  label,
+  description,
+  icon: FeatureIcon,
+  enabled,
+  disabled = false,
+  nested = false,
+  preferences,
+  layoutPreferences,
+  onPress,
+}: {
+  label: string;
+  description: string;
+  icon: LucideIcon;
+  enabled: boolean;
+  disabled?: boolean;
+  nested?: boolean;
+  preferences: AccessibilityPreferences;
+  layoutPreferences: AccessibilityPreferences;
+  onPress: () => void;
+}) {
+  const runtimeAccessibility = useContext(AccessibilityRuntimeContext);
+  const rowAnchorRef = useRef<View | null>(null);
+  const [detailsPinned, setDetailsPinned] = useState(false);
+  const [detailsHovered, setDetailsHovered] = useState(false);
+  const detailsVisible = detailsPinned || detailsHovered;
+  const lightMode = preferences.themeMode === "light";
+  const theme = resolveVisualTheme(lightMode, preferences.highContrast);
+
+  function handleToggle() {
+    if (disabled) return;
+    runtimeAccessibility.preserveViewport(
+      () => rowAnchorRef.current,
+      () => {
+        onPress();
+        AccessibilityInfo.announceForAccessibility(
+          `${label} turned ${enabled ? "off" : "on"}.`,
+        );
+      },
+    );
+  }
+
+  return (
+    <View
+      ref={rowAnchorRef}
+      style={[
+        styles.preferenceChecklistItem,
+        nested && styles.nestedPreferenceChecklistItem,
+        {
+          backgroundColor: enabled && !disabled
+            ? theme.colors.selectedSurface
+            : theme.colors.surfacePrimary,
+          borderBottomColor: theme.colors.borderDefault,
+        },
+      ]}
+    >
+      <View style={styles.preferenceChecklistMain}>
+        <Pressable
+          accessibilityRole="checkbox"
+          accessibilityLabel={label}
+          accessibilityHint={description}
+          accessibilityState={{ checked: enabled, disabled }}
+          disabled={disabled}
+          onPress={handleToggle}
+          style={[
+            styles.preferenceChecklistToggle,
+            disabled && styles.disabledPreferenceControl,
+            layoutPreferences.largerControls && styles.largerChecklistControl,
+          ]}
+        >
+          <View
+            style={[
+              styles.preferenceFeatureIcon,
+              { backgroundColor: theme.colors.actionSecondary },
+            ]}
+            accessibilityElementsHidden
+            importantForAccessibility="no"
+          >
+            <FeatureIcon
+              size={20}
+              color={theme.colors.iconPrimary}
+              strokeWidth={2.7}
+            />
+          </View>
+          <Text
+            style={[
+              styles.preferenceChecklistLabel,
+              isLargeText(layoutPreferences) && styles.largeBody,
+              layoutPreferences.textSize === "EXTRA_LARGE" &&
+                styles.extraLargeBody,
+              lightMode && lightStyles.text,
+              enabled && !disabled && { color: theme.colors.textOnSelected },
+            ]}
+          >
+            {label}
+          </Text>
+          {enabled ? (
+            <CheckCircle2
+              size={25}
+              color={
+                disabled
+                  ? theme.colors.iconSecondary
+                  : theme.colors.iconSelected
+              }
+              strokeWidth={preferences.highContrast ? 3.2 : 2.8}
+              accessibilityElementsHidden
+              importantForAccessibility="no"
+            />
+          ) : (
+            <Circle
+              size={24}
+              color={theme.colors.iconSecondary}
+              strokeWidth={preferences.highContrast ? 3 : 2.4}
+              accessibilityElementsHidden
+              importantForAccessibility="no"
+            />
+          )}
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`About ${label}`}
+          accessibilityHint={`${detailsVisible ? "Hide" : "Show"} a short description`}
+          accessibilityState={{ expanded: detailsVisible }}
+          onPress={() => setDetailsPinned((current) => !current)}
+          onHoverIn={() => setDetailsHovered(true)}
+          onHoverOut={() => setDetailsHovered(false)}
+          style={[
+            styles.preferenceDetailsButton,
+            detailsVisible && {
+              backgroundColor: theme.colors.actionSecondary,
+            },
+          ]}
+        >
+          <CircleHelp
+            size={21}
+            color={
+              detailsVisible
+                ? theme.colors.iconPrimary
+                : enabled && !disabled
+                  ? theme.colors.iconSelected
+                  : theme.colors.iconPrimary
+            }
+            strokeWidth={2.5}
+            accessibilityElementsHidden
+            importantForAccessibility="no"
+          />
+        </Pressable>
+      </View>
+      {detailsVisible ? (
+        <Text
+          accessibilityLiveRegion="polite"
+          style={[
+            styles.preferenceChecklistDescription,
+            lightMode && lightStyles.mutedText,
+          ]}
+        >
+          {description}
+        </Text>
+      ) : null}
+    </View>
+  );
+}
+
 function AccessibilityCategorySettings({
   section,
   preferences,
+  layoutPreferences,
   hapticsSupported,
   setPreferences,
 }: {
   section: AccessibilityPreferenceSection;
   preferences: AccessibilityPreferences;
+  layoutPreferences: AccessibilityPreferences;
   hapticsSupported: boolean;
   setPreferences: React.Dispatch<
     React.SetStateAction<AccessibilityPreferences>
   >;
 }) {
   const lightMode = preferences.themeMode === "light";
+  const theme = resolveVisualTheme(lightMode, preferences.highContrast);
   const toggle = (key: BooleanAccessibilityPreference) =>
     setPreferences((current) => ({ ...current, [key]: !current[key] }));
-  const SectionIcon =
-    section === "MOBILITY"
-      ? Accessibility
-      : section === "VISION"
-        ? Volume2
-        : section === "HEARING"
-          ? Bell
-          : section === "JOURNEY_SUPPORT"
-            ? Route
-            : Settings;
   const row = (
     key: BooleanAccessibilityPreference,
     label: string,
     description: string,
     disabled = false,
+    nested = false,
   ) => (
-    <ToggleRow
+    <CompactPreferenceRow
       key={key}
       label={label}
       description={description}
+      icon={accessibilityFeatureIcons[key]}
       enabled={preferences[key]}
       disabled={disabled}
-      highContrast={preferences.highContrast}
-      largeText={isLargeText(preferences)}
-      lightMode={lightMode}
-      variant="phone"
-      customIcon={
-        <SectionIcon
-          size={28}
-          accessibilityElementsHidden
-          importantForAccessibility="no"
-        />
-      }
+      nested={nested}
+      preferences={preferences}
+      layoutPreferences={layoutPreferences}
       onPress={() => toggle(key)}
     />
   );
 
   return (
     <View style={styles.preferenceCategorySettings}>
-      <Text style={[styles.heading, lightMode && lightStyles.text]}>
-        {section === "JOURNEY_SUPPORT"
-          ? "Journey support"
-          : section.charAt(0) + section.slice(1).toLowerCase()}
-      </Text>
       {section === "MOBILITY" && (
         <>
-          <ToggleRow
+          <CompactPreferenceRow
             label="Wheelchair assistance"
             description="Request ramp support when boarding"
+            icon={Accessibility}
             enabled={preferences.wheelchairAssistance}
-            highContrast={preferences.highContrast}
-            largeText={isLargeText(preferences)}
-            lightMode={lightMode}
-            variant="phone"
-            customIcon={
-              <Accessibility
-                size={28}
-                accessibilityElementsHidden
-                importantForAccessibility="no"
-              />
-            }
-            onPress={() =>
-              setPreferences((current) => ({
-                ...current,
-                wheelchairAssistance: !current.wheelchairAssistance,
-                wheelchairRouting: current.wheelchairAssistance
-                  ? current.wheelchairRouting
-                  : true,
-              }))
-            }
+            preferences={preferences}
+            layoutPreferences={layoutPreferences}
+            onPress={() => toggle("wheelchairAssistance")}
           />
-          {row(
-            "wheelchairRouting",
-            "Wheelchair-friendly routing",
-            "Use step-free walking routes and keep avoid-steps enabled",
-          )}
-          <View
-            style={styles.textPreviewPanel}
-            accessible
-            accessibilityLabel="Avoid steps, always on"
-          >
-            <Text style={[styles.summaryValue, lightMode && lightStyles.text]}>
-              Avoid steps · Always on
-            </Text>
-          </View>
-          {row(
-            "avoidSteepSlopes",
-            "Avoid steep slopes",
-            preferences.wheelchairRouting
-              ? "Avoid mapped inclines above six percent"
-              : "Turn on wheelchair-friendly routing to use this setting",
-            !preferences.wheelchairRouting,
-          )}
-          {row(
-            "preferSmoothSurfaces",
-            "Prefer smooth surfaces",
-            preferences.wheelchairRouting
-              ? "Prefer mapped paved and smooth paths"
-              : "Turn on wheelchair-friendly routing to use this setting",
-            !preferences.wheelchairRouting,
-          )}
           {row(
             "extraBoardingTime",
             "Extra boarding time",
@@ -11150,17 +11778,143 @@ function AccessibilityCategorySettings({
             "Alighting assistance",
             "Show help and prompts before you leave the bus",
           )}
-          {row(
-            "preferAccessibleStops",
-            "Prefer accessible stops",
-            "Rank accessible nearby stops more highly",
-          )}
+          <View
+            style={[
+              styles.preferenceChecklistGroupHeader,
+              { backgroundColor: theme.colors.backgroundSecondary },
+            ]}
+            accessible
+            accessibilityRole="header"
+            accessibilityLabel="Accessible routing options"
+          >
+            <View
+              style={[
+                styles.preferenceFeatureIcon,
+                { backgroundColor: theme.colors.actionSecondary },
+              ]}
+              accessibilityElementsHidden
+              importantForAccessibility="no"
+            >
+              <Route
+                size={20}
+                color={theme.colors.iconPrimary}
+                strokeWidth={2.7}
+              />
+            </View>
+            <Text
+              style={[
+                styles.preferenceChecklistGroupLabel,
+                lightMode && lightStyles.text,
+              ]}
+            >
+              Accessible routing
+            </Text>
+          </View>
+          <View style={styles.preferenceRoutingGroup}>
+            {row(
+              "wheelchairRouting",
+              "Wheelchair-friendly routing",
+              "Use step-free walking routes and include avoid-steps protection",
+            )}
+            <View
+              style={[
+                styles.preferenceChecklistItem,
+                styles.alwaysOnPreferenceRow,
+                styles.nestedPreferenceChecklistItem,
+                { borderBottomColor: theme.colors.borderDefault },
+                !preferences.wheelchairRouting &&
+                  styles.disabledPreferenceControl,
+              ]}
+              accessible
+              accessibilityLabel={
+                preferences.wheelchairRouting
+                  ? "Avoid steps, included with wheelchair-friendly routing"
+                  : "Avoid steps, available with wheelchair-friendly routing"
+              }
+            >
+              <View
+                style={[
+                  styles.preferenceFeatureIcon,
+                  { backgroundColor: theme.colors.actionSecondary },
+                ]}
+                accessibilityElementsHidden
+                importantForAccessibility="no"
+              >
+                <Route
+                  size={20}
+                  color={theme.colors.iconPrimary}
+                  strokeWidth={2.7}
+                />
+              </View>
+              <Text
+                style={[
+                  styles.preferenceChecklistLabel,
+                  lightMode && lightStyles.text,
+                ]}
+              >
+                Avoid steps
+              </Text>
+              <Text
+                style={[
+                  styles.preferenceCategoryCount,
+                  lightMode && lightStyles.mutedText,
+                ]}
+              >
+                {preferences.wheelchairRouting ? "Included" : "With routing"}
+              </Text>
+              {preferences.wheelchairRouting ? (
+                <CheckCircle2
+                  size={25}
+                  color={theme.colors.iconSelected}
+                  strokeWidth={preferences.highContrast ? 3.2 : 2.8}
+                  accessibilityElementsHidden
+                  importantForAccessibility="no"
+                />
+              ) : (
+                <Circle
+                  size={24}
+                  color={theme.colors.iconSecondary}
+                  strokeWidth={preferences.highContrast ? 3 : 2.4}
+                  accessibilityElementsHidden
+                  importantForAccessibility="no"
+                />
+              )}
+            </View>
+            {row(
+              "avoidSteepSlopes",
+              "Avoid steep slopes",
+              preferences.wheelchairRouting
+                ? "Avoid mapped inclines above six percent"
+                : "Turn on wheelchair-friendly routing to use this setting",
+              !preferences.wheelchairRouting,
+              true,
+            )}
+            {row(
+              "preferSmoothSurfaces",
+              "Prefer smooth surfaces",
+              preferences.wheelchairRouting
+                ? "Prefer mapped paved and smooth paths"
+                : "Turn on wheelchair-friendly routing to use this setting",
+              !preferences.wheelchairRouting,
+              true,
+            )}
+            {row(
+              "preferAccessibleStops",
+              "Prefer accessible stops",
+              preferences.wheelchairRouting
+                ? "Rank accessible nearby stops more highly"
+                : "Turn on wheelchair-friendly routing to use this setting",
+              !preferences.wheelchairRouting,
+              true,
+            )}
+          </View>
         </>
       )}
       {section === "VISION" && (
         <>
           <TextSizeSelector
             preferences={preferences}
+            layoutPreferences={layoutPreferences}
             setPreferences={setPreferences}
           />
           {row(
@@ -11206,6 +11960,7 @@ function AccessibilityCategorySettings({
           <VibrationAlertSelector
             supported={hapticsSupported}
             preferences={preferences}
+            layoutPreferences={layoutPreferences}
             setPreferences={setPreferences}
           />
           {row(
@@ -11302,172 +12057,234 @@ function PreferenceSectionHeading({
   );
 }
 
+function CompactPreferenceChoice({
+  label,
+  description,
+  icon: ChoiceIcon,
+  choices,
+  value,
+  accessibilitySuffix,
+  disabled = false,
+  preferences,
+  layoutPreferences,
+  onChange,
+}: {
+  label: string;
+  description: string;
+  icon: LucideIcon;
+  choices: Array<{ label: string; value: string }>;
+  value: string;
+  accessibilitySuffix: string;
+  disabled?: boolean;
+  preferences: AccessibilityPreferences;
+  layoutPreferences: AccessibilityPreferences;
+  onChange: (value: string) => void;
+}) {
+  const { width } = useWindowDimensions();
+  const runtimeAccessibility = useContext(AccessibilityRuntimeContext);
+  const choiceAnchorRef = useRef<View | null>(null);
+  const [detailsPinned, setDetailsPinned] = useState(false);
+  const [detailsHovered, setDetailsHovered] = useState(false);
+  const detailsVisible = detailsPinned || detailsHovered;
+  const lightMode = preferences.themeMode === "light";
+  const theme = resolveVisualTheme(lightMode, preferences.highContrast);
+
+  return (
+    <View
+      ref={choiceAnchorRef}
+      style={[
+        styles.preferenceChoiceChecklistItem,
+        {
+          backgroundColor: theme.colors.surfacePrimary,
+          borderBottomColor: theme.colors.borderDefault,
+        },
+      ]}
+    >
+      <View style={styles.preferenceChoiceChecklistHeader}>
+        <View
+          style={[
+            styles.preferenceFeatureIcon,
+            { backgroundColor: theme.colors.actionSecondary },
+          ]}
+          accessibilityElementsHidden
+          importantForAccessibility="no"
+        >
+          <ChoiceIcon
+            size={20}
+            color={theme.colors.iconPrimary}
+            strokeWidth={2.7}
+          />
+        </View>
+        <Text
+          style={[
+            styles.preferenceChecklistLabel,
+            isLargeText(layoutPreferences) && styles.largeBody,
+            layoutPreferences.textSize === "EXTRA_LARGE" &&
+              styles.extraLargeBody,
+            lightMode && lightStyles.text,
+          ]}
+        >
+          {label}
+        </Text>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`About ${label}`}
+          accessibilityHint={`${detailsVisible ? "Hide" : "Show"} a short description`}
+          accessibilityState={{ expanded: detailsVisible }}
+          onPress={() => setDetailsPinned((current) => !current)}
+          onHoverIn={() => setDetailsHovered(true)}
+          onHoverOut={() => setDetailsHovered(false)}
+          style={[
+            styles.preferenceDetailsButton,
+            detailsVisible && {
+              backgroundColor: theme.colors.actionSecondary,
+            },
+          ]}
+        >
+          <CircleHelp
+            size={21}
+            color={theme.colors.iconPrimary}
+            strokeWidth={2.5}
+            accessibilityElementsHidden
+            importantForAccessibility="no"
+          />
+        </Pressable>
+      </View>
+      {detailsVisible ? (
+        <Text
+          accessibilityLiveRegion="polite"
+          style={[
+            styles.preferenceChecklistDescription,
+            lightMode && lightStyles.mutedText,
+          ]}
+        >
+          {description}
+        </Text>
+      ) : null}
+      <View
+        style={[
+          styles.preferenceChoiceRow,
+          shouldStackAccessibilityChoices({
+            width,
+            textSize: layoutPreferences.textSize,
+          }) && styles.stackedPreferenceChoiceRow,
+        ]}
+      >
+        {choices.map((choice) => {
+          const selected = value === choice.value;
+          return (
+            <Pressable
+              key={choice.value}
+              accessibilityRole="radio"
+              accessibilityState={{ checked: selected, disabled }}
+              accessibilityLabel={`${choice.label} ${accessibilitySuffix}`}
+              disabled={disabled}
+              onPress={() =>
+                runtimeAccessibility.preserveViewport(
+                  () => choiceAnchorRef.current,
+                  () => onChange(choice.value),
+                )
+              }
+              style={[
+                styles.preferenceChoiceButton,
+                lightMode && lightStyles.secondaryButton,
+                selected && styles.selectedPreferenceChoice,
+                disabled && styles.disabledButton,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.preferenceChoiceText,
+                  lightMode && lightStyles.text,
+                  selected && styles.selectedPreferenceChoiceText,
+                ]}
+              >
+                {choice.label}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+    </View>
+  );
+}
+
 function TextSizeSelector({
   preferences,
+  layoutPreferences,
   setPreferences,
 }: {
   preferences: AccessibilityPreferences;
+  layoutPreferences: AccessibilityPreferences;
   setPreferences: React.Dispatch<
     React.SetStateAction<AccessibilityPreferences>
   >;
 }) {
-  const { width } = useWindowDimensions();
-  const lightMode = preferences.themeMode === "light";
   const sizes: Array<{ label: string; value: AccessibilityTextSize }> = [
     { label: "Standard", value: "STANDARD" },
     { label: "Large", value: "LARGE" },
     { label: "Extra large", value: "EXTRA_LARGE" },
   ];
   return (
-    <View
-      style={[
-        styles.preferenceChoiceSection,
-        lightMode && lightStyles.surface,
-        preferences.highContrast &&
-          (lightMode
-            ? lightStyles.highContrastControl
-            : styles.highContrastControl),
-      ]}
-    >
-      <PreferenceSectionHeading label="Text size" lightMode={lightMode} />
-      <View
-        style={[
-          styles.preferenceChoiceRow,
-          shouldStackAccessibilityChoices({
-            width,
-            textSize: preferences.textSize,
-          }) && styles.stackedPreferenceChoiceRow,
-        ]}
-      >
-        {sizes.map((size) => {
-          const selected = preferences.textSize === size.value;
-          return (
-            <Pressable
-              key={size.value}
-              accessibilityRole="radio"
-              accessibilityState={{ checked: selected }}
-              accessibilityLabel={`${size.label} text`}
-              onPress={() =>
-                setPreferences((current) => ({
-                  ...current,
-                  textSize: size.value,
-                }))
-              }
-              style={[
-                styles.preferenceChoiceButton,
-                lightMode && lightStyles.secondaryButton,
-                selected && styles.selectedPreferenceChoice,
-              ]}
-            >
-              <Text
-                style={[
-                  styles.preferenceChoiceText,
-                  lightMode && lightStyles.text,
-                  selected && styles.selectedPreferenceChoiceText,
-                ]}
-              >
-                {size.label}
-              </Text>
-            </Pressable>
-          );
-        })}
-      </View>
-      <Text
-        accessibilityLabel="Text size preview. Bus 95 arriving in 3 minutes."
-        style={[
-          styles.summaryValue,
-          preferences.textSize !== "STANDARD" && styles.largeBody,
-          preferences.textSize === "EXTRA_LARGE" && styles.extraLargeBody,
-          lightMode && lightStyles.text,
-        ]}
-      >
-        Bus 95 arriving in 3 minutes
-      </Text>
-    </View>
+    <CompactPreferenceChoice
+      label="Text size"
+      description="Changes the text size throughout the app."
+      icon={Type}
+      choices={sizes}
+      value={preferences.textSize}
+      accessibilitySuffix="text"
+      preferences={preferences}
+      layoutPreferences={layoutPreferences}
+      onChange={(value) =>
+        setPreferences((current) => ({
+          ...current,
+          textSize: value as AccessibilityTextSize,
+        }))
+      }
+    />
   );
 }
 
 function VibrationAlertSelector({
   supported,
   preferences,
+  layoutPreferences,
   setPreferences,
 }: {
   supported: boolean;
   preferences: AccessibilityPreferences;
+  layoutPreferences: AccessibilityPreferences;
   setPreferences: React.Dispatch<
     React.SetStateAction<AccessibilityPreferences>
   >;
 }) {
-  const { width } = useWindowDimensions();
-  const lightMode = preferences.themeMode === "light";
   const modes: Array<{ label: string; value: VibrationAlertMode }> = [
     { label: "Off", value: "OFF" },
     { label: "Important", value: "IMPORTANT" },
     { label: "All guidance", value: "ALL" },
   ];
   return (
-    <View
-      style={[
-        styles.preferenceChoiceSection,
-        lightMode && lightStyles.surface,
-        preferences.highContrast &&
-          (lightMode
-            ? lightStyles.highContrastControl
-            : styles.highContrastControl),
-      ]}
-    >
-      <PreferenceSectionHeading
-        label="Vibration alerts"
-        lightMode={lightMode}
-      />
-      <Text style={[styles.summaryLabel, lightMode && lightStyles.mutedText]}>
-        {supported ? "Available on this device" : "Unavailable on this device"}
-      </Text>
-      <View
-        style={[
-          styles.preferenceChoiceRow,
-          shouldStackAccessibilityChoices({
-            width,
-            textSize: preferences.textSize,
-          }) && styles.stackedPreferenceChoiceRow,
-        ]}
-      >
-        {modes.map((mode) => {
-          const selected = preferences.vibrationAlerts === mode.value;
-          return (
-            <Pressable
-              key={mode.value}
-              accessibilityRole="radio"
-              accessibilityState={{ checked: selected, disabled: !supported }}
-              accessibilityLabel={`${mode.label} vibration alerts`}
-              disabled={!supported}
-              onPress={() =>
-                setPreferences((current) => ({
-                  ...current,
-                  vibrationAlerts: mode.value,
-                }))
-              }
-              style={[
-                styles.preferenceChoiceButton,
-                lightMode && lightStyles.secondaryButton,
-                selected && styles.selectedPreferenceChoice,
-                !supported && styles.disabledButton,
-              ]}
-            >
-              <Text
-                style={[
-                  styles.preferenceChoiceText,
-                  lightMode && lightStyles.text,
-                  selected && styles.selectedPreferenceChoiceText,
-                ]}
-              >
-                {mode.label}
-              </Text>
-            </Pressable>
-          );
-        })}
-      </View>
-    </View>
+    <CompactPreferenceChoice
+      label="Vibration alerts"
+      description={
+        supported
+          ? "Choose which journey updates should vibrate."
+          : "Vibration alerts are unavailable on this device."
+      }
+      icon={Bell}
+      choices={modes}
+      value={preferences.vibrationAlerts}
+      accessibilitySuffix="vibration alerts"
+      disabled={!supported}
+      preferences={preferences}
+      layoutPreferences={layoutPreferences}
+      onChange={(value) =>
+        setPreferences((current) => ({
+          ...current,
+          vibrationAlerts: value as VibrationAlertMode,
+        }))
+      }
+    />
   );
 }
 
@@ -11782,8 +12599,14 @@ function SectionHeader({
   lightMode?: boolean;
 }) {
   const runtimeAccessibility = useContext(AccessibilityRuntimeContext);
+  const theme = resolveVisualTheme(lightMode, highContrast);
   return (
-    <View style={styles.sectionHeader}>
+    <View
+      style={[
+        styles.sectionHeader,
+        { borderLeftColor: theme.colors.actionPrimary },
+      ]}
+    >
       <Text
         style={[
           styles.eyebrow,
@@ -11939,6 +12762,7 @@ function TabBar({
         lightMode && lightStyles.tabBar,
         highContrast && !lightMode && styles.highContrastControl,
         highContrast && lightMode && lightStyles.highContrastControl,
+        highContrast && styles.highContrastTabBar,
       ]}
     >
       <TabButton
@@ -19168,6 +19992,16 @@ function TabButton({
       >
         {label}
       </Text>
+      {selected ? (
+        <View
+          style={[
+            styles.tabSelectionIndicator,
+            { backgroundColor: theme.colors.navigationSelected },
+          ]}
+          accessibilityElementsHidden
+          importantForAccessibility="no"
+        />
+      ) : null}
     </Pressable>
   );
 }
@@ -19539,6 +20373,7 @@ function PrimaryButton({
   variant = "default",
   lightMode = false,
   highContrast = false,
+  largerControls,
 }: {
   label: string;
   icon?: LucideIcon;
@@ -19548,8 +20383,11 @@ function PrimaryButton({
   variant?: "default" | "attention";
   lightMode?: boolean;
   highContrast?: boolean;
+  largerControls?: boolean;
 }) {
   const runtimeAccessibility = useContext(AccessibilityRuntimeContext);
+  const useLargerControls =
+    largerControls ?? runtimeAccessibility.largerControls;
   const Icon = icon;
   const theme = resolveVisualTheme(lightMode, highContrast);
   const buttonForeground = disabled
@@ -19576,7 +20414,7 @@ function PrimaryButton({
         highContrast && !lightMode && styles.highContrastSelectedControl,
         highContrast && lightMode && lightStyles.highContrastSelectedControl,
         variant === "attention" && styles.attentionButton,
-        runtimeAccessibility.largerControls && styles.largerControl,
+        useLargerControls && styles.largerControl,
         disabled && styles.disabledButton,
         disabled && {
           backgroundColor: theme.colors.actionSecondary,
@@ -19623,6 +20461,7 @@ function SecondaryButton({
   variant = "default",
   lightMode = false,
   highContrast = false,
+  largerControls,
 }: {
   label: string;
   icon?: LucideIcon;
@@ -19632,8 +20471,11 @@ function SecondaryButton({
   variant?: "default" | "destructive";
   lightMode?: boolean;
   highContrast?: boolean;
+  largerControls?: boolean;
 }) {
   const runtimeAccessibility = useContext(AccessibilityRuntimeContext);
+  const useLargerControls =
+    largerControls ?? runtimeAccessibility.largerControls;
   const Icon = icon;
   const iconColor = disabled
     ? colors.disabledText
@@ -19660,7 +20502,7 @@ function SecondaryButton({
         variant === "destructive" && styles.destructiveSecondaryButton,
         highContrast && !lightMode && styles.highContrastControl,
         highContrast && lightMode && lightStyles.highContrastControl,
-        runtimeAccessibility.largerControls && styles.largerControl,
+        useLargerControls && styles.largerControl,
         disabled && styles.disabledButton,
       ]}
     >
@@ -21832,10 +22674,11 @@ const styles = StyleSheet.create({
   },
   container: {
     alignSelf: "center",
-    maxWidth: 600,
-    padding: spacing.xl,
+    maxWidth: 720,
+    paddingHorizontal: spacing.xxl,
+    paddingTop: spacing.xl,
     paddingBottom: 170,
-    gap: 16,
+    gap: 20,
     width: "100%",
   },
   appScroll: {
@@ -21868,14 +22711,16 @@ const styles = StyleSheet.create({
   brandHeader: {
     alignItems: "center",
     flexDirection: "row",
-    gap: 12,
+    gap: 14,
+    paddingBottom: spacing.xs,
+    paddingHorizontal: spacing.xs,
   },
   compactBrandHeader: {
     gap: 8,
   },
   brandLogoImage: {
-    height: 64,
-    width: 64,
+    height: 68,
+    width: 68,
   },
   compactBrandLogoImage: {
     height: 52,
@@ -22021,9 +22866,9 @@ const styles = StyleSheet.create({
   },
   brandTitle: {
     color: colors.text,
-    fontSize: 28,
+    fontSize: 30,
     fontWeight: "900",
-    lineHeight: 34,
+    lineHeight: 36,
   },
   compactBrandTitle: {
     fontSize: 24,
@@ -22046,7 +22891,7 @@ const styles = StyleSheet.create({
     lineHeight: 26,
   },
   section: {
-    gap: 14,
+    gap: 16,
   },
   profileBar: {
     alignItems: "center",
@@ -22222,15 +23067,22 @@ const styles = StyleSheet.create({
     borderRadius: 0,
     borderWidth: 0,
     flexDirection: "row",
-    gap: 0,
+    gap: 8,
     left: 0,
-    minHeight: 72,
-    paddingHorizontal: 6,
-    paddingTop: 5,
-    paddingBottom: 6,
+    minHeight: 82,
+    paddingHorizontal: 10,
+    paddingTop: 8,
+    paddingBottom: 8,
     position: "absolute",
     right: 0,
     zIndex: mapLayerZ.navigation,
+  },
+  highContrastTabBar: {
+    borderBottomWidth: 0,
+    borderLeftWidth: 0,
+    borderRadius: 0,
+    borderRightWidth: 0,
+    borderTopWidth: 2,
   },
   compactTabBar: {
     gap: 4,
@@ -22243,11 +23095,11 @@ const styles = StyleSheet.create({
   tabButton: {
     alignItems: "center",
     backgroundColor: "transparent",
-    borderRadius: 4,
+    borderRadius: 16,
     flex: 1,
     gap: 2,
     justifyContent: "center",
-    minHeight: 60,
+    minHeight: 64,
     paddingHorizontal: 8,
     paddingVertical: 5,
   },
@@ -22262,9 +23114,7 @@ const styles = StyleSheet.create({
     paddingVertical: 7,
   },
   selectedTabButton: {
-    backgroundColor: "transparent",
-    borderBottomColor: colors.primary,
-    borderBottomWidth: 3,
+    backgroundColor: "rgba(134, 197, 218, 0.10)",
   },
   disabledTabButton: {
     backgroundColor: "transparent",
@@ -22321,6 +23171,12 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     height: 40,
     width: 48,
+  },
+  tabSelectionIndicator: {
+    borderRadius: radius.pill,
+    height: 4,
+    marginTop: 1,
+    width: 30,
   },
   tabStatusDot: {
     backgroundColor: colors.success,
@@ -22457,19 +23313,24 @@ const styles = StyleSheet.create({
     color: "#AFC1C5",
   },
   sectionHeader: {
+    borderLeftColor: colors.primary,
+    borderLeftWidth: 4,
     gap: 4,
+    paddingLeft: spacing.md,
   },
   journeyIntroPanel: {
     alignItems: "center",
     backgroundColor: "#102C2E",
-    borderRadius: radius.md,
+    borderColor: "#31545B",
+    borderRadius: 22,
+    borderWidth: 1,
     flexDirection: "row",
-    gap: spacing.md,
+    gap: spacing.lg,
     justifyContent: "space-between",
-    minHeight: 116,
+    minHeight: 148,
     overflow: "hidden",
-    paddingHorizontal: spacing.lg,
-    paddingVertical: 14,
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.lg,
   },
   stackedJourneyIntroPanel: {
     alignItems: "center",
@@ -22494,9 +23355,9 @@ const styles = StyleSheet.create({
   journeyIntroCopy: {
     color: colors.text,
     flexShrink: 1,
-    fontSize: 18,
-    fontWeight: "700",
-    lineHeight: 25,
+    fontSize: 20,
+    fontWeight: "800",
+    lineHeight: 28,
   },
   largeJourneyIntroCopy: {
     fontSize: 20,
@@ -22511,6 +23372,18 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     minWidth: 120,
   },
+  journeyFindBusArtworkFrame: {
+    backgroundColor: "rgba(255, 255, 255, 0.72)",
+    borderRadius: 18,
+    height: 148,
+    overflow: "hidden",
+    width: 166,
+  },
+  journeyFindBusArtworkImage: {
+    height: 166,
+    transform: [{ translateX: -28 }],
+    width: 194,
+  },
   stackedJourneyIntroArtwork: {
     flexBasis: "auto",
     flexGrow: 0,
@@ -22520,26 +23393,26 @@ const styles = StyleSheet.create({
   },
   journeyLocationLoadingPanel: {
     alignSelf: "stretch",
-    borderRadius: radius.md,
-    gap: spacing.md,
-    minHeight: 196,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.lg,
+    borderRadius: 24,
+    gap: spacing.lg,
+    minHeight: 292,
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.xl,
   },
   journeyLocationLoadingStatus: {
     alignItems: "center",
-    gap: spacing.sm,
+    gap: spacing.md,
   },
   journeyLocationLoadingTitle: {
-    fontSize: 19,
+    fontSize: 22,
     fontWeight: "900",
-    lineHeight: 26,
+    lineHeight: 29,
     textAlign: "center",
   },
   journeyLocationLoadingSupport: {
     fontSize: 16,
-    fontWeight: "700",
-    lineHeight: 22,
+    fontWeight: "600",
+    lineHeight: 23,
     textAlign: "center",
   },
   journeyLocationLongWaitActions: {
@@ -22547,18 +23420,93 @@ const styles = StyleSheet.create({
   },
   journeyFindBusActions: {
     alignSelf: "stretch",
-    gap: spacing.sm,
+    gap: spacing.md,
   },
-  locationLoadingDots: {
+  locationLoadingProgress: {
     alignItems: "center",
     flexDirection: "row",
-    gap: spacing.xs,
-    minHeight: 12,
+    justifyContent: "center",
+    minHeight: 14,
   },
-  locationLoadingDot: {
+  locationLoadingProgressDot: {
     borderRadius: 999,
-    height: 8,
-    width: 8,
+    height: 10,
+    width: 10,
+  },
+  locationLoadingProgressLine: {
+    height: 2,
+    width: 28,
+  },
+  locationSearchVisual: {
+    alignItems: "center",
+    borderRadius: 28,
+    borderWidth: 1,
+    height: 146,
+    justifyContent: "center",
+    overflow: "hidden",
+    position: "relative",
+    width: 176,
+  },
+  locationSearchGridHorizontal: {
+    height: 1,
+    opacity: 0.42,
+    position: "absolute",
+    width: "100%",
+  },
+  locationSearchGridVertical: {
+    height: "100%",
+    opacity: 0.42,
+    position: "absolute",
+    width: 1,
+  },
+  locationSearchOuterRing: {
+    borderRadius: radius.pill,
+    borderWidth: 2,
+    height: 104,
+    position: "absolute",
+    width: 104,
+  },
+  locationSearchInnerRing: {
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    height: 72,
+    opacity: 0.72,
+    position: "absolute",
+    width: 72,
+  },
+  locationSearchPinBadge: {
+    alignItems: "center",
+    borderRadius: radius.pill,
+    borderWidth: 4,
+    height: 56,
+    justifyContent: "center",
+    width: 56,
+  },
+  locationSearchBusBadge: {
+    alignItems: "center",
+    borderRadius: 14,
+    borderWidth: 2,
+    bottom: 14,
+    height: 44,
+    justifyContent: "center",
+    position: "absolute",
+    right: 18,
+    width: 44,
+  },
+  locationSearchWaypoint: {
+    borderRadius: radius.pill,
+    borderWidth: 2,
+    height: 14,
+    position: "absolute",
+    width: 14,
+  },
+  locationSearchWaypointTop: {
+    left: 24,
+    top: 24,
+  },
+  locationSearchWaypointBottom: {
+    bottom: 22,
+    left: 28,
   },
   eyebrow: {
     color: colors.primarySoft,
@@ -22852,15 +23800,33 @@ const styles = StyleSheet.create({
   nextActionCard: {
     backgroundColor: colors.surface,
     borderColor: colors.primary,
-    borderRadius: radius.md,
-    borderWidth: 2,
-    gap: spacing.xs,
-    padding: spacing.lg,
+    borderRadius: 22,
+    borderWidth: 1,
+    gap: spacing.sm,
+    padding: spacing.xl,
   },
   simplifiedNextActionCard: {
     borderColor: colors.highlight,
     borderWidth: 3,
     paddingVertical: spacing.xl,
+  },
+  nextActionHeader: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: spacing.sm,
+  },
+  nextActionStepBadge: {
+    alignItems: "center",
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    height: 34,
+    justifyContent: "center",
+    width: 34,
+  },
+  nextActionStepBadgeText: {
+    fontSize: 17,
+    fontWeight: "900",
+    lineHeight: 21,
   },
   nextActionEyebrow: {
     color: colors.primarySoft,
@@ -22896,11 +23862,13 @@ const styles = StyleSheet.create({
     alignItems: "center",
     backgroundColor: colors.surface,
     borderColor: colors.border,
-    borderRadius: radius.md,
-    borderWidth: borders.default,
+    borderRadius: 20,
+    borderWidth: 1,
     flexDirection: "row",
     gap: spacing.md,
-    padding: spacing.md,
+    minHeight: 84,
+    overflow: "hidden",
+    padding: spacing.lg,
   },
   stackedPreferenceSummaryCard: {
     alignItems: "stretch",
@@ -22909,10 +23877,13 @@ const styles = StyleSheet.create({
   preferenceSummaryEdit: {
     alignItems: "center",
     borderColor: colors.primary,
-    borderRadius: radius.sm,
-    borderWidth: borders.default,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    flexDirection: "row",
+    flexShrink: 0,
+    gap: spacing.sm,
     justifyContent: "center",
-    minHeight: 44,
+    minHeight: 48,
     paddingHorizontal: spacing.md,
   },
   preferenceSummaryEditText: {
@@ -22920,6 +23891,40 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "900",
     lineHeight: 21,
+  },
+  preferenceSummaryLead: {
+    alignItems: "center",
+    flex: 1,
+    flexDirection: "row",
+    flexShrink: 1,
+    gap: spacing.md,
+    minWidth: 0,
+  },
+  preferenceSummaryIcon: {
+    alignItems: "center",
+    borderRadius: 14,
+    borderWidth: 1,
+    flexShrink: 0,
+    height: 48,
+    justifyContent: "center",
+    width: 48,
+  },
+  preferenceSummaryLabel: {
+    fontSize: 13,
+    letterSpacing: 0.4,
+    lineHeight: 18,
+    textTransform: "uppercase",
+  },
+  preferenceSummaryValue: {
+    flexShrink: 1,
+    fontSize: 17,
+    lineHeight: 24,
+    minWidth: 0,
+  },
+  preferenceCategoryCopy: {
+    flex: 1,
+    gap: spacing.xs,
+    minWidth: 0,
   },
   preferencePresetGrid: {
     flexDirection: "row",
@@ -22932,56 +23937,191 @@ const styles = StyleSheet.create({
     borderColor: colors.primary,
     borderRadius: radius.md,
     borderWidth: borders.default,
+    flexBasis: "47%",
+    flexDirection: "row",
     flexGrow: 1,
-    justifyContent: "center",
-    minHeight: 52,
-    minWidth: 120,
+    gap: spacing.sm,
+    minHeight: 92,
+    minWidth: 200,
     paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
+    paddingVertical: spacing.md,
+  },
+  stackedPreferencePresetButton: {
+    flexBasis: "auto",
+    width: "100%",
+  },
+  preferencePresetIcon: {
+    alignItems: "center",
+    borderRadius: 12,
+    flexShrink: 0,
+    height: 42,
+    justifyContent: "center",
+    width: 42,
+  },
+  preferencePresetCopy: {
+    flex: 1,
+    gap: 2,
+    minWidth: 0,
   },
   preferencePresetText: {
     color: colors.text,
     fontSize: 16,
     fontWeight: "800",
     lineHeight: 22,
-    textAlign: "center",
+  },
+  preferencePresetDescription: {
+    color: colors.metadata,
+    fontSize: 13,
+    fontWeight: "600",
+    lineHeight: 18,
+  },
+  preferenceCustomizeHeader: {
+    gap: spacing.xs,
+    marginTop: spacing.sm,
   },
   preferenceCategoryList: {
-    gap: spacing.sm,
-  },
-  preferenceCategoryCard: {
-    alignItems: "center",
-    backgroundColor: colors.surface,
-    borderColor: colors.border,
     borderRadius: radius.md,
     borderWidth: borders.default,
+    overflow: "hidden",
+  },
+  preferenceCategoryItem: {
+    overflow: "hidden",
+  },
+  preferenceCategoryRow: {
+    alignItems: "center",
     flexDirection: "row",
     gap: spacing.md,
-    minHeight: 72,
+    minHeight: 62,
     padding: spacing.md,
   },
-  preferenceCategoryCopy: {
-    flex: 1,
-    gap: spacing.xs,
-    minWidth: 0,
+  preferenceCategoryIcon: {
+    alignItems: "center",
+    borderRadius: radius.sm,
+    flexShrink: 0,
+    height: 38,
+    justifyContent: "center",
+    width: 38,
   },
   preferenceCategoryTitle: {
     color: colors.text,
-    fontSize: 19,
+    flex: 1,
+    fontSize: 17,
     fontWeight: "900",
-    lineHeight: 25,
+    lineHeight: 23,
   },
-  preferenceCategoryDescription: {
+  preferenceCategoryCount: {
     color: colors.metadata,
-    fontSize: 15,
+    flexShrink: 0,
+    fontSize: 13,
     fontWeight: "600",
-    lineHeight: 21,
+    lineHeight: 18,
   },
   preferenceCategoryChevron: {
     transform: [{ rotate: "-90deg" }],
   },
+  expandedPreferenceCategoryChevron: {
+    transform: [{ rotate: "0deg" }],
+  },
+  preferenceAccordionContent: {
+    borderTopWidth: borders.default,
+  },
   preferenceCategorySettings: {
-    gap: spacing.md,
+    gap: 0,
+  },
+  preferenceChecklistGroupHeader: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: spacing.sm,
+    minHeight: 54,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  preferenceChecklistGroupLabel: {
+    color: colors.text,
+    flex: 1,
+    fontSize: 16,
+    fontWeight: "900",
+    lineHeight: 22,
+  },
+  preferenceRoutingGroup: {
+    borderLeftColor: colors.primary,
+    borderLeftWidth: 4,
+  },
+  preferenceChecklistItem: {
+    borderBottomWidth: borders.default,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  preferenceChecklistMain: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: spacing.sm,
+  },
+  preferenceChecklistToggle: {
+    alignItems: "center",
+    flex: 1,
+    flexDirection: "row",
+    gap: spacing.sm,
+    minHeight: 44,
+    minWidth: 0,
+  },
+  preferenceFeatureIcon: {
+    alignItems: "center",
+    borderRadius: 10,
+    flexShrink: 0,
+    height: 34,
+    justifyContent: "center",
+    width: 34,
+  },
+  preferenceChecklistLabel: {
+    color: colors.text,
+    flex: 1,
+    fontSize: 16,
+    fontWeight: "800",
+    lineHeight: 22,
+    minWidth: 0,
+  },
+  preferenceDetailsButton: {
+    alignItems: "center",
+    borderRadius: radius.pill,
+    flexShrink: 0,
+    height: 40,
+    justifyContent: "center",
+    width: 40,
+  },
+  preferenceChecklistDescription: {
+    color: colors.metadata,
+    fontSize: 14,
+    fontWeight: "600",
+    lineHeight: 20,
+    marginBottom: spacing.xs,
+    marginLeft: 42,
+    marginRight: 48,
+  },
+  disabledPreferenceControl: {
+    opacity: 0.46,
+  },
+  largerChecklistControl: {
+    minHeight: 52,
+  },
+  alwaysOnPreferenceRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: spacing.sm,
+    minHeight: 52,
+  },
+  nestedPreferenceChecklistItem: {
+    paddingLeft: spacing.xl,
+  },
+  preferenceChoiceChecklistItem: {
+    borderBottomWidth: borders.default,
+    gap: spacing.sm,
+    padding: spacing.md,
+  },
+  preferenceChoiceChecklistHeader: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: spacing.sm,
   },
   preferenceSectionHeading: {
     color: colors.text,
@@ -23077,10 +24217,10 @@ const styles = StyleSheet.create({
   primaryButton: {
     alignItems: "center",
     backgroundColor: colors.primary,
-    borderRadius: radius.md,
+    borderRadius: 18,
     flexDirection: "row",
     gap: 10,
-    minHeight: 60,
+    minHeight: 62,
     justifyContent: "center",
     padding: spacing.lg,
   },
@@ -23088,11 +24228,11 @@ const styles = StyleSheet.create({
     alignItems: "center",
     backgroundColor: colors.surface,
     borderColor: colors.primary,
-    borderRadius: radius.md,
+    borderRadius: 18,
     borderWidth: borders.default,
     flexDirection: "row",
     gap: 10,
-    minHeight: 60,
+    minHeight: 62,
     justifyContent: "center",
     padding: spacing.lg,
   },
@@ -25684,7 +26824,12 @@ const lightStyles = StyleSheet.create({
     borderColor: lightTheme.border,
   },
   journeyIntroPanel: {
-    backgroundColor: "#DDF4EC",
+    backgroundColor: "#E2F3EF",
+    borderColor: "#B8DCD4",
+  },
+  nextActionCard: {
+    backgroundColor: "#F8FCFC",
+    borderColor: "#80AEB5",
   },
   componentIconBadge: {
     backgroundColor: lightTheme.surfaceSecondary,
@@ -25915,8 +27060,7 @@ const lightStyles = StyleSheet.create({
     backgroundColor: "transparent",
   },
   selectedTabButton: {
-    backgroundColor: "transparent",
-    borderBottomColor: lightTheme.primary,
+    backgroundColor: "#EEF7F8",
   },
   disabledTabButton: {
     backgroundColor: "transparent",

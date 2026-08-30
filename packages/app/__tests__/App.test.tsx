@@ -19,6 +19,7 @@ import App, {
   shouldStackAccessibilityChoices,
   shouldStackFeatureIllustration,
   shouldStackJourneyEntry,
+  shouldStackPreferenceSummary,
 } from "../App";
 import type {
   BusStopArrivalsResponse,
@@ -121,6 +122,24 @@ it.each([280, 320, 360, 390, 430])(
     if (width >= 390) expect(standard).toBe(false);
   },
 );
+
+it("stacks the accessibility summary before text can crowd the edit control", () => {
+  expect(
+    shouldStackPreferenceSummary({ width: 526, textSize: "STANDARD" }),
+  ).toBe(true);
+  expect(
+    shouldStackPreferenceSummary({ width: 700, textSize: "STANDARD" }),
+  ).toBe(false);
+  expect(
+    shouldStackPreferenceSummary({ width: 700, textSize: "LARGE" }),
+  ).toBe(true);
+  expect(
+    shouldStackPreferenceSummary({ width: 800, textSize: "LARGE" }),
+  ).toBe(false);
+  expect(
+    shouldStackPreferenceSummary({ width: 800, textSize: "EXTRA_LARGE" }),
+  ).toBe(true);
+});
 
 it("keeps wheelchair routes visually distinct and exposes located accessibility warnings", () => {
   const mapSource = fs.readFileSync(
@@ -684,12 +703,12 @@ async function startWheelchairOnboardJourney({
   await signInDemoProfile();
 
   fireEvent.press(screen.getByText("Edit accessibility preferences"));
-  fireEvent.press(screen.getByLabelText("Apply Wheelchair preset"));
+  fireEvent.press(screen.getByLabelText("Apply Mobility support preset"));
   if (simplified) {
-    fireEvent.press(screen.getByLabelText("Apply Simplified journey preset"));
+    fireEvent.press(screen.getByLabelText("Apply Simpler journeys preset"));
   }
   if (lowVision) {
-    fireEvent.press(screen.getByLabelText("Apply Low vision preset"));
+    fireEvent.press(screen.getByLabelText("Apply Low-vision support preset"));
   }
   fireEvent.press(screen.getByText("Save needs"));
 
@@ -764,7 +783,7 @@ it("renders the journey entry actions without inactive repeat guidance", () => {
       .props.style,
   );
   expect(heroStyle).toMatchObject({
-    minHeight: 116,
+    minHeight: 148,
     paddingHorizontal: 16,
   });
   expect(["row", "column"]).toContain(heroStyle.flexDirection);
@@ -773,8 +792,8 @@ it("renders the journey entry actions without inactive repeat guidance", () => {
   expect(heroStyle.height).toBeUndefined();
   expect(illustrationStyle).toMatchObject({
     flexShrink: 0,
-    height: 100,
-    width: 120,
+    height: 148,
+    width: 166,
   });
 });
 
@@ -846,16 +865,16 @@ it("keeps repeat guidance in Journey after spoken stop guidance exists", async (
 });
 
 it("uses a contextual location loading state before showing the real map", async () => {
+  let resolveLocation: ((position: { coords: any }) => void) | null = null;
   (Location.requestForegroundPermissionsAsync as jest.Mock).mockResolvedValue({
     status: "granted",
   });
-  (Location.getCurrentPositionAsync as jest.Mock).mockResolvedValue({
-    coords: {
-      latitude: 1.2942,
-      longitude: 103.7711,
-      accuracy: 12,
-    },
-  });
+  (Location.getCurrentPositionAsync as jest.Mock).mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        resolveLocation = resolve;
+      }),
+  );
   (global.fetch as jest.Mock).mockImplementation((url: string) => {
     if (url.includes("/api/location/nearby-bus-stops")) {
       return new Promise(() => undefined);
@@ -894,6 +913,17 @@ it("uses a contextual location loading state before showing the real map", async
       "Illustration of nearby accessible bus stops on a map",
     ),
   ).toBeNull();
+
+  await act(async () => {
+    resolveLocation?.({
+      coords: {
+        latitude: 1.2942,
+        longitude: 103.7711,
+        accuracy: 12,
+      },
+    });
+  });
+  await screen.findByLabelText("Search bus stop, service or place");
 });
 
 it("does not flash the Journey loading panel for an immediate location result", async () => {
@@ -3058,7 +3088,113 @@ it("distinguishes a device location failure from a map provider failure", async 
   expect(screen.queryByText("Unable to load map")).toBeNull();
 });
 
+it("recovers when the browser location permission request never settles", async () => {
+  const realSetTimeout = global.setTimeout;
+  const timeoutSpy = jest
+    .spyOn(global, "setTimeout")
+    .mockImplementation(((callback: (...args: any[]) => void, delay?: number) => {
+      if (delay === 8_000) {
+        Promise.resolve().then(callback);
+        return 1 as any;
+      }
+      return realSetTimeout(callback, delay);
+    }) as typeof global.setTimeout);
+  try {
+    (Location.requestForegroundPermissionsAsync as jest.Mock).mockImplementation(
+      () => new Promise(() => undefined),
+    );
+    render(<App />);
+
+    fireEvent.press(screen.getByText("Use my location"));
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText("We couldn't find your location")).toBeTruthy();
+    expect(timeoutSpy).toHaveBeenCalledWith(expect.any(Function), 8_000);
+    expect(screen.getByLabelText("Try again")).toBeTruthy();
+    expect(screen.getByLabelText("Select bus stop manually")).toBeTruthy();
+    expect(Location.getCurrentPositionAsync).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("journey-location-loading-panel")).toBeNull();
+  } finally {
+    timeoutSpy.mockRestore();
+  }
+});
+
+it("uses a recent last-known location when a fresh device fix is unavailable", async () => {
+  (globalThis as any).document = {};
+  Object.defineProperty(Platform, "OS", {
+    configurable: true,
+    value: "web",
+  });
+  const fallbackCoordinates = {
+    latitude: 1.3004,
+    longitude: 103.7802,
+    accuracy: 35,
+  };
+  (Location.requestForegroundPermissionsAsync as jest.Mock).mockResolvedValue({
+    status: "granted",
+  });
+  (Location.getCurrentPositionAsync as jest.Mock).mockRejectedValue(
+    new Error("Fresh location unavailable"),
+  );
+  (Location.getLastKnownPositionAsync as jest.Mock).mockResolvedValue({
+    coords: fallbackCoordinates,
+    timestamp: Date.now() - 15_000,
+  });
+  mockSuccessfulJourneyApis();
+  render(<App />);
+
+  fireEvent.press(screen.getByText("Use my location"));
+
+  await screen.findByLabelText("Search bus stop, service or place");
+  expect(Location.getLastKnownPositionAsync).toHaveBeenCalledWith({
+    maxAge: 5 * 60_000,
+    requiredAccuracy: 1_000,
+  });
+  expect(global.fetch).toHaveBeenCalledWith(
+    expect.stringContaining("/api/location/nearby-bus-stops"),
+    expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({
+        latitude: fallbackCoordinates.latitude,
+        longitude: fallbackCoordinates.longitude,
+        accuracyMeters: fallbackCoordinates.accuracy,
+      }),
+    }),
+  );
+  const mapMock = require("../__mocks__/JourneyMap") as {
+    getLastJourneyMapProps: () => {
+      currentLocation: { latitude: number; longitude: number };
+      viewport: { center: { latitude: number; longitude: number } };
+    };
+  };
+  expect(mapMock.getLastJourneyMapProps().currentLocation).toMatchObject({
+    latitude: fallbackCoordinates.latitude,
+    longitude: fallbackCoordinates.longitude,
+  });
+  expect(
+    Math.abs(
+      mapMock.getLastJourneyMapProps().viewport.center.latitude -
+        fallbackCoordinates.latitude,
+    ),
+  ).toBeLessThan(0.01);
+  expect(
+    Math.abs(
+      mapMock.getLastJourneyMapProps().viewport.center.longitude -
+        fallbackCoordinates.longitude,
+    ),
+  ).toBeLessThan(0.01);
+});
+
 it("keeps a found location visible when nearby stops fail across Journey entry and map", async () => {
+  (globalThis as any).document = {};
+  Object.defineProperty(Platform, "OS", {
+    configurable: true,
+    value: "web",
+  });
   (Location.requestForegroundPermissionsAsync as jest.Mock).mockResolvedValue({
     status: "granted",
   });
@@ -3081,6 +3217,24 @@ it("keeps a found location visible when nearby stops fail across Journey entry a
   fireEvent.press(screen.getByText("Use my location"));
 
   await screen.findByLabelText("Search bus stop, service or place");
+  const mapMock = require("../__mocks__/JourneyMap") as {
+    getLastJourneyMapProps: () => {
+      currentLocation: { latitude: number; longitude: number };
+      viewport: { center: { latitude: number; longitude: number } };
+    };
+  };
+  expect(mapMock.getLastJourneyMapProps().currentLocation).toMatchObject({
+    latitude: 1.2942,
+    longitude: 103.7711,
+  });
+  expect(
+    Math.abs(mapMock.getLastJourneyMapProps().viewport.center.latitude - 1.2942),
+  ).toBeLessThan(0.01);
+  expect(
+    Math.abs(
+      mapMock.getLastJourneyMapProps().viewport.center.longitude - 103.7711,
+    ),
+  ).toBeLessThan(0.01);
   expect(screen.getByText("Unable to load map")).toBeTruthy();
   expect(screen.queryByLabelText("Nearby bus stops")).toBeNull();
   expect(screen.queryByText("Couldn't find your location")).toBeNull();
@@ -3462,7 +3616,6 @@ it("integrates the centralized illustrations without framed-image fallbacks", ()
   );
   const suppliedAssets = [
     "home_find_bus.png",
-    "location_loading.png",
     "wheelchair_ramp.png",
     "extra_boarding_time.png",
     "audio_identification.png",
@@ -3482,6 +3635,7 @@ it("integrates the centralized illustrations without framed-image fallbacks", ()
     "shouldStackJourneyIntro",
     "function FindBusPanel",
     "function LocationLoadingPanel",
+    "function LocationSearchVisual",
     "function resolveFindBusPanelState",
     "type FindBusPanelState",
     "useDelayedLoadingVisibility",
@@ -3512,9 +3666,9 @@ it("integrates the centralized illustrations without framed-image fallbacks", ()
     "journeyEntryContainer",
     "journeyFindBusActions",
     "paddingBottom: bottomNavigationHeight + spacing.lg",
-    "locationLoadingDots",
+    "locationLoadingProgress",
+    "locationSearchVisual",
     "source={illustrations.homeFindBus}",
-    "source={illustrations.locationLoading}",
     "illustrationSource={illustrations.wheelchairRamp}",
     "illustrationSource={illustrations.extraBoardingTime}",
     "illustrationSource={illustrations.audioIdentification}",
@@ -3548,7 +3702,6 @@ it("integrates the centralized illustrations without framed-image fallbacks", ()
   expect(illustrationSource).not.toContain('width: "100%"');
   [
     'homeFindBus: require("../assets/home_find_bus.png")',
-    'locationLoading: require("../assets/location_loading.png")',
     'wheelchairRamp: require("../assets/wheelchair_ramp.png")',
     'extraBoardingTime: require("../assets/extra_boarding_time.png")',
     'audioIdentification: require("../assets/audio_identification.png")',
@@ -3557,7 +3710,7 @@ it("integrates the centralized illustrations without framed-image fallbacks", ()
     expect(fs.existsSync(asset)).toBe(true);
     expect(fs.statSync(asset).size).toBeGreaterThan(50_000);
   });
-  expect(appSource.match(/illustrations\.locationLoading/g)).toHaveLength(1);
+  expect(appSource).not.toContain("illustrations.locationLoading");
   expect(appSource.match(/illustrations\.wheelchairRamp/g)).toHaveLength(1);
   expect(appSource.match(/illustrations\.extraBoardingTime/g)).toHaveLength(1);
   expect(appSource.match(/illustrations\.audioIdentification/g)).toHaveLength(
@@ -3565,9 +3718,10 @@ it("integrates the centralized illustrations without framed-image fallbacks", ()
   );
   expect(appSource).not.toContain("paddingRight: 128");
   expect(appSource).not.toContain("largeTextHomeIntroPanel");
-  expect(homeLoadingSource).toContain("source={illustrations.locationLoading}");
+  expect(homeLoadingSource).toContain("function LocationSearchVisual");
   expect(homeLoadingSource).toContain('accessibilityRole="progressbar"');
-  expect(homeLoadingSource).toContain("locationLoadingDots");
+  expect(homeLoadingSource).toContain("locationLoadingProgress");
+  expect(homeLoadingSource).toContain("locationSearchVisual");
   expect(homeLoadingSource).not.toContain("ActivityIndicator");
 });
 
@@ -3721,6 +3875,78 @@ it("shows preference saves as a compact dismissible toast without haptic impleme
   expect(screen.queryByText("Preferences saved")).toBeNull();
 });
 
+it("separates quick presets from a compact customization list", async () => {
+  render(<App />);
+  await signInDemoProfile();
+
+  fireEvent.press(screen.getByText("Edit accessibility preferences"));
+
+  expect(screen.getByText("Quick presets")).toBeTruthy();
+  expect(screen.getByText("Customize settings")).toBeTruthy();
+  expect(
+    screen.getByText(
+      "Choose a starting point. You can fine-tune any setting afterwards.",
+    ),
+  ).toBeTruthy();
+  expect(screen.getAllByText("7 options")).toHaveLength(2);
+  expect(screen.getAllByText("3 options")).toHaveLength(2);
+  expect(
+    screen.queryByText(
+      "Wheelchair-aware routes, boarding time and accessible stops",
+    ),
+  ).toBeNull();
+
+  const mobilityPreset = screen.getByLabelText(
+    "Apply Mobility support preset",
+  );
+  expect(mobilityPreset.props.accessibilityState).toMatchObject({
+    selected: false,
+  });
+  fireEvent.press(mobilityPreset);
+  expect(
+    screen.getByLabelText("Apply Mobility support preset").props
+      .accessibilityState,
+  ).toMatchObject({ selected: true });
+});
+
+it("expands one compact checklist and reveals descriptions on demand", async () => {
+  render(<App />);
+  await signInDemoProfile();
+  fireEvent.press(screen.getByText("Edit accessibility preferences"));
+
+  const mobility = screen.getByLabelText("Mobility accessibility settings");
+  expect(mobility.props.accessibilityState).toMatchObject({ expanded: false });
+  fireEvent.press(mobility);
+  expect(
+    screen.getByLabelText("Mobility accessibility settings").props
+      .accessibilityState,
+  ).toMatchObject({ expanded: true });
+  expect(screen.getByLabelText("Wheelchair assistance")).toBeTruthy();
+  expect(
+    screen.queryByText("Request ramp support when boarding"),
+  ).toBeNull();
+
+  const wheelchairDetails = screen.getByLabelText(
+    "About Wheelchair assistance",
+  );
+  fireEvent(wheelchairDetails, "hoverIn");
+  expect(screen.getByText("Request ramp support when boarding")).toBeTruthy();
+  fireEvent(wheelchairDetails, "hoverOut");
+  expect(
+    screen.queryByText("Request ramp support when boarding"),
+  ).toBeNull();
+  fireEvent.press(wheelchairDetails);
+  expect(screen.getByText("Request ramp support when boarding")).toBeTruthy();
+
+  fireEvent.press(screen.getByLabelText("Vision accessibility settings"));
+  expect(screen.queryByLabelText("Wheelchair assistance")).toBeNull();
+  expect(screen.getByText("Text size")).toBeTruthy();
+  expect(
+    screen.getByLabelText("Vision accessibility settings").props
+      .accessibilityState,
+  ).toMatchObject({ expanded: true });
+});
+
 it("supports categorized text sizing and visibly enlarges shared controls", async () => {
   render(<App />);
   await signInDemoProfile();
@@ -3731,14 +3957,7 @@ it("supports categorized text sizing and visibly enlarges shared controls", asyn
   expect(
     screen.getByLabelText("Extra large text").props.accessibilityState,
   ).toMatchObject({ checked: true });
-  expect(
-    StyleSheet.flatten(
-      screen.getByLabelText("Text size preview. Bus 95 arriving in 3 minutes.")
-        .props.style,
-    )?.fontSize,
-  ).toBe(24);
 
-  fireEvent.press(screen.getByLabelText("Back to accessibility"));
   fireEvent.press(screen.getByLabelText("Interaction accessibility settings"));
   fireEvent.press(screen.getByLabelText("Larger controls"));
   expect(
@@ -3747,11 +3966,31 @@ it("supports categorized text sizing and visibly enlarges shared controls", asyn
   ).toBe(68);
 });
 
+it("keeps the accessibility editor layout fixed while text-size changes are drafted", async () => {
+  render(<App />);
+  await signInDemoProfile();
+  fireEvent.press(screen.getByText("Edit accessibility preferences"));
+  fireEvent.press(screen.getByLabelText("Vision accessibility settings"));
+
+  const headingSizeBefore = StyleSheet.flatten(
+    screen.getByText("Vision").props.style,
+  )?.fontSize;
+  fireEvent.press(screen.getByLabelText("Extra large text"));
+
+  expect(
+    screen.getByLabelText("Extra large text").props.accessibilityState,
+  ).toMatchObject({ checked: true });
+  expect(
+    StyleSheet.flatten(screen.getByText("Vision").props.style)?.fontSize,
+  ).toBe(headingSizeBefore);
+  expect(screen.getByLabelText("Save needs")).toBeTruthy();
+});
+
 it("shows a simplified next action without creating a second journey flow", async () => {
   render(<App />);
   await signInDemoProfile();
   fireEvent.press(screen.getByText("Edit accessibility preferences"));
-  fireEvent.press(screen.getByLabelText("Apply Simplified journey preset"));
+  fireEvent.press(screen.getByLabelText("Apply Simpler journeys preset"));
   fireEvent.press(screen.getByText("Save needs"));
   fireEvent.press(screen.getByLabelText(/Journey, tab/));
 
@@ -3759,7 +3998,7 @@ it("shows a simplified next action without creating a second journey flow", asyn
   expect(screen.getByText("Choose your bus stop")).toBeTruthy();
 });
 
-it("defaults wheelchair assistance to wheelchair routing and exposes dependencies", async () => {
+it("keeps wheelchair assistance separate from accessible routing dependencies", async () => {
   render(<App />);
   await signInDemoProfile();
   fireEvent.press(screen.getByText("Edit accessibility preferences"));
@@ -3772,8 +4011,23 @@ it("defaults wheelchair assistance to wheelchair routing and exposes dependencie
   expect(
     screen.getByLabelText("Avoid steep slopes").props.accessibilityState,
   ).toMatchObject({ disabled: true });
+  expect(
+    screen.getByLabelText("Prefer accessible stops").props.accessibilityState,
+  ).toMatchObject({ disabled: true });
 
   fireEvent.press(screen.getByLabelText("Wheelchair assistance"));
+  expect(
+    screen.getByLabelText("Wheelchair assistance").props.accessibilityState,
+  ).toMatchObject({ checked: true });
+  expect(
+    screen.getByLabelText("Wheelchair-friendly routing").props
+      .accessibilityState,
+  ).toMatchObject({ checked: false });
+  expect(
+    screen.getByLabelText("Avoid steep slopes").props.accessibilityState,
+  ).toMatchObject({ disabled: true });
+
+  fireEvent.press(screen.getByLabelText("Wheelchair-friendly routing"));
   expect(
     screen.getByLabelText("Wheelchair-friendly routing").props
       .accessibilityState,
@@ -3781,6 +4035,14 @@ it("defaults wheelchair assistance to wheelchair routing and exposes dependencie
   expect(
     screen.getByLabelText("Avoid steep slopes").props.accessibilityState,
   ).toMatchObject({ disabled: false });
+  expect(
+    screen.getByLabelText("Prefer accessible stops").props.accessibilityState,
+  ).toMatchObject({ disabled: false });
+  expect(
+    screen.getByLabelText(
+      "Avoid steps, included with wheelchair-friendly routing",
+    ),
+  ).toBeTruthy();
 });
 
 it("keeps one canonical global preference state plus the journey override", () => {
@@ -3996,9 +4258,9 @@ it("uses the wheelchair, simplified, large-text, and high-contrast preferences i
   render(<App />);
   await signInDemoProfile();
   fireEvent.press(screen.getByText("Edit accessibility preferences"));
-  fireEvent.press(screen.getByLabelText("Apply Wheelchair preset"));
-  fireEvent.press(screen.getByLabelText("Apply Simplified journey preset"));
-  fireEvent.press(screen.getByLabelText("Apply Low vision preset"));
+  fireEvent.press(screen.getByLabelText("Apply Mobility support preset"));
+  fireEvent.press(screen.getByLabelText("Apply Simpler journeys preset"));
+  fireEvent.press(screen.getByLabelText("Apply Low-vision support preset"));
   fireEvent.press(screen.getByText("Save needs"));
   await openJourneyMap();
   fireEvent.press(

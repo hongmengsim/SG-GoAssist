@@ -1,6 +1,7 @@
 import React, { memo } from "react";
 import {
   Image,
+  type ImageStyle,
   StyleSheet,
   View,
   type ImageSourcePropType,
@@ -37,6 +38,7 @@ export const FeatureIllustration = memo(function FeatureIllustration({
   accessibilityLabel,
   decorative = false,
   size = "medium",
+  imageStyle,
   style,
   testID,
 }: {
@@ -44,6 +46,7 @@ export const FeatureIllustration = memo(function FeatureIllustration({
   accessibilityLabel?: string;
   decorative?: boolean;
   size?: FeatureIllustrationSize;
+  imageStyle?: StyleProp<ImageStyle>;
   style?: StyleProp<ViewStyle>;
   testID?: string;
 }) {
@@ -56,7 +59,7 @@ export const FeatureIllustration = memo(function FeatureIllustration({
     >
       <Image
         source={source}
-        style={[styles.image, sizeStyles[size]]}
+        style={[styles.image, sizeStyles[size], imageStyle]}
         resizeMode="contain"
         accessible={!decorative}
         accessibilityLabel={decorative ? undefined : accessibilityLabel}

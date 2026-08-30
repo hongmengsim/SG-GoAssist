@@ -35,25 +35,28 @@ it("hydrates saved text, contrast, and appearance preferences before persisting"
 
   render(<App />);
 
+  await waitFor(async () => {
+    const saved = JSON.parse(
+      (await AsyncStorage.getItem(preferencesKey)) ?? "{}",
+    );
+    expect(saved).toMatchObject({
+      version: 2,
+      accessibilityPreferences: {
+        wheelchairAssistance: true,
+        extraBoardingTime: true,
+        spokenGuidance: true,
+        textSize: "LARGE",
+        highContrast: true,
+        themeMode: "dark",
+      },
+    });
+  });
+
   await waitFor(() => {
     const copy = screen.getByText(
       "Choose a nearby stop and the bus you want to board.",
     );
     expect(StyleSheet.flatten(copy.props.style)?.fontSize).toBe(20);
-  });
-
-  expect(
-    JSON.parse((await AsyncStorage.getItem(preferencesKey)) ?? "{}"),
-  ).toMatchObject({
-    version: 2,
-    accessibilityPreferences: {
-      wheelchairAssistance: true,
-      extraBoardingTime: true,
-      spokenGuidance: true,
-      textSize: "LARGE",
-      highContrast: true,
-      themeMode: "dark",
-    },
   });
 });
 

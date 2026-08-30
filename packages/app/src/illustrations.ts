@@ -1,6 +1,5 @@
 export const illustrations = {
   homeFindBus: require("../assets/home_find_bus.png"),
-  locationLoading: require("../assets/location_loading.png"),
   wheelchairRamp: require("../assets/wheelchair_ramp.png"),
   extraBoardingTime: require("../assets/extra_boarding_time.png"),
   audioIdentification: require("../assets/audio_identification.png"),

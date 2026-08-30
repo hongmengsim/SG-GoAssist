@@ -12,7 +12,6 @@ it("maps every runtime illustration to a checked-in asset", () => {
   );
   const assets = [
     "home_find_bus.png",
-    "location_loading.png",
     "wheelchair_ramp.png",
     "extra_boarding_time.png",
     "audio_identification.png",
@@ -41,7 +40,9 @@ it("exposes meaningful illustrations to accessibility services", () => {
   expect(
     screen.getByLabelText("Passenger requesting ramp assistance"),
   ).toBeTruthy();
-  expect(StyleSheet.flatten(screen.getByTestId("feature-art").props.style)).toMatchObject({
+  expect(
+    StyleSheet.flatten(screen.getByTestId("feature-art").props.style),
+  ).toMatchObject({
     height: 104,
     width: 160,
   });
