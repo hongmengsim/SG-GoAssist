@@ -56,6 +56,26 @@ export async function createAssistanceRequest(
   return (await response.json()) as AssistanceRequestResponse;
 }
 
+export async function requestPassengerOperatorHelp(payload: {
+  stopCode: string;
+  busId?: string;
+  busService?: string;
+  phase: "BOARDING" | "ALIGHTING";
+  anonymousToken: string;
+  idempotencyKey: string;
+  reason: string;
+}): Promise<{ case: { caseId: string; state: "ESCALATED" } }> {
+  const response = await fetch(`${API_BASE_URL}/api/operations/passenger-help`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) throw new Error("Unable to alert a remote operator.");
+  return (await response.json()) as {
+    case: { caseId: string; state: "ESCALATED" };
+  };
+}
+
 export async function cancelAssistanceRequest(
   requestId: string,
   signal?: AbortSignal,

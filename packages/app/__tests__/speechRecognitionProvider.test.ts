@@ -10,6 +10,7 @@ class FakeRecognition {
   interimResults = true;
   lang = "";
   maxAlternatives = 0;
+  onstart: (() => void) | null = null;
   onresult: ((event: any) => void) | null = null;
   onerror: ((event: any) => void) | null = null;
   onend: (() => void) | null = null;
@@ -37,6 +38,24 @@ it("captures one en-SG transcript without storing audio", async () => {
     results: [{ 0: { transcript: "What bus is here?" } }],
   });
   await expect(transcript).resolves.toBe("What bus is here?");
+});
+
+it("starts the listening window only after the recognizer reports readiness", async () => {
+  const states: string[] = [];
+  const provider = new WebSpeechRecognitionProvider({
+    SpeechRecognition: FakeRecognition,
+  } as any);
+  const transcript = provider.start("en-SG", {
+    onStateChange: (state) => states.push(state),
+  });
+  expect(states).toEqual(["PREPARING"]);
+  FakeRecognition.latest?.onstart?.();
+  expect(states).toEqual(["PREPARING", "LISTENING"]);
+  FakeRecognition.latest?.onresult?.({
+    results: [{ 0: { transcript: "Where am I?" } }],
+  });
+  await expect(transcript).resolves.toBe("Where am I?");
+  expect(states).toEqual(["PREPARING", "LISTENING", "FINALISING"]);
 });
 
 it("keeps listening after an early no-speech event", async () => {

@@ -1,0 +1,11 @@
+Qwen3-0.6B-Q8_0
+Copyright 2025 Qwen Team, Alibaba Cloud
+
+The Android build downloads the unmodified Qwen/Qwen3-0.6B-GGUF Q8_0
+artifact from the pinned upstream revision. The model is licensed under the
+Apache License, Version 2.0. The model binary is not stored in this repository.
+
+Source: https://huggingface.co/Qwen/Qwen3-0.6B-GGUF
+License: https://www.apache.org/licenses/LICENSE-2.0
+Pinned revision: 1eaf4d9657fe65ad10a51eab76a8db5b363bddaa
+SHA-256: 9465e63a22add5354d9bb4b99e90117043c7124007664907259bd16d043bb031

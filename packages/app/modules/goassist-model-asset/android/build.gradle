@@ -1,0 +1,12 @@
+apply plugin: 'com.android.library'
+apply plugin: 'expo-module-gradle-plugin'
+
+group = 'sg.goassist.model'
+version = '0.1.0'
+
+android {
+  namespace "sg.goassist.model"
+  defaultConfig {
+    minSdkVersion 26
+  }
+}

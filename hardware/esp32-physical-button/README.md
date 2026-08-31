@@ -74,8 +74,8 @@ Expected successful response behavior:
 
 ## Prototype Duplicate Behavior
 
-Current duplicate consolidation is prototype request de-duplication:
+The operations layer now retains every intent while consolidating duplicate bus actions:
 
 `same bus + same assistance type = one active bus action`
 
-It should not be interpreted as passenger counting. A later version should distinguish repeated signals from one passenger versus separate intents from multiple wheelchair users.
+Separate app sessions or anonymous tokens count as separate passengers. Repeated signals from the same token remain visible as intents without deploying a second ramp action.

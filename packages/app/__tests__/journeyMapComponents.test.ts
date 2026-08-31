@@ -98,7 +98,34 @@ it("uses a keyless OpenStreetMap web provider with retry and resize handling", (
   ].forEach((token) => expect(mapConfig).toContain(token));
 
   expect(packageJson.dependencies.leaflet).toBe("1.9.4");
-  expect(packageJson.dependencies["react-leaflet"]).toBe("4.2.1");
+  expect(packageJson.dependencies["react-leaflet"]).toBe("^5.0.0");
+});
+
+it("opens on the immediate neighbourhood and uses prominent stop markers", () => {
+  const app = source("App.tsx");
+  const mapConfig = source("src/mapConfig.ts");
+  const nativeMap = source("src/components/NativeJourneyMap.native.tsx");
+  const webMap = source("src/components/JourneyMap.web.tsx");
+
+  expect(mapConfig).toContain("INITIAL_NEIGHBORHOOD_RADIUS_METERS = 200");
+  expect(mapConfig).toContain("DEFAULT_ZOOM = 18");
+  expect(app).toContain('import { DEFAULT_ZOOM } from "./src/mapConfig"');
+  expect(app).toContain("const focusZoom = DEFAULT_ZOOM");
+
+  [
+    "size: selected ? 54 : recommended ? 50 : 44",
+    'data-marker-state="selected"',
+    'data-marker-state="recommended"',
+  ].forEach((token) => expect(webMap).toContain(token));
+  [
+    "recommendedStopMarker",
+    "height: 44",
+    "height: 50",
+    "height: 54",
+    "<BusFront",
+    "<Star",
+    "<Check",
+  ].forEach((token) => expect(nativeMap).toContain(token));
 });
 
 it("uses provider-native geographic maps on Android and iOS", () => {
@@ -112,7 +139,7 @@ it("uses provider-native geographic maps on Android and iOS", () => {
   [
     "react-native-maps",
     "provider={PROVIDER_GOOGLE}",
-    "style={StyleSheet.absoluteFillObject}",
+    "style={StyleSheet.absoluteFill}",
     "<Marker",
     "coordinate={currentLocation}",
     "<Circle",

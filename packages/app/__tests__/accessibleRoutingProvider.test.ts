@@ -148,6 +148,7 @@ it("sends a real Valhalla wheelchair transport mode and preserves preference-sen
     accessibility: { confidence: "LIMITED_DATA", knownSteps: 0 },
   });
   expect(route.steps[0].instruction).toBe("Continue south on the path");
+  expect(route.steps[0].maneuverDirection).toBe("DEPART");
   expect(global.fetch).toHaveBeenCalledTimes(2);
 });
 
@@ -204,7 +205,9 @@ it("uses the openrouteservice wheelchair profile restrictions and rejects mapped
 });
 
 it("never relabels an OSRM walking route as wheelchair accessible", async () => {
-  const provider = new OsrmWalkingRoutingProvider("https://routing.example.test");
+  const provider = new OsrmWalkingRoutingProvider(
+    "https://routing.example.test",
+  );
   await expect(provider.getRoute(request)).rejects.toMatchObject({
     code: "WHEELCHAIR_ROUTING_UNAVAILABLE",
   });

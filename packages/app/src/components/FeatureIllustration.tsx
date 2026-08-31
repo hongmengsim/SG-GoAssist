@@ -1,13 +1,11 @@
 import React, { memo } from "react";
 import {
-  Image,
   type ImageStyle,
-  StyleSheet,
-  View,
   type ImageSourcePropType,
   type StyleProp,
   type ViewStyle,
 } from "react-native";
+import { ThemedSceneArtwork } from "./ThemedSceneArtwork";
 
 export type FeatureIllustrationSize = "small" | "medium" | "large" | "hero";
 
@@ -21,7 +19,7 @@ const sizeStyles: Record<
   },
   medium: {
     height: 96,
-    width: 112,
+    width: 144,
   },
   large: {
     height: 104,
@@ -29,7 +27,7 @@ const sizeStyles: Record<
   },
   hero: {
     height: 100,
-    width: 120,
+    width: 150,
   },
 };
 
@@ -38,6 +36,8 @@ export const FeatureIllustration = memo(function FeatureIllustration({
   accessibilityLabel,
   decorative = false,
   size = "medium",
+  lightMode = true,
+  highContrast = false,
   imageStyle,
   style,
   testID,
@@ -46,37 +46,22 @@ export const FeatureIllustration = memo(function FeatureIllustration({
   accessibilityLabel?: string;
   decorative?: boolean;
   size?: FeatureIllustrationSize;
+  lightMode?: boolean;
+  highContrast?: boolean;
   imageStyle?: StyleProp<ImageStyle>;
   style?: StyleProp<ViewStyle>;
   testID?: string;
 }) {
   return (
-    <View
+    <ThemedSceneArtwork
+      source={source}
+      accessibilityLabel={accessibilityLabel}
+      decorative={decorative}
+      lightMode={lightMode}
+      highContrast={highContrast}
       testID={testID}
-      style={[styles.container, sizeStyles[size], style]}
-      accessibilityElementsHidden={decorative}
-      importantForAccessibility={decorative ? "no" : "auto"}
-    >
-      <Image
-        source={source}
-        style={[styles.image, sizeStyles[size], imageStyle]}
-        resizeMode="contain"
-        accessible={!decorative}
-        accessibilityLabel={decorative ? undefined : accessibilityLabel}
-        accessibilityIgnoresInvertColors
-      />
-    </View>
+      style={[sizeStyles[size], style]}
+      imageStyle={imageStyle}
+    />
   );
-});
-
-const styles = StyleSheet.create({
-  container: {
-    alignSelf: "center",
-    flexShrink: 0,
-    justifyContent: "center",
-    maxWidth: "100%",
-  },
-  image: {
-    flexShrink: 0,
-  },
 });

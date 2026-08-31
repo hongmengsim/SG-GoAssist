@@ -5,6 +5,7 @@ type StatusSocketOptions = {
   initialReconnectDelayMs?: number;
   maxReconnectDelayMs?: number;
   onConnected?: () => void;
+  caseId?: string;
 };
 
 const requestStatuses = new Set([
@@ -14,11 +15,40 @@ const requestStatuses = new Set([
   "FAILED",
 ]);
 const vehicleStatuses = new Set(["APPROACHING", "ARRIVED", "DEPARTED"]);
+const autonomousDriveStates = new Set([
+  "IDLE",
+  "ROUTE_ASSIGNED",
+  "EN_ROUTE",
+  "APPROACHING_STOP",
+  "PRECISION_STOPPING",
+  "STOPPED_SECURE",
+  "DOORS_OPEN",
+  "READY_TO_DEPART",
+  "DEPARTING",
+  "MANUAL_OVERRIDE",
+  "EMERGENCY_STOP",
+  "BLOCKED",
+]);
+const assistanceCaseStates = new Set([
+  "REQUESTED",
+  "VALIDATED",
+  "VEHICLE_ASSIGNED",
+  "SAFE_TO_ACTUATE",
+  "ACTUATING",
+  "READY",
+  "COMPLETED",
+  "NEEDS_CONFIRMATION",
+  "ESCALATED",
+  "BLOCKED",
+  "FAILED",
+  "CANCELLED",
+]);
 
 function parseStatusUpdate(
   value: unknown,
   requestId: string,
   expectedBusId?: string,
+  caseId?: string,
 ): StatusUpdateMessage | null {
   if (!value || typeof value !== "object") {
     return null;
@@ -27,8 +57,6 @@ function parseStatusUpdate(
   const message = value as Record<string, unknown>;
   if (
     typeof message.type !== "string" ||
-    typeof message.busId !== "string" ||
-    typeof message.busService !== "string" ||
     typeof message.timestamp !== "string"
   ) {
     return null;
@@ -37,6 +65,8 @@ function parseStatusUpdate(
   if (message.type === "REQUEST_STATUS") {
     if (
       message.requestId !== requestId ||
+      typeof message.busId !== "string" ||
+      typeof message.busService !== "string" ||
       typeof message.status !== "string" ||
       !requestStatuses.has(message.status)
     ) {
@@ -49,6 +79,7 @@ function parseStatusUpdate(
     if (
       !expectedBusId ||
       message.busId !== expectedBusId ||
+      typeof message.busService !== "string" ||
       typeof message.status !== "string" ||
       !vehicleStatuses.has(message.status)
     ) {
@@ -60,8 +91,39 @@ function parseStatusUpdate(
   if (message.type === "EXTERNAL_ANNOUNCEMENT") {
     if (
       message.requestId !== requestId ||
+      typeof message.busId !== "string" ||
+      typeof message.busService !== "string" ||
       message.assistanceType !== "BUS_AUDIO_IDENTIFICATION" ||
       typeof message.announcement !== "string"
+    ) {
+      return null;
+    }
+    return message as unknown as StatusUpdateMessage;
+  }
+
+  if (message.type === "CASE_STATUS") {
+    if (
+      !caseId ||
+      message.caseId !== caseId ||
+      typeof message.state !== "string" ||
+      !assistanceCaseStates.has(message.state) ||
+      typeof message.stopCode !== "string"
+    ) {
+      return null;
+    }
+    return message as unknown as StatusUpdateMessage;
+  }
+
+  if (message.type === "AUTONOMY_STATUS") {
+    const autonomy = message.autonomy as Record<string, unknown> | undefined;
+    if (
+      !expectedBusId ||
+      message.busId !== expectedBusId ||
+      typeof message.busService !== "string" ||
+      !autonomy ||
+      autonomy.busId !== expectedBusId ||
+      typeof autonomy.state !== "string" ||
+      !autonomousDriveStates.has(autonomy.state)
     ) {
       return null;
     }
@@ -138,6 +200,14 @@ export function subscribeToRequestStatus(
           requestId,
         })
       );
+      if (options.caseId) {
+        socket.send(
+          JSON.stringify({
+            type: "SUBSCRIBE_CASE",
+            caseId: options.caseId,
+          }),
+        );
+      }
     };
 
     socket.onmessage = (event) => {
@@ -150,6 +220,7 @@ export function subscribeToRequestStatus(
           JSON.parse(String(event.data)),
           requestId,
           subscribedBusId,
+          options.caseId,
         );
         if (message) {
           if (message.type === "REQUEST_STATUS") {

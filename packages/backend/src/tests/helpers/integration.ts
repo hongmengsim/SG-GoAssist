@@ -6,6 +6,7 @@ import {
   setupStateChangeListener,
 } from "../../services/websocket";
 import { clearAllRequests } from "../../services/aviator";
+import { clearOperations } from "../../services/assistanceCaseService";
 
 export interface TestServer {
   baseUrl: string;
@@ -15,6 +16,7 @@ export interface TestServer {
 
 export async function startTestServer(): Promise<TestServer> {
   clearAllRequests();
+  clearOperations();
   const server = http.createServer(createApp());
   initializeWebSocketServer(server, 0);
   setupStateChangeListener();

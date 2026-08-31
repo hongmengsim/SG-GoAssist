@@ -3,11 +3,14 @@ import http from "http";
 import { StatusUpdateMessage } from "@buspass/shared";
 import { logger } from "./logger";
 import { getRequest, onAssistanceEvent } from "./aviator";
+import { getCase, onOperationsEvent } from "./assistanceCaseService";
 
 interface WebSocketClient {
   ws: WebSocket;
   requestId?: string;
   busId?: string;
+  caseId?: string;
+  operations?: boolean;
 }
 
 const clients: Set<WebSocketClient> = new Set();
@@ -54,6 +57,35 @@ export function initializeWebSocketServer(httpServer: http.Server, port: number)
             );
           }
         }
+        if (message.type === "SUBSCRIBE_CASE") {
+          client.caseId = message.caseId;
+          client.busId = message.busId;
+          ws.send(JSON.stringify({ type: "SUBSCRIBED_CASE", caseId: client.caseId }));
+          const caseRecord = getCase(message.caseId);
+          if (caseRecord) {
+            client.busId = caseRecord.busId ?? client.busId;
+            ws.send(JSON.stringify({
+              type: "CASE_STATUS",
+              caseId: caseRecord.caseId,
+              busId: caseRecord.busId,
+              stopCode: caseRecord.stopCode,
+              state: caseRecord.state,
+              passengerCount: caseRecord.passengerCount,
+              assistanceTypes: caseRecord.assistanceTypes,
+              escalationReason: caseRecord.escalationReason,
+              timestamp: new Date().toISOString(),
+            }));
+          }
+        }
+        if (message.type === "SUBSCRIBE_OPERATIONS") {
+          const expectedToken = process.env.OPERATOR_API_TOKEN;
+          if (expectedToken && message.token !== expectedToken) {
+            ws.send(JSON.stringify({ type: "AUTH_REQUIRED" }));
+          } else {
+            client.operations = true;
+            ws.send(JSON.stringify({ type: "SUBSCRIBED_OPERATIONS" }));
+          }
+        }
       } catch (error) {
         logger.error("Error processing WebSocket message", undefined, {
           error: String(error),
@@ -85,6 +117,9 @@ export function setupStateChangeListener() {
   onAssistanceEvent((message) => {
     broadcastStatusUpdate(message);
   });
+  onOperationsEvent((message) => {
+    broadcastStatusUpdate(message);
+  });
 }
 
 export function broadcastStatusUpdate(message: StatusUpdateMessage) {
@@ -94,6 +129,8 @@ export function broadcastStatusUpdate(message: StatusUpdateMessage) {
     }
 
     const shouldSend =
+      client.operations === true ||
+      ("caseId" in message && message.caseId === client.caseId) ||
       ("requestId" in message && message.requestId === client.requestId) ||
       ("busId" in message && message.busId === client.busId);
 

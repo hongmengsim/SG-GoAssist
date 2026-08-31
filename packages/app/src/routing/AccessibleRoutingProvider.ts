@@ -5,6 +5,7 @@ import {
   type AccessibleRoute,
   type RouteAccessibility,
   type RouteAccessibilityPreferences,
+  type RouteManeuverDirection,
   type RouteRequest,
   type RouteStep,
   type RoutingCoordinate,
@@ -12,6 +13,51 @@ import {
   type WalkingRoute,
   type WalkingRouteRequest,
 } from "./RoutingProvider";
+
+const valhallaManeuverDirections: Record<number, RouteManeuverDirection> = {
+  1: "DEPART",
+  2: "DEPART",
+  3: "DEPART",
+  4: "ARRIVE",
+  5: "ARRIVE",
+  6: "ARRIVE",
+  8: "STRAIGHT",
+  9: "SLIGHT_RIGHT",
+  10: "RIGHT",
+  11: "SHARP_RIGHT",
+  12: "U_TURN",
+  13: "U_TURN",
+  14: "SHARP_LEFT",
+  15: "LEFT",
+  16: "SLIGHT_LEFT",
+  17: "STRAIGHT",
+  18: "RIGHT",
+  19: "LEFT",
+  20: "RIGHT",
+  21: "LEFT",
+  22: "STRAIGHT",
+  23: "SLIGHT_RIGHT",
+  24: "SLIGHT_LEFT",
+  26: "ROUNDABOUT",
+  27: "ROUNDABOUT",
+};
+
+const orsManeuverDirections: Record<number, RouteManeuverDirection> = {
+  0: "LEFT",
+  1: "RIGHT",
+  2: "SHARP_LEFT",
+  3: "SHARP_RIGHT",
+  4: "SLIGHT_LEFT",
+  5: "SLIGHT_RIGHT",
+  6: "STRAIGHT",
+  7: "ROUNDABOUT",
+  8: "ROUNDABOUT",
+  9: "U_TURN",
+  10: "ARRIVE",
+  11: "DEPART",
+  12: "SLIGHT_LEFT",
+  13: "SLIGHT_RIGHT",
+};
 
 type AccessibilityFacts = {
   knownSteps?: number;
@@ -119,7 +165,8 @@ export function assessWheelchairAccessibility(
   if (confidence === "LIMITED_DATA") {
     warnings.push({
       code: "INCOMPLETE_ACCESSIBILITY_DATA",
-      message: "Accessibility data is incomplete. Check conditions before travelling.",
+      message:
+        "Accessibility data is incomplete. Check conditions before travelling.",
       severity: "INFO",
     });
   }
@@ -141,7 +188,10 @@ export function assessWheelchairAccessibility(
 }
 
 function validCoordinate(coordinate: RoutingCoordinate) {
-  return Number.isFinite(coordinate.latitude) && Number.isFinite(coordinate.longitude);
+  return (
+    Number.isFinite(coordinate.latitude) &&
+    Number.isFinite(coordinate.longitude)
+  );
 }
 
 function coordinateKey(coordinate: RoutingCoordinate) {
@@ -167,7 +217,10 @@ function mapRequestError(error: unknown, serviceName: string): never {
   if (error instanceof RoutingProviderError) {
     throw error;
   }
-  throw new RoutingProviderError(`${serviceName} could not be reached.`, "NETWORK");
+  throw new RoutingProviderError(
+    `${serviceName} could not be reached.`,
+    "NETWORK",
+  );
 }
 
 type ValhallaResponse = {
@@ -228,11 +281,13 @@ export class ValhallaWheelchairRoutingProvider implements RoutingProvider {
     accessibilityWarnings: false,
   } as const;
 
-  private readonly cache = new Map<string, { expiresAt: number; route: AccessibleRoute }>();
+  private readonly cache = new Map<
+    string,
+    { expiresAt: number; route: AccessibleRoute }
+  >();
 
   constructor(
-    private readonly baseUrl =
-      process.env.EXPO_PUBLIC_WHEELCHAIR_ROUTING_URL?.trim() ||
+    private readonly baseUrl = process.env.EXPO_PUBLIC_WHEELCHAIR_ROUTING_URL?.trim() ||
       "https://valhalla1.openstreetmap.de/route",
   ) {}
 
@@ -247,7 +302,10 @@ export class ValhallaWheelchairRoutingProvider implements RoutingProvider {
     if (request.mobilityMode !== "WHEELCHAIR") {
       return this.getWalkingRoute(request);
     }
-    if (!validCoordinate(request.origin) || !validCoordinate(request.destination)) {
+    if (
+      !validCoordinate(request.origin) ||
+      !validCoordinate(request.destination)
+    ) {
       throw new RoutingProviderError(
         "Wheelchair directions need valid origin and destination coordinates.",
         "INVALID_RESPONSE",
@@ -260,7 +318,10 @@ export class ValhallaWheelchairRoutingProvider implements RoutingProvider {
     const payload = {
       locations: [
         { lat: request.origin.latitude, lon: request.origin.longitude },
-        { lat: request.destination.latitude, lon: request.destination.longitude },
+        {
+          lat: request.destination.latitude,
+          lon: request.destination.longitude,
+        },
       ],
       costing: "pedestrian",
       costing_options: {
@@ -268,7 +329,9 @@ export class ValhallaWheelchairRoutingProvider implements RoutingProvider {
           transport_type: "wheelchair",
           step_penalty: 3600,
           max_grade: request.accessibilityPreferences.avoidSteepSlopes ? 6 : 12,
-          use_hills: request.accessibilityPreferences.avoidSteepSlopes ? 1 : 0.5,
+          use_hills: request.accessibilityPreferences.avoidSteepSlopes
+            ? 1
+            : 0.5,
         },
       },
       units: "kilometers",
@@ -307,28 +370,42 @@ export class ValhallaWheelchairRoutingProvider implements RoutingProvider {
     legs.forEach((leg) => {
       const legGeometry = leg.shape ? decodePolyline6(leg.shape) : [];
       const geometryOffset = Math.max(0, geometry.length - 1);
-      geometry.push(...(geometry.length > 0 ? legGeometry.slice(1) : legGeometry));
+      geometry.push(
+        ...(geometry.length > 0 ? legGeometry.slice(1) : legGeometry),
+      );
       (leg.maneuvers ?? []).forEach((maneuver) => {
         const geometryIndex = Math.min(
           geometry.length - 1,
           geometryOffset + (maneuver.begin_shape_index ?? 0),
         );
-        const instruction = maneuver.instruction?.trim() || "Continue along the route";
+        const instruction =
+          maneuver.instruction?.trim() || "Continue along the route";
         steps.push({
           instruction: instruction.replace(/^Walk\b/i, "Continue"),
-          distanceMeters: Math.max(0, Math.round((maneuver.length ?? 0) * 1000)),
+          distanceMeters: Math.max(
+            0,
+            Math.round((maneuver.length ?? 0) * 1000),
+          ),
           durationSeconds: Math.max(0, Math.round(maneuver.time ?? 0)),
           maneuver: String(maneuver.type ?? "continue"),
+          maneuverDirection:
+            maneuver.type === undefined
+              ? "UNKNOWN"
+              : (valhallaManeuverDirections[maneuver.type] ?? "UNKNOWN"),
           coordinate: geometry[geometryIndex],
           geometryIndex,
         });
       });
     });
-    const knownSteps = steps.filter((step) => /\bstairs?|\bsteps?\b/i.test(step.instruction)).length;
+    const knownSteps = steps.filter((step) =>
+      /\bstairs?|\bsteps?\b/i.test(step.instruction),
+    ).length;
     const summary = body.trip?.summary;
     if (body.trip?.status !== 0 || geometry.length < 2 || !summary) {
       throw new RoutingProviderError(
-        body.trip?.status_message || body.error || "No wheelchair-aware route was found.",
+        body.trip?.status_message ||
+          body.error ||
+          "No wheelchair-aware route was found.",
         body.trip?.status === 442 ? "NO_ROUTE" : "INVALID_RESPONSE",
       );
     }
@@ -400,7 +477,9 @@ const orsSurfaceNames: Record<number, string> = {
   17: "grass",
 };
 
-function maximumOrsIncline(values: Array<[number, number, number]> | undefined) {
+function maximumOrsIncline(
+  values: Array<[number, number, number]> | undefined,
+) {
   const representativePercent: Record<number, number> = {
     0: 0,
     1: 2,
@@ -415,20 +494,27 @@ function maximumOrsIncline(values: Array<[number, number, number]> | undefined) 
     [-5]: 17,
   };
   if (!values) return undefined;
-  return Math.max(0, ...values.map(([, , value]) => representativePercent[value] ?? 0));
+  return Math.max(
+    0,
+    ...values.map(([, , value]) => representativePercent[value] ?? 0),
+  );
 }
 
 export class OpenRouteServiceWheelchairProvider implements RoutingProvider {
   readonly id = "OPENROUTESERVICE_WHEELCHAIR";
   readonly name = "openrouteservice wheelchair router";
-  readonly attributionLabel = "Routing © openrouteservice / OpenStreetMap contributors";
+  readonly attributionLabel =
+    "Routing © openrouteservice / OpenStreetMap contributors";
   readonly attributionUrl = "https://openrouteservice.org/terms-of-service/";
   readonly capabilities = {
     walking: false,
     wheelchair: true,
     accessibilityWarnings: true,
   } as const;
-  private readonly cache = new Map<string, { expiresAt: number; route: AccessibleRoute }>();
+  private readonly cache = new Map<
+    string,
+    { expiresAt: number; route: AccessibleRoute }
+  >();
 
   constructor(
     private readonly apiKey: string,
@@ -443,7 +529,8 @@ export class OpenRouteServiceWheelchairProvider implements RoutingProvider {
   }
 
   async getRoute(request: RouteRequest): Promise<AccessibleRoute> {
-    if (request.mobilityMode !== "WHEELCHAIR") return this.getWalkingRoute(request);
+    if (request.mobilityMode !== "WHEELCHAIR")
+      return this.getWalkingRoute(request);
     const cacheKey = requestKey(request);
     const cached = this.cache.get(cacheKey);
     if (cached && cached.expiresAt > Date.now()) return cached.route;
@@ -452,7 +539,8 @@ export class OpenRouteServiceWheelchairProvider implements RoutingProvider {
       maximum_sloped_kerb: 0.06,
       minimum_width: 0.9,
     };
-    if (request.accessibilityPreferences.avoidSteepSlopes) restrictions.maximum_incline = 6;
+    if (request.accessibilityPreferences.avoidSteepSlopes)
+      restrictions.maximum_incline = 6;
     if (request.accessibilityPreferences.preferSmoothSurfaces) {
       restrictions.surface_type = "cobblestone:flattened";
       restrictions.track_type = "grade1";
@@ -494,7 +582,10 @@ export class OpenRouteServiceWheelchairProvider implements RoutingProvider {
     const body = (await response.json()) as OrsResponse;
     const feature = body.features?.[0];
     const coordinates = feature?.geometry?.coordinates ?? [];
-    const geometry = coordinates.map(([longitude, latitude]) => ({ latitude, longitude }));
+    const geometry = coordinates.map(([longitude, latitude]) => ({
+      latitude,
+      longitude,
+    }));
     const summary = feature?.properties?.summary;
     if (!summary || geometry.length < 2 || !geometry.every(validCoordinate)) {
       throw new RoutingProviderError(
@@ -504,9 +595,16 @@ export class OpenRouteServiceWheelchairProvider implements RoutingProvider {
     }
     const extras = feature?.properties?.extras;
     const surfaces = extras?.surface?.values
-      ? [...new Set(extras.surface.values.map(([, , value]) => orsSurfaceNames[value] ?? "unknown"))]
+      ? [
+          ...new Set(
+            extras.surface.values.map(
+              ([, , value]) => orsSurfaceNames[value] ?? "unknown",
+            ),
+          ),
+        ]
       : undefined;
-    const knownSteps = extras?.waytype?.values?.filter(([, , value]) => value === 8).length ?? 0;
+    const knownSteps =
+      extras?.waytype?.values?.filter(([, , value]) => value === 8).length ?? 0;
     const assessment = assessWheelchairAccessibility(
       {
         knownSteps,
@@ -515,8 +613,8 @@ export class OpenRouteServiceWheelchairProvider implements RoutingProvider {
       },
       request.accessibilityPreferences,
     );
-    const roughSurfaceRange = extras?.surface?.values?.find(
-      ([, , value]) => /gravel|ground|grass|sand|cobblestone|unpaved/i.test(
+    const roughSurfaceRange = extras?.surface?.values?.find(([, , value]) =>
+      /gravel|ground|grass|sand|cobblestone|unpaved/i.test(
         orsSurfaceNames[value] ?? "",
       ),
     );
@@ -534,14 +632,23 @@ export class OpenRouteServiceWheelchairProvider implements RoutingProvider {
         "KNOWN_BARRIER",
       );
     }
-    const rawSteps = feature?.properties?.segments?.flatMap((segment) => segment.steps ?? []) ?? [];
+    const rawSteps =
+      feature?.properties?.segments?.flatMap(
+        (segment) => segment.steps ?? [],
+      ) ?? [];
     const steps: RouteStep[] = rawSteps.map((step) => {
       const geometryIndex = step.way_points?.[0] ?? 0;
       return {
-        instruction: step.instruction?.replace(/^Walk\b/i, "Continue") || "Continue along the route",
+        instruction:
+          step.instruction?.replace(/^Walk\b/i, "Continue") ||
+          "Continue along the route",
         distanceMeters: Math.max(0, Math.round(step.distance ?? 0)),
         durationSeconds: Math.max(0, Math.round(step.duration ?? 0)),
         maneuver: String(step.type ?? "continue"),
+        maneuverDirection:
+          step.type === undefined
+            ? "UNKNOWN"
+            : (orsManeuverDirections[step.type] ?? "UNKNOWN"),
         geometryIndex,
         coordinate: geometry[geometryIndex],
       };
@@ -572,17 +679,17 @@ export class AccessibleRoutingProvider implements RoutingProvider {
 
   constructor(
     private readonly walkingProvider: RoutingProvider = new OsrmWalkingRoutingProvider(),
-    private readonly wheelchairProvider: RoutingProvider =
-      process.env.EXPO_PUBLIC_OPENROUTESERVICE_API_KEY?.trim()
-        ? new OpenRouteServiceWheelchairProvider(
-            process.env.EXPO_PUBLIC_OPENROUTESERVICE_API_KEY.trim(),
-          )
-        : new ValhallaWheelchairRoutingProvider(),
+    private readonly wheelchairProvider: RoutingProvider = process.env.EXPO_PUBLIC_OPENROUTESERVICE_API_KEY?.trim()
+      ? new OpenRouteServiceWheelchairProvider(
+          process.env.EXPO_PUBLIC_OPENROUTESERVICE_API_KEY.trim(),
+        )
+      : new ValhallaWheelchairRoutingProvider(),
   ) {
     this.capabilities = {
       walking: walkingProvider.capabilities.walking,
       wheelchair: wheelchairProvider.capabilities.wheelchair,
-      accessibilityWarnings: wheelchairProvider.capabilities.accessibilityWarnings,
+      accessibilityWarnings:
+        wheelchairProvider.capabilities.accessibilityWarnings,
     };
   }
 

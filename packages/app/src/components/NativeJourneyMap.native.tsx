@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { StyleSheet, Text, View } from "react-native";
+import { BusFront, Check, Star } from "lucide-react-native";
 import MapView, {
   Circle,
   Marker,
@@ -44,13 +45,17 @@ function zoomForRegion(region: Region) {
 function clusterStops(
   stops: NearbyBusStop[],
   selectedStopCode: string | undefined,
+  recommendedStopCode: string | undefined,
   zoom: number,
 ): StopCluster[] {
   const cellSize = Math.max(0.00035, 0.0028 * 2 ** (15 - zoom));
   const groups = new Map<string, NearbyBusStop[]>();
 
   stops.forEach((stop) => {
-    if (stop.busStopCode === selectedStopCode) {
+    if (
+      stop.busStopCode === selectedStopCode ||
+      stop.busStopCode === recommendedStopCode
+    ) {
       return;
     }
     const key = `${Math.round(stop.latitude / cellSize)}:${Math.round(
@@ -124,6 +129,7 @@ function nativeMapStyle(
 
 export function NativeJourneyMap({
   stops,
+  recommendedStopCode,
   selectedStop,
   currentLocation,
   viewport,
@@ -154,9 +160,24 @@ export function NativeJourneyMap({
     () => regionForViewport(viewport, aspectRatio),
     [],
   );
+  const recommendedStop = useMemo(
+    () =>
+      stops.find(
+        (stop) =>
+          stop.busStopCode === recommendedStopCode &&
+          stop.busStopCode !== selectedStop?.busStopCode,
+      ) ?? null,
+    [recommendedStopCode, selectedStop?.busStopCode, stops],
+  );
   const clusters = useMemo(
-    () => clusterStops(stops, selectedStop?.busStopCode, viewport.zoom),
-    [selectedStop?.busStopCode, stops, viewport.zoom],
+    () =>
+      clusterStops(
+        stops,
+        selectedStop?.busStopCode,
+        recommendedStopCode,
+        viewport.zoom,
+      ),
+    [recommendedStopCode, selectedStop?.busStopCode, stops, viewport.zoom],
   );
 
   useEffect(() => {
@@ -234,7 +255,7 @@ export function NativeJourneyMap({
         key={providerRetryKey}
         ref={mapRef}
         provider={PROVIDER_GOOGLE}
-        style={StyleSheet.absoluteFillObject}
+        style={StyleSheet.absoluteFill}
         initialRegion={initialRegion}
         customMapStyle={nativeMapStyle(lightMode, highContrast)}
         loadingEnabled
@@ -362,11 +383,52 @@ export function NativeJourneyMap({
                       },
                       highContrast && styles.highContrastMarker,
                     ]}
-                  />
+                  >
+                    <BusFront
+                      color={palette.textOnMarker}
+                      size={26}
+                      strokeWidth={3}
+                    />
+                  </View>
                 </Marker>
               );
             })
           : null}
+
+        {layers.busStops && recommendedStop ? (
+          <Marker
+            coordinate={recommendedStop}
+            accessibilityLabel={`Recommended bus stop. ${recommendedStop.description}, bus stop ${recommendedStop.busStopCode}`}
+            onPress={() => onSelectStop(recommendedStop)}
+            tracksViewChanges={false}
+            zIndex={700}
+          >
+            <View
+              style={[
+                styles.recommendedStopMarker,
+                {
+                  backgroundColor: palette.stopRecommended,
+                  borderColor: palette.stopOutline,
+                },
+                highContrast && styles.highContrastMarker,
+              ]}
+            >
+              <BusFront
+                color={palette.textOnMarker}
+                size={29}
+                strokeWidth={3}
+              />
+              <View
+                style={[
+                  styles.stopStateBadge,
+                  { backgroundColor: palette.stopOutline },
+                ]}
+              >
+                <Star color="#FFFFFF" fill="#FFFFFF" size={11} />
+              </View>
+            </View>
+          </Marker>
+        ) : null}
 
         {selectedStop ? (
           <Marker
@@ -385,7 +447,21 @@ export function NativeJourneyMap({
                 },
                 highContrast && styles.highContrastMarker,
               ]}
-            />
+            >
+              <BusFront
+                color={palette.textOnMarker}
+                size={31}
+                strokeWidth={3}
+              />
+              <View
+                style={[
+                  styles.stopStateBadge,
+                  { backgroundColor: palette.stopOutline },
+                ]}
+              >
+                <Check color="#FFFFFF" size={12} strokeWidth={4} />
+              </View>
+            </View>
           </Marker>
         ) : null}
 
@@ -469,16 +545,42 @@ const styles = StyleSheet.create({
     overflow: "hidden",
   },
   stopMarker: {
+    alignItems: "center",
+    borderRadius: 22,
+    borderWidth: 3,
+    height: 44,
+    justifyContent: "center",
+    width: 44,
+  },
+  recommendedStopMarker: {
+    alignItems: "center",
+    borderRadius: 25,
+    borderWidth: 3,
+    height: 50,
+    justifyContent: "center",
+    position: "relative",
+    width: 50,
+  },
+  selectedStopMarker: {
+    alignItems: "center",
+    borderRadius: 27,
+    borderWidth: 3,
+    height: 54,
+    justifyContent: "center",
+    position: "relative",
+    width: 54,
+  },
+  stopStateBadge: {
+    alignItems: "center",
+    borderColor: "#FFFFFF",
     borderRadius: 9,
     borderWidth: 2,
     height: 18,
+    justifyContent: "center",
+    position: "absolute",
+    right: -3,
+    top: -3,
     width: 18,
-  },
-  selectedStopMarker: {
-    borderRadius: 12,
-    borderWidth: 3,
-    height: 24,
-    width: 24,
   },
   userMarker: {
     borderRadius: 11,
@@ -488,17 +590,17 @@ const styles = StyleSheet.create({
   },
   clusterMarker: {
     alignItems: "center",
-    borderRadius: 18,
-    borderWidth: 2,
-    height: 36,
+    borderRadius: 24,
+    borderWidth: 3,
+    height: 48,
     justifyContent: "center",
-    minWidth: 36,
+    minWidth: 48,
     paddingHorizontal: 6,
   },
   clusterText: {
-    fontSize: 15,
+    fontSize: 17,
     fontWeight: "900",
-    lineHeight: 18,
+    lineHeight: 21,
   },
   vehicleMarker: {
     alignItems: "center",

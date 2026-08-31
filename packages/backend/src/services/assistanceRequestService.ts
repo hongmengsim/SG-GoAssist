@@ -8,6 +8,7 @@ import crypto from "crypto";
 import { getBusById } from "../data/buses.mock";
 import { createRequest, processSimulatorCommand } from "./aviator";
 import { logger } from "./logger";
+import { recordPassengerRequest } from "./assistanceCaseService";
 
 const defaultBoardingStop = "Changi Airport Terminal 1";
 const defaultDestination = "Kent Ridge Terminal";
@@ -90,6 +91,9 @@ export function createStandardizedAssistanceRequestBundle(
   };
 
   const savedRequest = createRequest(candidate);
+  const assistanceCase = recordPassengerRequest(candidate);
+  savedRequest.caseId = assistanceCase.caseId;
+  savedRequest.assistanceCaseState = assistanceCase.state;
   const duplicateOfRequestId =
     savedRequest.requestId !== candidate.requestId ? savedRequest.requestId : undefined;
 

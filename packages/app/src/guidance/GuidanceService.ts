@@ -2,7 +2,14 @@ import type { VibrationAlertMode } from "@buspass/shared";
 
 export type GuidancePriority = "GENERAL" | "WALKING" | "BUS" | "DESTINATION";
 
-export type GuidanceHaptic = "START" | "TURN" | "WARNING" | "SUCCESS";
+export type GuidanceHaptic =
+  | "START"
+  | "TURN"
+  | "TURN_LEFT"
+  | "TURN_RIGHT"
+  | "WARNING"
+  | "SUCCESS"
+  | "ARRIVAL";
 
 export type GuidanceEventKind =
   | "NAVIGATION"
@@ -210,10 +217,12 @@ export function shouldTriggerHaptic(
 ) {
   if (mode === "OFF") return false;
   if (mode === "ALL") return true;
-  return haptic === "WARNING" || haptic === "SUCCESS";
+  return haptic === "WARNING" || haptic === "SUCCESS" || haptic === "ARRIVAL";
 }
 
-export function createBrowserSpeechAdapter(): SpeechAdapter | null {
+export function createBrowserSpeechAdapter(
+  getLanguage: () => string = () => "en-SG",
+): SpeechAdapter | null {
   const environment = globalThis as typeof globalThis & {
     SpeechSynthesisUtterance?: typeof SpeechSynthesisUtterance;
     speechSynthesis?: SpeechSynthesis;
@@ -243,7 +252,7 @@ export function createBrowserSpeechAdapter(): SpeechAdapter | null {
           clearCompletionTimer();
           onDone();
         };
-        utterance.lang = "en-SG";
+        utterance.lang = getLanguage();
         utterance.rate = 0.96;
         utterance.onend = complete;
         utterance.onerror = complete;

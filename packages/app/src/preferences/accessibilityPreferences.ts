@@ -6,10 +6,7 @@ import type {
 } from "@buspass/shared";
 
 export type AccessibilityPreset =
-  | "WHEELCHAIR"
-  | "LOW_VISION"
-  | "HEARING_ASSISTANCE"
-  | "SIMPLIFIED_JOURNEY";
+  "WHEELCHAIR" | "LOW_VISION" | "HEARING_ASSISTANCE" | "SIMPLIFIED_JOURNEY";
 
 export type PersistedAccessibilityPreferences = {
   version: 2;
@@ -17,6 +14,8 @@ export type PersistedAccessibilityPreferences = {
 };
 
 export const defaultAccessibilityPreferences: AccessibilityPreferences = {
+  assistantLocale: "en-SG",
+  assistantDiagnosticsConsent: false,
   wheelchairAssistance: false,
   wheelchairRouting: false,
   avoidSteepSlopes: true,
@@ -49,6 +48,7 @@ export const defaultAccessibilityPreferences: AccessibilityPreferences = {
 };
 
 const booleanKeys = [
+  "assistantDiagnosticsConsent",
   "wheelchairAssistance",
   "wheelchairRouting",
   "avoidSteepSlopes",
@@ -77,11 +77,7 @@ const booleanKeys = [
   "repeatAudio",
 ] as const satisfies readonly (keyof AccessibilityPreferences)[];
 
-const textSizes: AccessibilityTextSize[] = [
-  "STANDARD",
-  "LARGE",
-  "EXTRA_LARGE",
-];
+const textSizes: AccessibilityTextSize[] = ["STANDARD", "LARGE", "EXTRA_LARGE"];
 const vibrationModes: VibrationAlertMode[] = ["OFF", "IMPORTANT", "ALL"];
 
 type LegacyAccessibilityPreferences = Partial<AccessibilityPreferences> & {
@@ -102,6 +98,14 @@ export function mergeAccessibilityPreferences(
     }
     if (saved.themeMode === "light" || saved.themeMode === "dark") {
       merged.themeMode = saved.themeMode;
+    }
+    if (
+      saved.assistantLocale === "en-SG" ||
+      saved.assistantLocale === "zh-SG" ||
+      saved.assistantLocale === "ms-SG" ||
+      saved.assistantLocale === "ta-SG"
+    ) {
+      merged.assistantLocale = saved.assistantLocale;
     }
     if (textSizes.includes(saved.textSize as AccessibilityTextSize)) {
       merged.textSize = saved.textSize as AccessibilityTextSize;
@@ -125,20 +129,14 @@ export function mergeAccessibilityPreferences(
     if (typeof legacyAssistance.busAudioIdentification === "boolean") {
       merged.audioBusIdentification = legacyAssistance.busAudioIdentification;
     }
-    if (
-      legacyAssistance.wheelchairRamp ||
-      legacyAssistance.extendedDwellTime
-    ) {
+    if (legacyAssistance.wheelchairRamp || legacyAssistance.extendedDwellTime) {
       merged.alightingAssistance = true;
     }
   }
 
   // Preserve the previous behaviour where wheelchair routing also ranked
   // nearby stops by accessible route viability.
-  if (
-    saved?.preferAccessibleStops === undefined &&
-    merged.wheelchairRouting
-  ) {
+  if (saved?.preferAccessibleStops === undefined && merged.wheelchairRouting) {
     merged.preferAccessibleStops = true;
   }
 
@@ -164,7 +162,9 @@ export function parsePersistedAccessibilityPreferences(
         parsed.assistanceDefaults,
       );
     }
-    return mergeAccessibilityPreferences(parsed as LegacyAccessibilityPreferences);
+    return mergeAccessibilityPreferences(
+      parsed as LegacyAccessibilityPreferences,
+    );
   } catch {
     return null;
   }
@@ -221,6 +221,102 @@ export function applyAccessibilityPreset(
     plainLanguage: true,
     confirmImportantActions: true,
   };
+}
+
+export function removeAccessibilityPreset(
+  current: AccessibilityPreferences,
+  preset: AccessibilityPreset,
+): AccessibilityPreferences {
+  if (preset === "WHEELCHAIR") {
+    return {
+      ...current,
+      wheelchairAssistance: false,
+      wheelchairRouting: false,
+      avoidSteepSlopes: false,
+      preferSmoothSurfaces: false,
+      extraBoardingTime: false,
+      alightingAssistance: false,
+      preferAccessibleStops: false,
+    };
+  }
+  if (preset === "LOW_VISION") {
+    const keepNextAction = accessibilityPresetMatches(
+      current,
+      "SIMPLIFIED_JOURNEY",
+    );
+    return {
+      ...current,
+      textSize: "STANDARD",
+      highContrast: false,
+      spokenGuidance: false,
+      audioBusIdentification: false,
+      alwaysShowNextAction: keepNextAction,
+    };
+  }
+  if (preset === "HEARING_ASSISTANCE") {
+    return {
+      ...current,
+      visualJourneyAlerts: false,
+      vibrationAlerts: "OFF",
+      textAnnouncementEquivalent: false,
+    };
+  }
+  const keepNextAction = accessibilityPresetMatches(current, "LOW_VISION");
+  return {
+    ...current,
+    simplifiedJourney: false,
+    alwaysShowNextAction: keepNextAction,
+    plainLanguage: false,
+    confirmImportantActions: false,
+  };
+}
+
+export function toggleAccessibilityPreset(
+  current: AccessibilityPreferences,
+  preset: AccessibilityPreset,
+): AccessibilityPreferences {
+  return accessibilityPresetMatches(current, preset)
+    ? removeAccessibilityPreset(current, preset)
+    : applyAccessibilityPreset(current, preset);
+}
+
+export function accessibilityPresetMatches(
+  preferences: AccessibilityPreferences,
+  preset: AccessibilityPreset,
+): boolean {
+  if (preset === "WHEELCHAIR") {
+    return (
+      preferences.wheelchairAssistance &&
+      preferences.wheelchairRouting &&
+      preferences.avoidSteepSlopes &&
+      preferences.preferSmoothSurfaces &&
+      preferences.extraBoardingTime &&
+      preferences.alightingAssistance &&
+      preferences.preferAccessibleStops
+    );
+  }
+  if (preset === "LOW_VISION") {
+    return (
+      preferences.textSize !== "STANDARD" &&
+      preferences.highContrast &&
+      preferences.spokenGuidance &&
+      preferences.audioBusIdentification &&
+      preferences.alwaysShowNextAction
+    );
+  }
+  if (preset === "HEARING_ASSISTANCE") {
+    return (
+      preferences.visualJourneyAlerts &&
+      preferences.vibrationAlerts !== "OFF" &&
+      preferences.textAnnouncementEquivalent
+    );
+  }
+  return (
+    preferences.simplifiedJourney &&
+    preferences.alwaysShowNextAction &&
+    preferences.plainLanguage &&
+    preferences.confirmImportantActions
+  );
 }
 
 export function accessibilityRequirementsFromPreferences(

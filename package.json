@@ -14,12 +14,16 @@
     "dev:backend": "node scripts/dev.mjs --backend",
     "dev:health": "node scripts/dev.mjs --health",
     "simulator": "cd packages/backend && npm run simulator",
+    "demo:integrated": "npm run demo:integrated --workspace @buspass/backend",
     "build": "npm run build --workspaces --if-present",
     "typecheck": "npm run build --workspace @buspass/shared && npm run typecheck --workspace @buspass/backend && npm run typecheck --workspace @buspass/app",
     "test": "npm test --workspaces --if-present",
     "test:unit": "npm run test:unit --workspace @buspass/backend",
     "test:integration": "npm run test:integration --workspace @buspass/backend",
     "test:e2e": "node scripts/e2e-managed.js",
+    "test:e2e:journey-assistant": "node scripts/full-journey-managed.mjs",
+    "smoke:journey-assistant": "node scripts/full-journey-assistant-smoke.mjs",
+    "test:android:assistant": "node scripts/android-assistant-smoke.mjs",
     "test:coverage": "npm run test:coverage --workspace @buspass/backend",
     "smoke:e2e": "node scripts/e2e-smoke.js",
     "smoke:map-responsive": "node scripts/map-responsive-smoke.mjs",
@@ -37,10 +41,5 @@
   "devDependencies": {
     "eslint": "^8.50.0",
     "prettier": "^3.0.0"
-  },
-  "dependencies": {
-    "@expo/metro-runtime": "~3.2.3",
-    "react-dom": "18.2.0",
-    "react-native-web": "~0.19.10"
   }
 }

@@ -130,12 +130,12 @@ it("stacks the accessibility summary before text can crowd the edit control", ()
   expect(
     shouldStackPreferenceSummary({ width: 700, textSize: "STANDARD" }),
   ).toBe(false);
-  expect(
-    shouldStackPreferenceSummary({ width: 700, textSize: "LARGE" }),
-  ).toBe(true);
-  expect(
-    shouldStackPreferenceSummary({ width: 800, textSize: "LARGE" }),
-  ).toBe(false);
+  expect(shouldStackPreferenceSummary({ width: 700, textSize: "LARGE" })).toBe(
+    true,
+  );
+  expect(shouldStackPreferenceSummary({ width: 800, textSize: "LARGE" })).toBe(
+    false,
+  );
   expect(
     shouldStackPreferenceSummary({ width: 800, textSize: "EXTRA_LARGE" }),
   ).toBe(true);
@@ -161,9 +161,10 @@ it("gives every Leaflet stop DivIcon meaningful marker content", () => {
     "utf8",
   );
 
-  expect(mapSource).toContain("const markerContent =");
+  expect(mapSource).toContain("const busGlyph =");
+  expect(mapSource).toContain("const stateBadge =");
   expect(mapSource).toContain('<svg aria-hidden="true" viewBox="0 0 16 16"');
-  expect(mapSource).toContain("${markerContent}</span>");
+  expect(mapSource).toContain("${busGlyph}${stateBadge}</span>");
   expect(mapSource).not.toContain(
     'const centerContent = kind === "selected" ? "&#10003;" : ""',
   );
@@ -611,6 +612,11 @@ async function signInDemoProfile() {
   await screen.findByText("My profile");
 }
 
+function selectAccessibilityCategory(category: string) {
+  fireEvent.press(screen.getByLabelText(/Settings category\./));
+  fireEvent.press(screen.getByLabelText(`${category} accessibility settings`));
+}
+
 async function openJourneyMap(
   coords: {
     latitude: number;
@@ -703,12 +709,17 @@ async function startWheelchairOnboardJourney({
   await signInDemoProfile();
 
   fireEvent.press(screen.getByText("Edit accessibility preferences"));
-  fireEvent.press(screen.getByLabelText("Apply Mobility support preset"));
+  fireEvent.press(screen.getByLabelText("Turn on Mobility support group"));
   if (simplified) {
-    fireEvent.press(screen.getByLabelText("Apply Simpler journeys preset"));
+    fireEvent.press(screen.getByLabelText("Turn on Simpler journeys group"));
   }
   if (lowVision) {
-    fireEvent.press(screen.getByLabelText("Apply Low-vision support preset"));
+    const lowVisionGroup = screen.queryByLabelText(
+      "Turn on Low-vision support group",
+    );
+    if (lowVisionGroup) {
+      fireEvent.press(lowVisionGroup);
+    }
   }
   fireEvent.press(screen.getByText("Save needs"));
 
@@ -791,13 +802,15 @@ it("renders the journey entry actions without inactive repeat guidance", () => {
   expect(heroStyle.flex).toBeUndefined();
   expect(heroStyle.height).toBeUndefined();
   expect(illustrationStyle).toMatchObject({
-    flexShrink: 0,
-    height: 148,
-    width: 166,
+    aspectRatio: 1.5,
+    borderRadius: 18,
+    maxWidth: 360,
+    width: "100%",
   });
+  expect(illustrationStyle.height).toBeUndefined();
 });
 
-it("uses the supplied Journey artwork safely across standard display themes", () => {
+it("uses the themed Journey visual safely across standard display themes", () => {
   render(<App />);
 
   expect(
@@ -1084,7 +1097,11 @@ it("plans a searched origin-to-destination route and starts with the walking leg
   mockSuccessfulJourneyApis();
   render(<App />);
 
-  await openJourneyMap();
+  await openJourneyMap({
+    latitude: 1.2952,
+    longitude: 103.77104,
+    accuracy: 12,
+  });
   await screen.findByLabelText("Search bus stop, service or place");
   focusMapSearchField();
   fireEvent.changeText(
@@ -2058,7 +2075,7 @@ it("defaults Directions to a real wheelchair mode and labels standard walking fa
   render(<App />);
   await signInDemoProfile();
   fireEvent.press(screen.getByText("Edit accessibility preferences"));
-  fireEvent.press(screen.getByLabelText("Mobility accessibility settings"));
+  selectAccessibilityCategory("Mobility");
   fireEvent.press(screen.getByLabelText("Wheelchair-friendly routing"));
   expect(
     screen.getByLabelText("Wheelchair-friendly routing").props
@@ -2756,7 +2773,7 @@ it("uses a keyless OpenStreetMap web provider with clean retry lifecycle", () =>
   expect(appSource).not.toContain("mapSelectionHidesTabBar");
   expect(appSource).not.toContain("bottomNavigationVisible");
   expect(packageJson.dependencies.leaflet).toBe("1.9.4");
-  expect(packageJson.dependencies["react-leaflet"]).toBe("4.2.1");
+  expect(packageJson.dependencies["react-leaflet"]).toBe("^5.0.0");
   expect(packageJson.dependencies["@googlemaps/js-api-loader"]).toBeUndefined();
   expect(
     packageJson.dependencies["@googlemaps/markerclusterer"],
@@ -2800,7 +2817,7 @@ it("uses provider-native geographic maps on Android and iOS", () => {
   [
     "react-native-maps",
     "provider={PROVIDER_GOOGLE}",
-    "style={StyleSheet.absoluteFillObject}",
+    "style={StyleSheet.absoluteFill}",
     "<Marker",
     "coordinate={currentLocation}",
     "<Circle",
@@ -3090,19 +3107,20 @@ it("distinguishes a device location failure from a map provider failure", async 
 
 it("recovers when the browser location permission request never settles", async () => {
   const realSetTimeout = global.setTimeout;
-  const timeoutSpy = jest
-    .spyOn(global, "setTimeout")
-    .mockImplementation(((callback: (...args: any[]) => void, delay?: number) => {
-      if (delay === 8_000) {
-        Promise.resolve().then(callback);
-        return 1 as any;
-      }
-      return realSetTimeout(callback, delay);
-    }) as typeof global.setTimeout);
+  const timeoutSpy = jest.spyOn(global, "setTimeout").mockImplementation(((
+    callback: (...args: any[]) => void,
+    delay?: number,
+  ) => {
+    if (delay === 8_000) {
+      Promise.resolve().then(callback);
+      return 1 as any;
+    }
+    return realSetTimeout(callback, delay);
+  }) as typeof global.setTimeout);
   try {
-    (Location.requestForegroundPermissionsAsync as jest.Mock).mockImplementation(
-      () => new Promise(() => undefined),
-    );
+    (
+      Location.requestForegroundPermissionsAsync as jest.Mock
+    ).mockImplementation(() => new Promise(() => undefined));
     render(<App />);
 
     fireEvent.press(screen.getByText("Use my location"));
@@ -3228,7 +3246,9 @@ it("keeps a found location visible when nearby stops fail across Journey entry a
     longitude: 103.7711,
   });
   expect(
-    Math.abs(mapMock.getLastJourneyMapProps().viewport.center.latitude - 1.2942),
+    Math.abs(
+      mapMock.getLastJourneyMapProps().viewport.center.latitude - 1.2942,
+    ),
   ).toBeLessThan(0.01);
   expect(
     Math.abs(
@@ -3601,7 +3621,7 @@ it("uses explicit app icon mappings with a development fallback", () => {
   expect(source).not.toContain('icon="home"');
 });
 
-it("integrates the centralized illustrations without framed-image fallbacks", () => {
+it("integrates centralized illustrations across journey and loading states", () => {
   const appSource = fs.readFileSync(
     path.join(__dirname, "..", "App.tsx"),
     "utf8",
@@ -3614,11 +3634,27 @@ it("integrates the centralized illustrations without framed-image fallbacks", ()
     path.join(__dirname, "..", "src", "illustrations.ts"),
     "utf8",
   );
+  const themedArtworkSource = fs.readFileSync(
+    path.join(
+      __dirname,
+      "..",
+      "src",
+      "components",
+      "ThemedSceneArtwork.tsx",
+    ),
+    "utf8",
+  );
   const suppliedAssets = [
-    "home_find_bus.png",
-    "wheelchair_ramp.png",
-    "extra_boarding_time.png",
-    "audio_identification.png",
+    "illustrations/features/wheelchair_ramp_v2.png",
+    "illustrations/features/extra_boarding_time_v2.png",
+    "illustrations/features/audio_identification_v2.png",
+    "illustrations/nearest_stop_loading_v1.png",
+    "illustrations/journey_find_bus_v2.png",
+    "illustrations/choose_bus_v1.png",
+    "illustrations/journey_review_v1.png",
+    "illustrations/onboard_guidance_v1.png",
+    "illustrations/assist_communication_v2.png",
+    "illustrations/accessibility_profile_v2.png",
   ].map((filename) => path.join(__dirname, "..", "assets", filename));
   const homeLoadingSource = appSource.slice(
     appSource.indexOf("function LocationLoadingPanel"),
@@ -3632,10 +3668,11 @@ it("integrates the centralized illustrations without framed-image fallbacks", ()
     "function StatusConceptVisual",
     "function LargeTextConceptVisual",
     "function HighContrastConceptVisual",
+    "function PhysicalAssistanceButtonVisual",
     "shouldStackJourneyIntro",
     "function FindBusPanel",
     "function LocationLoadingPanel",
-    "function LocationSearchVisual",
+    "function GeneratedFeatureArtwork",
     "function resolveFindBusPanelState",
     "type FindBusPanelState",
     "useDelayedLoadingVisibility",
@@ -3667,11 +3704,22 @@ it("integrates the centralized illustrations without framed-image fallbacks", ()
     "journeyFindBusActions",
     "paddingBottom: bottomNavigationHeight + spacing.lg",
     "locationLoadingProgress",
-    "locationSearchVisual",
-    "source={illustrations.homeFindBus}",
+    "generatedFeatureArtwork",
+    "generatedFeatureArtworkCompact",
+    "ThemedSceneArtwork",
+    "<JourneyFindBusIllustration",
+    "source={illustrations.nearestStopLoading}",
+    "source={illustrations.journeyFindBus}",
+    "source={illustrations.chooseBus}",
+    "source={illustrations.journeyReview}",
+    "illustrations.journeyGuide[journeyVisualInstruction.scene]",
+    "source={illustrations.assistCommunication}",
+    "source={illustrations.accessibilityProfile}",
+    'testID="assist-location-loading-artwork"',
     "illustrationSource={illustrations.wheelchairRamp}",
     "illustrationSource={illustrations.extraBoardingTime}",
     "illustrationSource={illustrations.audioIdentification}",
+    "source={illustrations.physicalHelpButton}",
   ].forEach((token) => expect(appSource).toContain(token));
 
   [
@@ -3690,27 +3738,41 @@ it("integrates the centralized illustrations without framed-image fallbacks", ()
     'export type FeatureIllustrationSize = "small" | "medium" | "large" | "hero"',
   );
   expect(illustrationSource).toContain("style?: StyleProp<ViewStyle>");
-  expect(illustrationSource).toContain('resizeMode="contain"');
-  expect(illustrationSource).toContain("accessibilityIgnoresInvertColors");
-  expect(illustrationSource).toContain(
+  expect(illustrationSource).toContain("ThemedSceneArtwork");
+  expect(themedArtworkSource).toContain('resizeMode="contain"');
+  expect(themedArtworkSource).toContain("accessibilityIgnoresInvertColors");
+  expect(themedArtworkSource).toContain(
     'importantForAccessibility={decorative ? "no" : "auto"}',
   );
+  expect(themedArtworkSource).toContain(
+    "export const SCENE_ARTWORK_ASPECT_RATIO = 3 / 2",
+  );
+  expect(themedArtworkSource).not.toContain('resizeMode="cover"');
   expect(illustrationSource).not.toContain("borderWidth");
   expect(illustrationSource).not.toContain("backgroundColor");
   expect(illustrationSource).not.toContain("Image.resolveAssetSource");
   expect(illustrationSource).not.toContain('height: "100%"');
   expect(illustrationSource).not.toContain('width: "100%"');
   [
-    'homeFindBus: require("../assets/home_find_bus.png")',
-    'wheelchairRamp: require("../assets/wheelchair_ramp.png")',
-    'extraBoardingTime: require("../assets/extra_boarding_time.png")',
-    'audioIdentification: require("../assets/audio_identification.png")',
+    'wheelchairRamp: require("../assets/illustrations/features/wheelchair_ramp_v2.png")',
+    'extraBoardingTime: require("../assets/illustrations/features/extra_boarding_time_v2.png")',
+    'audioIdentification: require("../assets/illustrations/features/audio_identification_v2.png")',
+    'nearestStopLoading: require("../assets/illustrations/nearest_stop_loading_v1.png")',
+    'journeyFindBus: require("../assets/illustrations/journey_find_bus_v2.png")',
+    'chooseBus: require("../assets/illustrations/choose_bus_v1.png")',
+    'journeyReview: require("../assets/illustrations/journey_review_v1.png")',
+    'onboardGuidance: require("../assets/illustrations/onboard_guidance_v1.png")',
+    'assistCommunication: require("../assets/illustrations/assist_communication_v2.png")',
+    'accessibilityProfile: require("../assets/illustrations/accessibility_profile_v2.png")',
   ].forEach((token) => expect(illustrationRegistrySource).toContain(token));
   suppliedAssets.forEach((asset) => {
     expect(fs.existsSync(asset)).toBe(true);
     expect(fs.statSync(asset).size).toBeGreaterThan(50_000);
   });
+  expect(appSource).not.toContain("illustrations.homeFindBus");
   expect(appSource).not.toContain("illustrations.locationLoading");
+  expect(appSource).not.toContain("optionIcons");
+  expect(appSource).not.toContain('resizeMode="cover"');
   expect(appSource.match(/illustrations\.wheelchairRamp/g)).toHaveLength(1);
   expect(appSource.match(/illustrations\.extraBoardingTime/g)).toHaveLength(1);
   expect(appSource.match(/illustrations\.audioIdentification/g)).toHaveLength(
@@ -3718,10 +3780,11 @@ it("integrates the centralized illustrations without framed-image fallbacks", ()
   );
   expect(appSource).not.toContain("paddingRight: 128");
   expect(appSource).not.toContain("largeTextHomeIntroPanel");
-  expect(homeLoadingSource).toContain("function LocationSearchVisual");
+  expect(homeLoadingSource).toContain("function GeneratedFeatureArtwork");
   expect(homeLoadingSource).toContain('accessibilityRole="progressbar"');
   expect(homeLoadingSource).toContain("locationLoadingProgress");
-  expect(homeLoadingSource).toContain("locationSearchVisual");
+  expect(homeLoadingSource).toContain("generatedFeatureArtwork");
+  expect(homeLoadingSource).toContain("illustrations.nearestStopLoading");
   expect(homeLoadingSource).not.toContain("ActivityIndicator");
 });
 
@@ -3805,9 +3868,7 @@ it("keeps persistent assistance configuration in Profile instead of Assist", asy
 
   fireEvent.press(screen.getByLabelText("Profile, tab, 3 of 3"));
   expect(
-    screen.getAllByLabelText(
-      "Passenger defaults: Bus identification assistance.",
-    ).length,
+    screen.getAllByLabelText("Journey assistance: Bus identification.").length,
   ).toBeGreaterThan(0);
 });
 
@@ -3832,10 +3893,15 @@ it("uses a real checkmark icon for selected assistance preference cards", () => 
   ].forEach((token) => expect(source).not.toContain(token));
 });
 
-it("uses teal Profile badge tokens for passenger default chips and icons", () => {
+it("uses prominent vector icons and Profile badge tokens for journey assistance", () => {
   const source = fs.readFileSync(path.join(__dirname, "..", "App.tsx"), "utf8");
 
   [
+    'label: "Ramp assistance"',
+    "icon: Accessibility",
+    "icon: BusFront",
+    "icon: Timer",
+    "<ItemIcon",
     "profileBadgeSurface",
     "profileBadgeBorder",
     "profileBadgeIcon",
@@ -3863,7 +3929,7 @@ it("shows preference saves as a compact dismissible toast without haptic impleme
   await signInDemoProfile();
 
   fireEvent.press(screen.getByText("Edit accessibility preferences"));
-  fireEvent.press(screen.getByLabelText("Hearing accessibility settings"));
+  selectAccessibilityCategory("Hearing");
   fireEvent.press(screen.getByLabelText("Off vibration alerts"));
   fireEvent.press(screen.getByText("Save needs"));
 
@@ -3881,15 +3947,30 @@ it("separates quick presets from a compact customization list", async () => {
 
   fireEvent.press(screen.getByText("Edit accessibility preferences"));
 
-  expect(screen.getByText("Quick presets")).toBeTruthy();
+  expect(screen.getByText("Settings groups")).toBeTruthy();
   expect(screen.getByText("Customize settings")).toBeTruthy();
   expect(
     screen.getByText(
-      "Choose a starting point. You can fine-tune any setting afterwards.",
+      "Turn related settings on or off together. You can still adjust each setting below.",
     ),
   ).toBeTruthy();
-  expect(screen.getAllByText("7 options")).toHaveLength(2);
-  expect(screen.getAllByText("3 options")).toHaveLength(2);
+  fireEvent.press(
+    screen.getByLabelText("Settings category. Choose a category"),
+  );
+  expect(screen.getByText("2 of 7 on")).toBeTruthy();
+  expect(screen.getByText("6 of 7 on")).toBeTruthy();
+  expect(screen.getByText("3 of 3 on")).toBeTruthy();
+  expect(screen.getByText("5 of 8 on")).toBeTruthy();
+  expect(screen.getByText("0 of 3 on")).toBeTruthy();
+  fireEvent.press(screen.getByLabelText("Mobility accessibility settings"));
+  expect(screen.getByText("Try your setup")).toBeTruthy();
+  expect(screen.getByLabelText("Visual on")).toBeTruthy();
+  expect(screen.getByLabelText("Speech on")).toBeTruthy();
+  expect(screen.getByLabelText("Vibration on")).toBeTruthy();
+  expect(
+    screen.getByLabelText("Turn off Hearing support group").props
+      .accessibilityValue,
+  ).toMatchObject({ text: "On. Press to turn off" });
   expect(
     screen.queryByText(
       "Wheelchair-aware routes, boarding time and accessible stops",
@@ -3897,34 +3978,59 @@ it("separates quick presets from a compact customization list", async () => {
   ).toBeNull();
 
   const mobilityPreset = screen.getByLabelText(
-    "Apply Mobility support preset",
+    "Turn on Mobility support group",
   );
   expect(mobilityPreset.props.accessibilityState).toMatchObject({
     selected: false,
   });
   fireEvent.press(mobilityPreset);
   expect(
-    screen.getByLabelText("Apply Mobility support preset").props
+    screen.getByLabelText("Turn off Mobility support group").props
       .accessibilityState,
   ).toMatchObject({ selected: true });
+  expect(
+    screen.getByLabelText("Turn off Mobility support group").props
+      .accessibilityValue,
+  ).toMatchObject({ text: "On. Press to turn off" });
+  expect(screen.getByText("7 of 7 on")).toBeTruthy();
+
+  fireEvent.press(screen.getByLabelText("Turn off Mobility support group"));
+  expect(
+    screen.getByLabelText("Turn on Mobility support group").props
+      .accessibilityState,
+  ).toMatchObject({ selected: false });
+  expect(screen.getByText("0 of 7 on")).toBeTruthy();
+
+  fireEvent.press(screen.getByLabelText("Play sample journey alert"));
+  expect(screen.getByText(/Sample shown on screen/)).toBeTruthy();
+  expect(AccessibilityInfo.announceForAccessibility).toHaveBeenCalledWith(
+    "Sample journey alert. Bus 95 arriving in 3 minutes.",
+  );
 });
 
-it("expands one compact checklist and reveals descriptions on demand", async () => {
+it("uses one category dropdown and reveals descriptions on demand", async () => {
   render(<App />);
   await signInDemoProfile();
   fireEvent.press(screen.getByText("Edit accessibility preferences"));
 
-  const mobility = screen.getByLabelText("Mobility accessibility settings");
-  expect(mobility.props.accessibilityState).toMatchObject({ expanded: false });
-  fireEvent.press(mobility);
+  const categoryDropdown = screen.getByLabelText(
+    "Settings category. Choose a category",
+  );
+  expect(categoryDropdown.props.accessibilityState).toMatchObject({
+    expanded: false,
+  });
+  fireEvent.press(categoryDropdown);
   expect(
     screen.getByLabelText("Mobility accessibility settings").props
       .accessibilityState,
-  ).toMatchObject({ expanded: true });
-  expect(screen.getByLabelText("Wheelchair assistance")).toBeTruthy();
+  ).toMatchObject({ selected: false });
+  fireEvent.press(screen.getByLabelText("Mobility accessibility settings"));
   expect(
-    screen.queryByText("Request ramp support when boarding"),
-  ).toBeNull();
+    screen.getByLabelText("Settings category. Mobility").props
+      .accessibilityState,
+  ).toMatchObject({ expanded: false });
+  expect(screen.getByLabelText("Wheelchair assistance")).toBeTruthy();
+  expect(screen.queryByText("Request ramp support when boarding")).toBeNull();
 
   const wheelchairDetails = screen.getByLabelText(
     "About Wheelchair assistance",
@@ -3932,33 +4038,88 @@ it("expands one compact checklist and reveals descriptions on demand", async () 
   fireEvent(wheelchairDetails, "hoverIn");
   expect(screen.getByText("Request ramp support when boarding")).toBeTruthy();
   fireEvent(wheelchairDetails, "hoverOut");
-  expect(
-    screen.queryByText("Request ramp support when boarding"),
-  ).toBeNull();
+  expect(screen.queryByText("Request ramp support when boarding")).toBeNull();
   fireEvent.press(wheelchairDetails);
   expect(screen.getByText("Request ramp support when boarding")).toBeTruthy();
 
-  fireEvent.press(screen.getByLabelText("Vision accessibility settings"));
+  selectAccessibilityCategory("Vision");
   expect(screen.queryByLabelText("Wheelchair assistance")).toBeNull();
   expect(screen.getByText("Text size")).toBeTruthy();
+  expect(screen.getByText("Vision settings")).toBeTruthy();
+});
+
+it("finds an accessibility feature by everyday language and opens its category", async () => {
+  render(<App />);
+  await signInDemoProfile();
+  fireEvent.press(screen.getByText("Edit accessibility preferences"));
+
+  const search = screen.getByLabelText("Find an accessibility setting");
+  expect(search.props.selectionColor).toBe("rgba(7, 75, 106, 0.22)");
+  expect(StyleSheet.flatten(search.props.style)).toMatchObject({
+    lineHeight: 29,
+    paddingVertical: 0,
+    textAlignVertical: "center",
+  });
   expect(
-    screen.getByLabelText("Vision accessibility settings").props
-      .accessibilityState,
-  ).toMatchObject({ expanded: true });
+    StyleSheet.flatten(
+      screen.getByTestId("accessibility-settings-search-field").props.style,
+    ),
+  ).toMatchObject({ minHeight: 68 });
+  fireEvent.changeText(search, "ramp");
+
+  expect(screen.getByText("1 match")).toBeTruthy();
+  fireEvent.press(
+    screen.getByLabelText("Open Wheelchair assistance in Mobility settings"),
+  );
+
+  expect(screen.getByLabelText("Settings category. Mobility")).toBeTruthy();
+  expect(screen.getByText("Mobility settings")).toBeTruthy();
+  expect(screen.getByLabelText("Wheelchair assistance")).toBeTruthy();
+  expect(screen.queryByText("1 match")).toBeNull();
+});
+
+it("visually separates a settings category from its padded subgroups", async () => {
+  render(<App />);
+  await signInDemoProfile();
+  fireEvent.press(screen.getByText("Edit accessibility preferences"));
+  selectAccessibilityCategory("Journey support");
+
+  const categoryHeaderStyle = StyleSheet.flatten(
+    screen.getByTestId("accessibility-settings-category-header").props.style,
+  );
+  expect(categoryHeaderStyle).toMatchObject({
+    minHeight: 88,
+    paddingVertical: 12,
+  });
+  expect(categoryHeaderStyle.borderLeftWidth).toBeUndefined();
+  expect(screen.getByText("Journey support settings")).toBeTruthy();
+  expect(
+    StyleSheet.flatten(
+      screen.getByTestId("preference-section-journey-warnings").props.style,
+    ),
+  ).toMatchObject({
+    minHeight: 68,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+  });
+  expect(screen.getAllByText("Setting group")).toHaveLength(1);
+  expect(
+    screen.getByLabelText("Journey warnings").props.accessibilityRole,
+  ).toBe("header");
 });
 
 it("supports categorized text sizing and visibly enlarges shared controls", async () => {
   render(<App />);
   await signInDemoProfile();
   fireEvent.press(screen.getByText("Edit accessibility preferences"));
-  fireEvent.press(screen.getByLabelText("Vision accessibility settings"));
+  selectAccessibilityCategory("Vision");
   fireEvent.press(screen.getByLabelText("Extra large text"));
 
   expect(
     screen.getByLabelText("Extra large text").props.accessibilityState,
   ).toMatchObject({ checked: true });
 
-  fireEvent.press(screen.getByLabelText("Interaction accessibility settings"));
+  selectAccessibilityCategory("Interaction");
   fireEvent.press(screen.getByLabelText("Larger controls"));
   expect(
     StyleSheet.flatten(screen.getByLabelText("Save needs").props.style)
@@ -3970,10 +4131,13 @@ it("keeps the accessibility editor layout fixed while text-size changes are draf
   render(<App />);
   await signInDemoProfile();
   fireEvent.press(screen.getByText("Edit accessibility preferences"));
-  fireEvent.press(screen.getByLabelText("Vision accessibility settings"));
+  selectAccessibilityCategory("Vision");
 
   const headingSizeBefore = StyleSheet.flatten(
     screen.getByText("Vision").props.style,
+  )?.fontSize;
+  const previewSizeBefore = StyleSheet.flatten(
+    screen.getByTestId("text-size-live-preview").props.style,
   )?.fontSize;
   fireEvent.press(screen.getByLabelText("Extra large text"));
 
@@ -3983,6 +4147,17 @@ it("keeps the accessibility editor layout fixed while text-size changes are draf
   expect(
     StyleSheet.flatten(screen.getByText("Vision").props.style)?.fontSize,
   ).toBe(headingSizeBefore);
+  expect(
+    StyleSheet.flatten(screen.getByTestId("text-size-live-preview").props.style)
+      ?.fontSize,
+  ).toBeGreaterThan(previewSizeBefore ?? 0);
+  expect(
+    StyleSheet.flatten(
+      screen.getByLabelText(
+        "Text size preview. Extra large. Next bus in 4 minutes. Applies after saving.",
+      ).props.style,
+    ),
+  ).toMatchObject({ height: 116 });
   expect(screen.getByLabelText("Save needs")).toBeTruthy();
 });
 
@@ -3990,7 +4165,7 @@ it("shows a simplified next action without creating a second journey flow", asyn
   render(<App />);
   await signInDemoProfile();
   fireEvent.press(screen.getByText("Edit accessibility preferences"));
-  fireEvent.press(screen.getByLabelText("Apply Simpler journeys preset"));
+  fireEvent.press(screen.getByLabelText("Turn on Simpler journeys group"));
   fireEvent.press(screen.getByText("Save needs"));
   fireEvent.press(screen.getByLabelText(/Journey, tab/));
 
@@ -3998,11 +4173,11 @@ it("shows a simplified next action without creating a second journey flow", asyn
   expect(screen.getByText("Choose your bus stop")).toBeTruthy();
 });
 
-it("keeps wheelchair assistance separate from accessible routing dependencies", async () => {
+it("keeps every mobility setting independently selectable", async () => {
   render(<App />);
   await signInDemoProfile();
   fireEvent.press(screen.getByText("Edit accessibility preferences"));
-  fireEvent.press(screen.getByLabelText("Mobility accessibility settings"));
+  selectAccessibilityCategory("Mobility");
 
   expect(
     screen.getByLabelText("Wheelchair-friendly routing").props
@@ -4010,10 +4185,15 @@ it("keeps wheelchair assistance separate from accessible routing dependencies", 
   ).toMatchObject({ checked: false });
   expect(
     screen.getByLabelText("Avoid steep slopes").props.accessibilityState,
-  ).toMatchObject({ disabled: true });
+  ).toMatchObject({ checked: true, disabled: false });
   expect(
     screen.getByLabelText("Prefer accessible stops").props.accessibilityState,
-  ).toMatchObject({ disabled: true });
+  ).toMatchObject({ checked: false, disabled: false });
+
+  fireEvent.press(screen.getByLabelText("Avoid steep slopes"));
+  expect(
+    screen.getByLabelText("Avoid steep slopes").props.accessibilityState,
+  ).toMatchObject({ checked: false, disabled: false });
 
   fireEvent.press(screen.getByLabelText("Wheelchair assistance"));
   expect(
@@ -4025,7 +4205,7 @@ it("keeps wheelchair assistance separate from accessible routing dependencies", 
   ).toMatchObject({ checked: false });
   expect(
     screen.getByLabelText("Avoid steep slopes").props.accessibilityState,
-  ).toMatchObject({ disabled: true });
+  ).toMatchObject({ checked: false, disabled: false });
 
   fireEvent.press(screen.getByLabelText("Wheelchair-friendly routing"));
   expect(
@@ -4034,22 +4214,18 @@ it("keeps wheelchair assistance separate from accessible routing dependencies", 
   ).toMatchObject({ checked: true });
   expect(
     screen.getByLabelText("Avoid steep slopes").props.accessibilityState,
-  ).toMatchObject({ disabled: false });
+  ).toMatchObject({ checked: false, disabled: false });
   expect(
     screen.getByLabelText("Prefer accessible stops").props.accessibilityState,
-  ).toMatchObject({ disabled: false });
-  expect(
-    screen.getByLabelText(
-      "Avoid steps, included with wheelchair-friendly routing",
-    ),
-  ).toBeTruthy();
+  ).toMatchObject({ checked: false, disabled: false });
+  expect(screen.queryByText("Avoid steps")).toBeNull();
 });
 
 it("keeps one canonical global preference state plus the journey override", () => {
   const source = fs.readFileSync(path.join(__dirname, "..", "App.tsx"), "utf8");
-  expect(source.match(/useState\(defaultAppPreferences\)/g) ?? []).toHaveLength(
-    1,
-  );
+  expect(
+    source.match(/useState<AccessibilityPreferences>\(\(\) =>/g) ?? [],
+  ).toHaveLength(1);
   expect(source).not.toContain(
     "const [requirements, setRequirements] = useState",
   );
@@ -4258,9 +4434,14 @@ it("uses the wheelchair, simplified, large-text, and high-contrast preferences i
   render(<App />);
   await signInDemoProfile();
   fireEvent.press(screen.getByText("Edit accessibility preferences"));
-  fireEvent.press(screen.getByLabelText("Apply Mobility support preset"));
-  fireEvent.press(screen.getByLabelText("Apply Simpler journeys preset"));
-  fireEvent.press(screen.getByLabelText("Apply Low-vision support preset"));
+  fireEvent.press(screen.getByLabelText("Turn on Mobility support group"));
+  fireEvent.press(screen.getByLabelText("Turn on Simpler journeys group"));
+  const lowVisionGroup = screen.queryByLabelText(
+    "Turn on Low-vision support group",
+  );
+  if (lowVisionGroup) {
+    fireEvent.press(lowVisionGroup);
+  }
   fireEvent.press(screen.getByText("Save needs"));
   await openJourneyMap();
   fireEvent.press(
@@ -4632,7 +4813,7 @@ it("ends an active journey from More only after confirmation and preserves prefe
   expect(screen.queryByText("ONBOARD JOURNEY")).toBeNull();
   expect(screen.queryByText("Opp Science Drive")).toBeNull();
   expect(
-    screen.getByLabelText(/Passenger defaults: Wheelchair ramp/i),
+    screen.getByLabelText(/Journey assistance: Ramp assistance/i),
   ).toBeTruthy();
   await waitFor(async () => {
     expect(
@@ -5029,7 +5210,7 @@ it("keeps appearance mode in profile and toggles between light and dark", () => 
   expect(screen.getByText("Appearance")).toBeTruthy();
   expect(screen.queryByText("Continue journey")).toBeNull();
   expect(
-    screen.getByLabelText("Passenger defaults: Bus identification assistance."),
+    screen.getByLabelText("Journey assistance: Bus identification."),
   ).toBeTruthy();
   expect(
     screen.getByLabelText("Light mode").props.accessibilityState,
@@ -5163,7 +5344,7 @@ it("keeps appearance selection clear across light, dark, and high contrast modes
   });
 
   fireEvent.press(screen.getByLabelText("Edit accessibility preferences"));
-  fireEvent.press(screen.getByLabelText("Vision accessibility settings"));
+  selectAccessibilityCategory("Vision");
   expect(
     screen.getByLabelText("High contrast").props.accessibilityState,
   ).toMatchObject({

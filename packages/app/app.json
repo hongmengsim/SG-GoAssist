@@ -3,6 +3,7 @@
     "name": "SG GoAssist",
     "slug": "buspass-assistance",
     "version": "0.1.0",
+    "newArchEnabled": true,
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "scheme": "buspass",
@@ -11,6 +12,9 @@
       "name": "SG GoAssist",
       "shortName": "SG GoAssist"
     },
-    "assetBundlePatterns": ["**/*"]
+    "assetBundlePatterns": ["**/*"],
+    "android": {
+      "package": "sg.goassist.passenger"
+    }
   }
 }

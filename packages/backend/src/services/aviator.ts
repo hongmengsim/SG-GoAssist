@@ -12,6 +12,7 @@ import {
   canTransitionVehicleStatus,
 } from "@buspass/shared";
 import { logger } from "./logger";
+import { synchronizeLegacyCaseStatus } from "./assistanceCaseService";
 
 const activeRequests: Map<string, PassengerAssistanceRequest> = new Map();
 const vehicleStatuses: Map<string, VehicleStatus> = new Map();
@@ -179,6 +180,13 @@ function updateRequestStatus(
   }
 
   activeRequests.set(requestId, request);
+  if (
+    request.caseId &&
+    (newStatus === AssistanceRequestStatus.CANCELLED ||
+      newStatus === AssistanceRequestStatus.FAILED)
+  ) {
+    synchronizeLegacyCaseStatus(request.caseId, newStatus);
+  }
   logger.info(`Request status transition: ${oldStatus} -> ${newStatus}`, requestId);
   emit(requestStatusMessage(request));
   return request;

@@ -23,6 +23,37 @@ module.exports = () => {
 
   return {
     ...baseConfig,
+    plugins: [
+      ...(baseConfig.plugins || []),
+      [
+        "expo-camera",
+        {
+          cameraPermission:
+            "Allow SG GoAssist to show live walking directions. Camera images are never recorded, stored, or shared.",
+          microphonePermission: false,
+          recordAudioAndroid: false,
+        },
+      ],
+      [
+        "expo-speech-recognition",
+        {
+          microphonePermission:
+            "Allow SG GoAssist to hear a request only after you press Talk. Audio is never stored by GoAssist.",
+          speechRecognitionPermission:
+            "Allow SG GoAssist to turn your spoken journey request into text.",
+        },
+      ],
+      [
+        "expo-build-properties",
+        {
+          android: {
+            minSdkVersion: 26,
+          },
+        },
+      ],
+      "llama.rn",
+      "./plugins/withGoAssistModelAsset",
+    ],
     android: {
       ...baseConfig.android,
       config: {

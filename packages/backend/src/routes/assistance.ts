@@ -126,6 +126,8 @@ router.post("/request", (req: Request, res: Response) => {
 
     const response: AssistanceRequestResponse = {
       requestId: savedRequest.requestId,
+      caseId: savedRequest.caseId,
+      assistanceCaseState: savedRequest.assistanceCaseState,
       status: savedRequest.status,
       createdAt: savedRequest.createdAt,
       duplicateOfRequestId,
@@ -182,6 +184,7 @@ router.post("/hardware/physical-button/wheelchair-ramp", async (req: Request, re
 
     const response: PhysicalButtonRequestResponse = {
       requestId: request.requestId,
+      caseId: request.caseId,
       status,
       source: "PHYSICAL_BUTTON",
       duplicateOfRequestId,

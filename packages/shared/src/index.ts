@@ -112,7 +112,11 @@ export type AccessibilityTextSize = "STANDARD" | "LARGE" | "EXTRA_LARGE";
 
 export type VibrationAlertMode = "OFF" | "IMPORTANT" | "ALL";
 
+export type SupportedAssistantLocale = "en-SG" | "zh-SG" | "ms-SG" | "ta-SG";
+
 export interface AccessibilityPreferences {
+  assistantLocale?: SupportedAssistantLocale;
+  assistantDiagnosticsConsent?: boolean;
   wheelchairAssistance: boolean;
   wheelchairRouting: boolean;
   avoidSteepSlopes: boolean;
@@ -165,6 +169,9 @@ export interface PassengerProfile {
 
 export interface PassengerAssistanceRequest {
   requestId: string;
+  /** Rich lifecycle record created by the operations orchestrator. */
+  caseId?: string;
+  assistanceCaseState?: AssistanceCaseState;
   sessionId: string;
   busService: string;
   busId: string;
@@ -213,9 +220,400 @@ export interface AssistanceRequestInput {
 
 export interface AssistanceRequestResponse {
   requestId: string;
+  caseId?: string;
+  assistanceCaseState?: AssistanceCaseState;
   status: AssistanceRequestStatus;
   createdAt: string;
   duplicateOfRequestId?: string;
+}
+
+/** Sources accepted by the intent-first sensor-fusion layer. */
+export type SignalSource =
+  | "APP"
+  | "PHYSICAL_BUTTON"
+  | "NFC"
+  | "CAMERA"
+  | "PRESSURE_SENSOR"
+  | "DISTANCE_SENSOR"
+  | "OPERATOR";
+
+export type SignalKind =
+  | "EXPLICIT_ASSISTANCE_REQUEST"
+  | "WHEELCHAIR_DETECTED"
+  | "WALKING_AID_DETECTED"
+  | "STROLLER_DETECTED"
+  | "LUGGAGE_DETECTED"
+  | "PASSENGER_IN_BOARDING_ZONE"
+  | "BOARDING_COMPLETE"
+  | "ALIGHTING_COMPLETE"
+  | "HUMAN_HELP_REQUESTED";
+
+export interface SignalObservation {
+  signalId: string;
+  idempotencyKey?: string;
+  source: SignalSource;
+  kind: SignalKind;
+  stopCode: string;
+  busCandidate?: string;
+  busService?: string;
+  assistanceCandidates: AssistanceType[];
+  confidence: number;
+  /** Anonymous rotating token; never a face, name, or medical identifier. */
+  anonymousToken: string;
+  phase?: AssistancePhase;
+  confirmed?: boolean;
+  observedAt: string;
+  metadata?: Record<string, string | number | boolean | null>;
+}
+
+export type BoardingIntentDecision =
+  | "CONFIRMED"
+  | "LIKELY"
+  | "UNCONFIRMED"
+  | "DECLINED";
+
+export interface BoardingIntentEvidence {
+  signalId: string;
+  source: SignalSource;
+  kind: SignalKind;
+  confidence: number;
+  confirmed: boolean;
+  observedAt: string;
+}
+
+/**
+ * Auditable intent result. Perception may increase confidence, but only an
+ * explicit passenger or operator confirmation may produce CONFIRMED.
+ */
+export interface BoardingIntentAssessment {
+  decision: BoardingIntentDecision;
+  confidence: number;
+  targetBusId?: string;
+  reason: string;
+  evidence: BoardingIntentEvidence[];
+  assessedAt: string;
+}
+
+export type AssistanceCaseState =
+  | "REQUESTED"
+  | "VALIDATED"
+  | "VEHICLE_ASSIGNED"
+  | "SAFE_TO_ACTUATE"
+  | "ACTUATING"
+  | "READY"
+  | "COMPLETED"
+  | "NEEDS_CONFIRMATION"
+  | "ESCALATED"
+  | "BLOCKED"
+  | "FAILED"
+  | "CANCELLED";
+
+export interface AssistanceIntent {
+  intentId: string;
+  signalId: string;
+  source: SignalSource;
+  anonymousToken: string;
+  assistanceTypes: AssistanceType[];
+  confidence: number;
+  confirmed: boolean;
+  createdAt: string;
+  confirmedAt?: string;
+}
+
+export interface AssistanceActionPlanItem {
+  assistanceType: AssistanceType;
+  action:
+    | "DEPLOY_RAMP"
+    | "RETRACT_RAMP"
+    | "PLAY_EXTERNAL_AUDIO"
+    | "SHOW_VISUAL_MESSAGE"
+    | "VIBRATE_STOP_CONTROL"
+    | "EXTEND_DWELL";
+  requiresSafetyClearance: boolean;
+  status: "PLANNED" | "COMMAND_ISSUED" | "READY" | "COMPLETED" | "BLOCKED";
+  commandId?: string;
+}
+
+export interface AssistanceOutcome {
+  caseId: string;
+  acknowledgedLatencyMs?: number;
+  completionTimeMs?: number;
+  operatorInterventions: number;
+  safetyBlocks: number;
+  failures: string[];
+  passengerFeedbackScore?: 1 | 2 | 3 | 4 | 5;
+  completedAt?: string;
+}
+
+export interface AssistanceCase {
+  caseId: string;
+  stopCode: string;
+  busId?: string;
+  busService?: string;
+  phase: AssistancePhase;
+  intents: AssistanceIntent[];
+  assistanceTypes: AssistanceType[];
+  passengerCount: number;
+  confidence: number;
+  boardingIntent: BoardingIntentAssessment;
+  state: AssistanceCaseState;
+  escalationReason?: string;
+  actionPlan: AssistanceActionPlanItem[];
+  outcome: AssistanceOutcome;
+  createdAt: string;
+  updatedAt: string;
+  acknowledgedAt?: string;
+  completionDetectedAt?: string;
+  completionConfidence?: number;
+  completionConfirmed?: boolean;
+  cancellationRequestedAt?: string;
+}
+
+export type PerceptionNeedClass =
+  | "WHEELCHAIR"
+  | "WALKING_AID"
+  | "STROLLER"
+  | "LUGGAGE"
+  | "PASSENGER_IN_BOARDING_ZONE";
+
+export interface PerceptionEvaluationSample {
+  sampleId: string;
+  predicted: PerceptionNeedClass[];
+  actual: PerceptionNeedClass[];
+  confidence?: Partial<Record<PerceptionNeedClass, number>>;
+  scenario?: string;
+  observedAt: string;
+}
+
+export interface PerceptionClassMetrics {
+  className: PerceptionNeedClass;
+  truePositives: number;
+  falsePositives: number;
+  falseNegatives: number;
+  precision?: number;
+  recall?: number;
+}
+
+export interface PerceptionEvaluationMetrics {
+  sampleCount: number;
+  microPrecision?: number;
+  microRecall?: number;
+  classes: PerceptionClassMetrics[];
+}
+
+export interface VehicleCapability {
+  busId: string;
+  busService?: string;
+  autonomous?: boolean;
+  autonomyLevel?: "MOCK_ROUTE_AUTOMATION";
+  ramp: boolean;
+  externalAudio: boolean;
+  visualDisplay: boolean;
+  dwellControl: boolean;
+  wheelchairSpaceCapacity: number;
+  supportedTelemetry: Array<keyof Omit<SafetyTelemetry, "busId" | "observedAt">>;
+  updatedAt: string;
+}
+
+export type RampPosition =
+  | "STOWED"
+  | "DEPLOYING"
+  | "DEPLOYED"
+  | "RETRACTING"
+  | "FAULT"
+  | "UNKNOWN";
+
+export type RampObstacleClass =
+  | "NONE"
+  | "LIGHT_DEBRIS"
+  | "PERSON"
+  | "MOBILITY_DEVICE"
+  | "LUGGAGE"
+  | "ANIMAL"
+  | "UNKNOWN";
+
+export interface RampObstacleRanging {
+  laserHealthy: boolean;
+  objectDetected: boolean;
+  nearestDistanceMm?: number;
+  occupiedZoneCount: number;
+  criticalZoneOccupied: boolean;
+  observedAt: string;
+}
+
+export interface RampObstacleClassification {
+  busId: string;
+  classification: RampObstacleClass;
+  confidence: number;
+  observedAt: string;
+}
+
+export interface RampObstacleAssessment extends RampObstacleRanging {
+  classification: RampObstacleClass;
+  classificationConfidence: number;
+  classificationObservedAt?: string;
+  blocksDeployment: boolean;
+  reason: string;
+}
+
+export interface SafetyTelemetry {
+  busId: string;
+  stopCode?: string;
+  vehicleStopped: boolean;
+  parkingBrakeActive: boolean;
+  doorOpen: boolean;
+  deploymentPathClear: boolean;
+  rampObstacle?: RampObstacleAssessment;
+  rampPosition: RampPosition;
+  wheelchairSpaceOccupied?: boolean;
+  prioritySeatOccupied?: boolean;
+  passengerSeated?: boolean;
+  boardingComplete?: boolean;
+  networkOnline?: boolean;
+  observedAt: string;
+}
+
+export interface PrecisionDockingObservation {
+  busId: string;
+  stopCode: string;
+  markerId: number;
+  markerDetected: boolean;
+  markerRangeMm?: number;
+  lateralOffsetMm?: number;
+  headingErrorDegrees?: number;
+  tofDistanceMm?: number;
+  tofHealthy: boolean;
+  confidence: number;
+  observedAt: string;
+}
+
+export interface PrecisionDockingAssessment extends PrecisionDockingObservation {
+  fresh: boolean;
+  aligned: boolean;
+  reason: string;
+}
+
+/**
+ * Prototype-only route automation. It models the decisions and safety gates of
+ * an autonomous shuttle without commanding a real steering or braking system.
+ */
+export type AutonomousDriveMode =
+  | "MANUAL"
+  | "AUTONOMOUS"
+  | "REMOTE_ASSIST";
+
+export type AutonomousDriveState =
+  | "IDLE"
+  | "ROUTE_ASSIGNED"
+  | "EN_ROUTE"
+  | "APPROACHING_STOP"
+  | "PRECISION_STOPPING"
+  | "STOPPED_SECURE"
+  | "DOORS_OPEN"
+  | "READY_TO_DEPART"
+  | "DEPARTING"
+  | "MANUAL_OVERRIDE"
+  | "EMERGENCY_STOP"
+  | "BLOCKED";
+
+export interface AutonomousVehicleState {
+  busId: string;
+  busService: string;
+  routeId: string;
+  routeStopCodes: string[];
+  targetStopIndex: number;
+  targetStopCode: string;
+  mode: AutonomousDriveMode;
+  state: AutonomousDriveState;
+  distanceToTargetMeters: number;
+  speedKph: number;
+  localizationAccuracyMeters: number;
+  obstacleDetected: boolean;
+  remoteOverride: boolean;
+  docking?: PrecisionDockingAssessment;
+  blockReason?: string;
+  updatedAt: string;
+}
+
+export interface AutonomousRouteAssignment {
+  busService: string;
+  routeId: string;
+  routeStopCodes: string[];
+  initialDistanceMeters: number;
+}
+
+export interface AutonomousMotionUpdate {
+  distanceToTargetMeters: number;
+  speedKph: number;
+  localizationAccuracyMeters: number;
+  obstacleDetected?: boolean;
+}
+
+export type ActuatorCommandType =
+  | "DEPLOY_RAMP"
+  | "RETRACT_RAMP"
+  | "EXTEND_DWELL"
+  | "PLAY_EXTERNAL_AUDIO"
+  | "SHOW_VISUAL_MESSAGE"
+  | "VIBRATE_STOP_CONTROL";
+
+export interface ActuatorCommand {
+  commandId: string;
+  caseId: string;
+  busId: string;
+  stopCode: string;
+  command: ActuatorCommandType;
+  payload?: Record<string, string | number | boolean>;
+  idempotencyKey: string;
+  issuedAt: string;
+  expiresAt: string;
+}
+
+export type ActuatorExecutionState =
+  | "ISSUED"
+  | "ACCEPTED"
+  | "IN_PROGRESS"
+  | "COMPLETED"
+  | "CANCELLED"
+  | "BLOCKED"
+  | "FAILED";
+
+export interface ActuatorStatus {
+  commandId: string;
+  caseId: string;
+  busId: string;
+  state: ActuatorExecutionState;
+  detail?: string;
+  rampPosition?: RampPosition;
+  updatedAt: string;
+}
+
+export interface DeviceHealth {
+  deviceId: string;
+  deviceType: "BUS_STOP" | "MOCK_BUS" | "SENSOR" | "ACTUATOR";
+  busId?: string;
+  stopCode?: string;
+  batteryPercent?: number;
+  networkOnline: boolean;
+  sensorHealth: Record<string, "OK" | "DEGRADED" | "FAILED">;
+  actuatorCycleCount?: number;
+  firmwareVersion?: string;
+  observedAt: string;
+}
+
+export interface AssistanceMetrics {
+  totalCases: number;
+  activeCases: number;
+  completedCases: number;
+  escalatedCases: number;
+  failedCases: number;
+  explicitRequests: number;
+  sensorObservations: number;
+  acknowledgementP95Ms?: number;
+  medianCompletionMs?: number;
+  operatorInterventionRate: number;
+  safetyBlocks: number;
+  averagePassengerFeedback?: number;
 }
 
 export interface RequestStatusUpdateMessage {
@@ -249,10 +647,70 @@ export interface ExternalAnnouncementMessage {
   timestamp: string;
 }
 
+export interface AssistanceCaseUpdateMessage {
+  type: "CASE_STATUS";
+  caseId: string;
+  busId?: string;
+  stopCode: string;
+  state: AssistanceCaseState;
+  passengerCount: number;
+  assistanceTypes: AssistanceType[];
+  escalationReason?: string;
+  timestamp: string;
+}
+
+export interface SafetyTelemetryUpdateMessage {
+  type: "SAFETY_TELEMETRY";
+  busId: string;
+  stopCode?: string;
+  telemetry: SafetyTelemetry;
+  fresh: boolean;
+  timestamp: string;
+}
+
+export interface ActuatorStatusUpdateMessage {
+  type: "ACTUATOR_STATUS";
+  caseId: string;
+  busId: string;
+  status: ActuatorStatus;
+  timestamp: string;
+}
+
+export interface OperatorEscalationMessage {
+  type: "OPERATOR_ESCALATION";
+  caseId: string;
+  busId?: string;
+  stopCode: string;
+  reason: string;
+  timestamp: string;
+}
+
+export interface DeviceHealthUpdateMessage {
+  type: "DEVICE_HEALTH";
+  busId?: string;
+  stopCode?: string;
+  health: DeviceHealth;
+  timestamp: string;
+}
+
+export interface AutonomyStatusUpdateMessage {
+  type: "AUTONOMY_STATUS";
+  busId: string;
+  busService: string;
+  autonomy: AutonomousVehicleState;
+  timestamp: string;
+}
+
 export type StatusUpdateMessage =
   | RequestStatusUpdateMessage
   | VehicleStatusUpdateMessage
-  | ExternalAnnouncementMessage;
+  | ExternalAnnouncementMessage
+  | AssistanceCaseUpdateMessage
+  | SafetyTelemetryUpdateMessage
+  | ActuatorStatusUpdateMessage
+  | OperatorEscalationMessage
+  | DeviceHealthUpdateMessage
+  | AutonomyStatusUpdateMessage;
 
 export interface Bus {
   busId: string;
@@ -438,6 +896,7 @@ export interface PhysicalButtonRequestPayload {
 
 export interface PhysicalButtonRequestResponse {
   requestId: string;
+  caseId?: string;
   status: AssistanceRequestStatus;
   source: "PHYSICAL_BUTTON";
   feedback: {

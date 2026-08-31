@@ -105,6 +105,30 @@ describe("request status socket", () => {
       busService: "191",
     });
     expect(onUpdate).toHaveBeenCalledTimes(2);
+
+    socket.message({
+      type: "AUTONOMY_STATUS",
+      timestamp: "2026-08-28T01:01:02.000Z",
+      busId: "BUS-1",
+      busService: "191",
+      autonomy: {
+        busId: "BUS-1",
+        state: "PRECISION_STOPPING",
+      },
+    });
+    expect(onUpdate).toHaveBeenCalledTimes(3);
+
+    socket.message({
+      type: "AUTONOMY_STATUS",
+      timestamp: "2026-08-28T01:01:03.000Z",
+      busId: "BUS-1",
+      busService: "191",
+      autonomy: {
+        busId: "BUS-1",
+        state: "UNSAFE_UNKNOWN_STATE",
+      },
+    });
+    expect(onUpdate).toHaveBeenCalledTimes(3);
     stop();
   });
 
@@ -134,5 +158,40 @@ describe("request status socket", () => {
     second.disconnect();
     jest.runOnlyPendingTimers();
     expect(MockWebSocket.instances).toHaveLength(2);
+  });
+
+  it("subscribes to and filters the assistance-case lifecycle", () => {
+    const onUpdate = jest.fn();
+    const stop = subscribeToRequestStatus("REQ-CASE", onUpdate, jest.fn(), {
+      caseId: "CASE-CURRENT",
+    });
+    const socket = MockWebSocket.instances[0];
+    socket.open();
+    expect(JSON.parse(socket.sent[1])).toEqual({
+      type: "SUBSCRIBE_CASE",
+      caseId: "CASE-CURRENT",
+    });
+
+    socket.message({
+      type: "CASE_STATUS",
+      caseId: "CASE-OTHER",
+      stopCode: "18331",
+      state: "READY",
+      passengerCount: 1,
+      assistanceTypes: ["WHEELCHAIR_RAMP"],
+      timestamp: "2026-08-31T01:00:00.000Z",
+    });
+    socket.message({
+      type: "CASE_STATUS",
+      caseId: "CASE-CURRENT",
+      stopCode: "18331",
+      state: "READY",
+      passengerCount: 1,
+      assistanceTypes: ["WHEELCHAIR_RAMP"],
+      timestamp: "2026-08-31T01:00:01.000Z",
+    });
+    expect(onUpdate).toHaveBeenCalledTimes(1);
+    expect(onUpdate.mock.calls[0][0].state).toBe("READY");
+    stop();
   });
 });

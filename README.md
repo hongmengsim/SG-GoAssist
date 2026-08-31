@@ -31,6 +31,7 @@ npm.cmd run typecheck
 npm.cmd test
 npm.cmd run build
 npm.cmd run format:check
+npm.cmd run demo:integrated
 ```
 
 Tests, builds, typechecks, and formatting checks never start Expo or open a
@@ -38,6 +39,34 @@ browser. Runtime smoke checks reuse `http://localhost:8081`; E2E checks reuse th
 backend already running on port 3000. Restart Expo only for environment,
 configuration, dependency, or bundler-health changes: stop the current `dev`
 command first, then run it again so the same ports are reused.
+
+## Integrated assistance demonstrator
+
+The passenger request API now feeds a persistent assistance-case orchestrator.
+Open `http://localhost:3000/operator` for the multi-bus operator console. Run
+`npm.cmd run demo:integrated` while the backend is active to exercise confirmed
+intent, vehicle capability discovery, safety telemetry, ramp command delivery,
+deployed/stowed limit-switch verification, safe cancellation, completion, and
+perception metrics without physical hardware.
+
+The portable stop, mock-bus firmware, wiring, safety demonstration, contracts,
+and API reference are documented in:
+
+- `hardware/INTEGRATED_PROTOTYPE.md`
+- `docs/grand-challenge-integrated-prototype.md`
+- `docs/task-requirements-traceability.md`
+
+## Private hybrid assistant
+
+The passenger app resolves requests through deterministic commands, local
+multilingual travel-guide retrieval, optional on-device Qwen inference,
+schema/evidence validation, and finally the existing journey action controller.
+AI can interpret or explain, but it cannot call an API, move a ramp, open a
+door, or control the vehicle. Android model failure immediately retains the
+rule-based assistant and active journey.
+
+See `docs/hybrid-on-device-assistant.md` for Android model delivery, privacy,
+speech, diagnostics, and verification details.
 
 ## Regional bus-stop data
 

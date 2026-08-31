@@ -99,6 +99,12 @@ it("sends longitude-latitude origin and destination and normalizes a real OSRM w
     "Turn slightly left onto Kent Ridge Crescent",
     "Arrive at Kent Ridge Crescent",
   ]);
+  expect(route.steps.map((step) => step.maneuverDirection)).toEqual([
+    "DEPART",
+    "SLIGHT_LEFT",
+    "ARRIVE",
+  ]);
+  expect(route.steps[1].roadName).toBe("Kent Ridge Crescent");
 });
 
 it("briefly reuses a route for essentially the same origin and destination", async () => {
@@ -167,7 +173,9 @@ it("keeps provider failures independent with useful error categories", async () 
     status: 200,
     json: () => Promise.resolve({ code: "NoRoute", message: "No route" }),
   });
-  const noRouteProvider = new OsrmWalkingRoutingProvider("https://routing.test");
+  const noRouteProvider = new OsrmWalkingRoutingProvider(
+    "https://routing.test",
+  );
 
   await expect(
     noRouteProvider.getWalkingRoute({
@@ -177,7 +185,9 @@ it("keeps provider failures independent with useful error categories", async () 
   ).rejects.toMatchObject<Partial<RoutingProviderError>>({ code: "NO_ROUTE" });
 
   (global.fetch as jest.Mock).mockRejectedValueOnce(new Error("offline"));
-  const offlineProvider = new OsrmWalkingRoutingProvider("https://routing.test");
+  const offlineProvider = new OsrmWalkingRoutingProvider(
+    "https://routing.test",
+  );
   await expect(
     offlineProvider.getWalkingRoute({
       origin: { latitude: 1.3, longitude: 103.77 },

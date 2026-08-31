@@ -1,0 +1,6 @@
+{
+  "platforms": ["android"],
+  "android": {
+    "modules": ["sg.goassist.model.GoAssistModelAssetModule"]
+  }
+}

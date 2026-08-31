@@ -33,6 +33,23 @@ jest.mock("expo-location", () => ({
   ),
 }));
 
+jest.mock("expo-speech-recognition", () => ({
+  ExpoSpeechRecognitionModule: {
+    abort: jest.fn(),
+    addListener: jest.fn(() => ({ remove: jest.fn() })),
+    isRecognitionAvailable: jest.fn(() => false),
+    requestPermissionsAsync: jest.fn(() =>
+      Promise.resolve({ granted: false, status: "denied" }),
+    ),
+    start: jest.fn(),
+  },
+}));
+
+jest.mock("expo-speech", () => ({
+  speak: jest.fn(),
+  stop: jest.fn(() => Promise.resolve()),
+}));
+
 beforeEach(async () => {
   await AsyncStorage.clear();
 });

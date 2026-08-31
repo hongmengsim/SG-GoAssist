@@ -3,11 +3,27 @@ export type RoutingCoordinate = {
   longitude: number;
 };
 
+export type RouteManeuverDirection =
+  | "DEPART"
+  | "STRAIGHT"
+  | "SLIGHT_LEFT"
+  | "LEFT"
+  | "SHARP_LEFT"
+  | "SLIGHT_RIGHT"
+  | "RIGHT"
+  | "SHARP_RIGHT"
+  | "U_TURN"
+  | "ROUNDABOUT"
+  | "ARRIVE"
+  | "UNKNOWN";
+
 export type RouteStep = {
   instruction: string;
   distanceMeters: number;
   durationSeconds?: number;
   maneuver?: string;
+  maneuverDirection?: RouteManeuverDirection;
+  roadName?: string;
   coordinate?: RoutingCoordinate;
   geometryIndex?: number;
 };
@@ -132,8 +148,7 @@ type CachedRoute = {
 const defaultRoutingBaseUrl =
   "https://routing.openstreetmap.de/routed-foot/route/v1/driving";
 const routeCacheDurationMs = 2 * 60 * 1000;
-const minimumRequestIntervalMs =
-  process.env.NODE_ENV === "test" ? 0 : 1_050;
+const minimumRequestIntervalMs = process.env.NODE_ENV === "test" ? 0 : 1_050;
 
 export class RoutingProviderError extends Error {
   constructor(
@@ -168,6 +183,32 @@ function normalizedHeadingWord(modifier?: string) {
     default:
       return modifier ?? "ahead";
   }
+}
+
+function structuredManeuverDirection(
+  type?: string,
+  modifier?: string,
+): RouteManeuverDirection {
+  if (type === "arrive") return "ARRIVE";
+  if (type === "depart") return "DEPART";
+  if (type === "roundabout" || type === "rotary") return "ROUNDABOUT";
+  if (modifier === "uturn") return "U_TURN";
+  if (modifier === "slight left") return "SLIGHT_LEFT";
+  if (modifier === "left") return "LEFT";
+  if (modifier === "sharp left") return "SHARP_LEFT";
+  if (modifier === "slight right") return "SLIGHT_RIGHT";
+  if (modifier === "right") return "RIGHT";
+  if (modifier === "sharp right") return "SHARP_RIGHT";
+  if (
+    modifier === "straight" ||
+    type === "continue" ||
+    type === "new name" ||
+    type === "fork" ||
+    type === "end of road"
+  ) {
+    return "STRAIGHT";
+  }
+  return "UNKNOWN";
 }
 
 function stepInstruction(
@@ -298,6 +339,11 @@ function normalizeRoute(
       maneuver: [step.maneuver?.type, step.maneuver?.modifier]
         .filter(Boolean)
         .join("-"),
+      maneuverDirection: structuredManeuverDirection(
+        step.maneuver?.type,
+        step.maneuver?.modifier,
+      ),
+      roadName: step.name?.trim() || undefined,
       coordinate: maneuverCoordinate,
       geometryIndex: maneuverCoordinate
         ? closestGeometryIndex(geometry, maneuverCoordinate)
@@ -319,12 +365,14 @@ function normalizeRoute(
               distanceMeters: Math.round(route.distance!),
               durationSeconds: Math.round(route.duration!),
               maneuver: "continue",
+              maneuverDirection: "STRAIGHT",
               geometryIndex: 0,
             },
             {
               instruction: `Arrive at ${destinationLabel}`,
               distanceMeters: 0,
               maneuver: "arrive",
+              maneuverDirection: "ARRIVE",
               geometryIndex: geometry.length - 1,
             },
           ],
@@ -339,7 +387,8 @@ function normalizeRoute(
       warnings: [
         {
           code: "INCOMPLETE_ACCESSIBILITY_DATA",
-          message: "This standard walking route was not checked for wheelchair access.",
+          message:
+            "This standard walking route was not checked for wheelchair access.",
           severity: "INFO",
         },
       ],
@@ -361,7 +410,9 @@ function abortableDelay(milliseconds: number, signal?: AbortSignal) {
       "abort",
       () => {
         clearTimeout(timeout);
-        reject(new DOMException("The route request was cancelled.", "AbortError"));
+        reject(
+          new DOMException("The route request was cancelled.", "AbortError"),
+        );
       },
       { once: true },
     );
@@ -383,8 +434,7 @@ export class OsrmWalkingRoutingProvider implements RoutingProvider {
   private lastRequestStartedAt = 0;
 
   constructor(
-    private readonly baseUrl =
-      process.env.EXPO_PUBLIC_WALKING_ROUTING_URL?.trim() ||
+    private readonly baseUrl = process.env.EXPO_PUBLIC_WALKING_ROUTING_URL?.trim() ||
       defaultRoutingBaseUrl,
   ) {}
 

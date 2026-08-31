@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit",
     "start": "node dist/server.js",
     "simulator": "ts-node src/cli/simulator.ts",
+    "demo:integrated": "ts-node src/cli/integrated-demo.ts",
     "sync:lta": "ts-node src/cli/sync-lta-bus-data.ts",
     "import:lta-snapshot": "ts-node src/cli/import-lta-bus-data.ts",
     "test": "npm run build && node --test dist/tests/*.test.js dist/tests/*.integration.test.js",

@@ -79,13 +79,16 @@ function stopMarkerIcon({
   size: number;
   strokeWidth: number;
 }) {
-  const markerContent =
+  const busGlyph = `<svg aria-hidden="true" viewBox="0 0 16 16" width="66%" height="66%" focusable="false"><path d="M4 2.5h8c.8 0 1.5.7 1.5 1.5v6.5c0 .6-.4 1-1 1H3.5c-.6 0-1-.4-1-1V4c0-.8.7-1.5 1.5-1.5Zm-.2 2v3.4h8.4V4.5H3.8Zm1 4.7a.9.9 0 1 0 0 1.8.9.9 0 0 0 0-1.8Zm6.4 0a.9.9 0 1 0 0 1.8.9.9 0 0 0 0-1.8ZM4 11.5v1.3m8-1.3v1.3" fill="none" stroke="${glyphColor}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+  const stateBadge =
     kind === "selected"
-      ? "&#10003;"
-      : `<svg aria-hidden="true" viewBox="0 0 16 16" width="68%" height="68%" focusable="false"><path d="M4 2.5h8c.8 0 1.5.7 1.5 1.5v6.5c0 .6-.4 1-1 1H3.5c-.6 0-1-.4-1-1V4c0-.8.7-1.5 1.5-1.5Zm-.2 2v3.4h8.4V4.5H3.8Zm1 4.7a.9.9 0 1 0 0 1.8.9.9 0 0 0 0-1.8Zm6.4 0a.9.9 0 1 0 0 1.8.9.9 0 0 0 0-1.8ZM4 11.5v1.3m8-1.3v1.3" fill="none" stroke="${glyphColor}" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+      ? `<span data-marker-state="selected" style="align-items:center;background:${stroke};border:2px solid #fff;border-radius:50%;box-sizing:border-box;color:#fff;display:flex;font:900 12px/1 system-ui,sans-serif;height:18px;justify-content:center;position:absolute;right:-3px;top:-3px;width:18px">&#10003;</span>`
+      : kind === "recommended"
+        ? `<span data-marker-state="recommended" style="align-items:center;background:${stroke};border:2px solid #fff;border-radius:50%;box-sizing:border-box;color:#fff;display:flex;font:900 10px/1 system-ui,sans-serif;height:17px;justify-content:center;position:absolute;right:-3px;top:-3px;width:17px">&#9733;</span>`
+        : "";
   return divIcon({
     className: `goassist-leaflet-marker goassist-stop-marker goassist-stop-marker-${kind}`,
-    html: `<span aria-hidden="true" data-marker-kind="${kind}" style="align-items:center;box-sizing:border-box;display:flex;justify-content:center;width:${size}px;height:${size}px;border-radius:50%;background:${fill};border:${strokeWidth}px solid ${stroke};box-shadow:0 2px 6px rgba(6,37,41,.38);color:${glyphColor};font:900 14px/1 system-ui,sans-serif">${markerContent}</span>`,
+    html: `<span aria-hidden="true" data-marker-kind="${kind}" style="align-items:center;box-sizing:border-box;display:flex;justify-content:center;position:relative;width:${size}px;height:${size}px;border-radius:50%;background:${fill};border:${strokeWidth}px solid ${stroke};box-shadow:0 3px 9px rgba(6,37,41,.46);color:${glyphColor}">${busGlyph}${stateBadge}</span>`,
     iconAnchor: [size / 2, size / 2],
     iconSize: [size, size],
   });
@@ -670,7 +673,7 @@ export function JourneyMap({
                   : palette.stopDefault,
               glyphColor: palette.textOnMarker,
               kind,
-              size: selected ? 30 : recommended ? 23 : 18,
+              size: selected ? 54 : recommended ? 50 : 44,
               stroke: palette.stopOutline,
               strokeWidth: highContrast ? 4 : selected ? 3 : 2,
             }),
