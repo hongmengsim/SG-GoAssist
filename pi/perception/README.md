@@ -1,39 +1,56 @@
 # pi/perception
 
-**Status: planned, not implemented.** The working prototype (pretrained YOLO11n, object safe/unsafe policy, tests) is in the separate ML workspace and will be ported here, renamed to this repo's conventions.
+**Status: policy layer implemented (software only). No camera and no model runner yet; both are deferred until a Pi and a model are available.**
 
 ## Purpose
 
-Look at the ramp zone with the Pi camera and report what is in it. It runs the detector, decides for each object whether it is safe or unsafe to deploy over, and reports camera health. It makes no decision about the ramp: that belongs to `pi/safety-gate`.
+Judge what is in the ramp zone. Given a frame and a detector, it decides for each object whether it is safe or unsafe to deploy over, whether it overlaps the ramp polygon, and whether the frame can be trusted at all. It makes no decision about the ramp: that belongs to `pi/safety-gate`.
 
-Camera frames stay in memory. They are never written to disk or stored. A live view for the controller, if enabled, is streamed and not recorded.
+Camera frames stay in memory. Only summary statistics (mean and spread) are read for the health check; nothing is written to disk or stored. A live view for the controller, if enabled later, is streamed and not recorded.
 
 ## Interface
 
-Output, one per processed frame:
+```python
+from perception import StubDetector, RawDetection, analyse
+
+result = analyse(frame, detector, polygon)   # -> PerceptionResult
+```
 
 ```
 PerceptionResult
-  objects:        [ { className, safety: SAFE | UNSAFE, confidence, inZone, boxNorm } ]
-  imageOk:        bool
-  degradedReason: none | no_frame | too_dark | overexposed | low_contrast_or_blocked | inference_error
-  observedAt:     ISO timestamp
+  objects:         tuple of PerceptionObject, or None
+  imageOk:         bool          (image_ok)
+  degradedReason:  none | no_frame | too_dark | overexposed | low_contrast_or_blocked | inference_error
+  observedAt:      ISO timestamp
+
+PerceptionObject: class_name, safety (SAFE | UNSAFE), confidence, in_zone, box_norm (centre x, y, width, height)
 ```
 
-- `inZone` is true when the object's box overlaps the ramp polygon (not only when its centre is inside).
-- Policy: **unsafe by default.** Only an explicit list is safe, and never a person, wheelchair, walker, stroller or bicycle. Proposed safe list: `leaf`, `plastic_bag`, and only at or above the repo's existing light-debris confidence of 0.92. A size limit is an open question for the team.
-- A frame that cannot be trusted (`imageOk` false) reports no objects and a reason. It never reads as "empty".
+- `objects` is `None` whenever the frame cannot be trusted or the detector fails. That means "unavailable", never "empty". An empty tuple means a healthy frame with nothing detected.
+- `in_zone` is true when the object's box overlaps the ramp polygon (not only when its centre is inside). A polygon with fewer than 3 points, or a box with broken numbers, counts as overlapping.
+- Policy: **unsafe by default.** Only `leaf` and `plastic_bag` are safe, and only at or above the repo's light-debris confidence of 0.92 (owner decision 29 Sep 2026). A person, wheelchair, walker, scooter, stroller, bicycle, crutches, cane or animal can never be safe, even if a custom list names them. Unknown classes, invalid confidence, and boxes with broken numbers are unsafe. A size limit is an open question for the team.
+- Detectors implement `detect(frame) -> [RawDetection]` (`Detector` protocol). Only `StubDetector` exists; a model runner plugs in later.
 
-Input: a frame (numpy array) and a model file. Class labels follow the repo's names (`wheelchair`, `walker`, `stroller`, `luggage`, `leaf`) plus additions the handoff needs (`person`, `bicycle`, `bag_or_box`, `animal`, `plastic_bag`, `other_object`).
+Class labels follow the repo's names (`wheelchair`, `walker`, `stroller`, `luggage`, `leaf`) plus additions the handoff needs (`person`, `bicycle`, `bag_or_box`, `animal`, `plastic_bag`, `other_object`).
 
 ## Run it alone
 
-Planned: `python -m perception --image path.jpg --model model.pt` on a recorded image, no camera, Pi, backend or ESP32 needed. The pretrained YOLO11n weights cannot detect wheelchairs, strollers, boxes or bottles; only a fine-tuned model can.
+It is a library; nothing to run. A command-line tool for recorded images (`python -m perception --image ...`) needs OpenCV and a model, so it is deferred with the model runner.
 
 ## Test
 
-Planned: `python -m pytest` with recorded images and a stub detector. No camera or model file required for the logic tests.
+From this directory:
+
+```
+python -m unittest
+```
+
+33 tests: box-overlaps-polygon geometry (including concave polygons and fail-safe cases), the safe/unsafe policy, image health, and the analysis pipeline with a stub detector and a fake frame. No camera, model file or numpy needed.
+
+## What changed from the ML prototype
+
+Geometry, policy and image-health checks are ported from `bus-project-2/obstacle`. The prototype also fused the ToF distance and published a message in its own format; that fusion is now `pi/safety-gate`, and the output here is a plain `PerceptionResult`. Names follow this repo: `SAFE`/`UNSAFE` (not `safe`/`unsafe`), and a confidence floor for safe classes is new.
 
 ## Depends on
 
-No other repo module. External: the model file (produced by the separate ML repository), and on the Pi: `opencv`, `ultralytics`, `picamera2`. Its output type is consumed by `pi/safety-gate`.
+No other repo module. On a Pi later: `opencv`, `ultralytics`, `picamera2`, and a model file produced by the separate ML repository. Its output is converted into `pi/safety-gate` inputs by `pi/bus-agent`.

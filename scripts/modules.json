@@ -68,10 +68,12 @@
       "name": "perception",
       "path": "pi/perception",
       "kind": "python",
-      "status": "planned",
+      "status": "active",
       "pythonModules": ["perception"],
       "readme": "strict",
-      "allowedDependencies": []
+      "allowedDependencies": [],
+      "verify": "python -m unittest",
+      "verifyCwd": "pi/perception"
     },
     {
       "name": "safety-gate",
