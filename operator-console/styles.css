@@ -684,3 +684,36 @@ input {
   min-width: 0;
   overflow-wrap: anywhere;
 }
+
+h3.mini {
+  font: 600 10.5px var(--mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  margin: 12px 0 4px;
+}
+ul.reasons {
+  margin: 0;
+  padding-left: 20px;
+  font-weight: 700;
+}
+ul.reasons li::marker {
+  content: "■ ";
+}
+.live-placeholder {
+  margin-top: 12px;
+  padding: 14px;
+  border: 3px dashed var(--ink-2);
+  background: repeating-linear-gradient(
+    135deg,
+    transparent 0 10px,
+    #0001 10px 11px
+  );
+  display: grid;
+  gap: 6px;
+  font-size: 12px;
+}
+.live-placeholder b {
+  font: 700 12px var(--mono);
+  letter-spacing: 0.06em;
+}

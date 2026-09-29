@@ -8,6 +8,7 @@ import {
   RAMP,
   TOF,
   ZONE,
+  HALT_REASON,
   HELP_REASON,
   humanize,
   reasonsText,
@@ -218,6 +219,11 @@ export function zoneView(decision) {
     zone: word(ZONE, decision.zoneState),
     permission: word(PERMISSION, decision.permission),
     reasons: reasonsText(decision.reasons),
+    reasonItems: (decision.reasons ?? []).map((code) => ({
+      code,
+      text: word(HALT_REASON, code),
+    })),
+    observedAt: decision.observedAt,
     tof: `${word(TOF, decision.tof?.state)}${distance !== undefined ? ` · ${distance} mm` : ""}`,
     camera: decision.camera?.imageOk
       ? "Image OK"

@@ -306,8 +306,16 @@ function zonePanel(state, busId) {
     `${view.simulated ? simulatedTag("Simulated input") : ""} ${tag("info", "Not recorded")}`,
     `${svg}
      <div class="readout"><div><b>Zone</b><span>${esc(view.zone)}</span></div><div><b>Local gate</b><span>${mark}</span></div><div><b>ToF</b><span>${esc(view.tof)}</span></div></div>
-     <p class="note">${view.reasons ? `Reasons: ${esc(view.reasons)}. ` : "Nothing blocking. "}Camera: ${esc(view.camera)}.</p>
-     <p class="note">Schematic drawn from the Pi's decision, not a camera image. Live view: not connected (placeholder; the real view will be a stream with access control, not recorded).</p>`,
+     <h3 class="mini">Pi decision · ${esc(time(view.observedAt))}</h3>
+     ${
+       view.reasonItems.length
+         ? `<ul class="reasons">${view.reasonItems.map((item) => `<li data-reason="${esc(item.code)}">${esc(item.text)}</li>`).join("")}</ul>`
+         : '<p class="note">No halt reasons: every check passed.</p>'
+     }
+     <p class="note">Camera: ${esc(view.camera)}. Decided by the bus's local gate at ${esc(time(view.observedAt))}; the bus decides, and the console only shows it.</p>
+     <div class="live-placeholder" role="img" aria-label="Live camera view placeholder">
+       <b>LIVE CAMERA VIEW · NOT CONNECTED</b>
+       <span>The real view will be a stream with access control and is not recorded. Until then, the schematic above is drawn from the Pi's decision, not a camera image.</span></div>`,
   );
 }
 

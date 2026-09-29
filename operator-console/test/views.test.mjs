@@ -283,3 +283,68 @@ test("breadcrumbs mark the current page and link back", () => {
     new RegExp(`href="#/">Overview.*aria-current="page">${B1}`),
   );
 });
+
+// ---- O4: the Pi's decision with reasons, and the camera placeholder --------------------------
+
+import { HALT_REASON, HELP_REASON } from "../src/labels.js";
+
+const schema = (name) =>
+  JSON.parse(
+    readFileSync(
+      new URL(`../../contracts/schema/${name}.schema.json`, import.meta.url),
+      "utf8",
+    ),
+  );
+
+test("every halt reason and help reason in the contract has words in the console", () => {
+  const halt = schema("RampSafetyReport").definitions.HaltReason.enum;
+  for (const reason of halt)
+    assert.ok(HALT_REASON[reason], `no words for halt reason ${reason}`);
+  const help = schema("HelpRequiredReport").definitions.HelpReason.enum;
+  for (const reason of help)
+    assert.ok(HELP_REASON[reason], `no words for help reason ${reason}`);
+});
+
+test("the bus page lists each halt reason as its own item, in words, whatever the cause", () => {
+  const causes = schema("RampSafetyReport").definitions.HaltReason.enum;
+  for (const reason of causes) {
+    const halted = reduce(state, {
+      type: "RAMP_SAFETY",
+      decision: {
+        busId: B1,
+        zoneState: "UNCERTAIN",
+        permission: "HALT",
+        reasons: [reason],
+        tof: { state: "UNKNOWN", simulated: false },
+        camera: { imageOk: false, degradedReason: "covered" },
+        objectsInZone: [],
+        simulated: false,
+        observedAt: "2026-09-30T00:00:09.000Z",
+      },
+      timestamp: T,
+    });
+    const html = busPage(halted, B1, ui, enabled);
+    assert.match(
+      html,
+      new RegExp(
+        `<li[^>]*>[^<]*${HALT_REASON[reason].replace(/[()]/g, "\$&")}`,
+      ),
+      reason,
+    );
+  }
+});
+
+test("the decision panel says when the bus decided and that the bus, not the console, decides", () => {
+  const html = busPage(state, B1, ui, enabled);
+  assert.match(html, /Pi decision/);
+  assert.match(html, /00:00:00/);
+  assert.match(html, /local gate|the bus decides/i);
+});
+
+test("the camera view is a clearly labelled placeholder, separate from the schematic", () => {
+  const html = busPage(state, B1, ui, enabled);
+  assert.match(html, /class="live-placeholder"/);
+  assert.match(html, /LIVE CAMERA VIEW/);
+  assert.match(html, /NOT CONNECTED/);
+  assert.match(html, /not recorded/i);
+});
