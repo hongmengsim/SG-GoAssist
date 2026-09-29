@@ -14,6 +14,7 @@ import {
   MemoryBayRepository,
   MemoryBusStatusRepository,
 } from "./memoryRepositories";
+import { bridgeMovementToVehicleEvents } from "./movementBridge";
 import type { BayRepository, BusStatusRepository } from "./ports";
 import {
   SqliteBayRepository,
@@ -28,6 +29,7 @@ export interface BusOperationsOptions {
   publish?: BusOperationsDeps["publish"];
   audit?: BusOperationsDeps["audit"];
   now?: () => number;
+  onMovement?: BusOperationsDeps["onMovement"];
 }
 
 export interface BusOperations {
@@ -88,6 +90,7 @@ export function createBusOperations(
     publish: options.publish ?? publishEvent,
     audit: options.audit ?? auditToOperationsStore,
     now: options.now ?? Date.now,
+    onMovement: options.onMovement ?? bridgeMovementToVehicleEvents,
   });
   return { service, driver, close: () => database?.close() };
 }
