@@ -1,0 +1,29 @@
+# Line endings: text is stored and checked out with LF for everyone, whatever their
+# core.autocrlf setting. Several tests read source files as text and match multi-line
+# strings (passenger-app/__tests__/App.test.tsx), and Prettier expects LF, so a CRLF
+# checkout on Windows breaks them. See docs/decisions/0003-line-endings.md.
+* text=auto eol=lf
+
+# Windows batch files are the one text type that genuinely needs CRLF.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Never convert binaries, even if they look like text.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.pdf binary
+*.zip binary
+*.3mf binary
+*.stl binary
+*.bin binary
+*.elf binary
+*.gguf binary
+*.pptx binary
+*.docx binary
+*.ttf binary
+*.woff binary
+*.woff2 binary
