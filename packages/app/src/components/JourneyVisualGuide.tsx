@@ -1,14 +1,17 @@
 import React, { useState } from "react";
 import {
   Modal,
-  Pressable,
   ScrollView,
   StyleSheet,
-  Text,
   View,
   type ImageSourcePropType,
 } from "react-native";
+import {
+  PassengerPressable as Pressable,
+  PassengerText as Text,
+} from "../accessibility/PassengerControls";
 import { ThemedSceneArtwork } from "./ThemedSceneArtwork";
+import { usePresentationSizes } from "../accessibility/AccessibilityRuntime";
 import {
   Accessibility,
   ArrowLeft,
@@ -33,7 +36,7 @@ import {
   Volume2,
   X,
   type LucideIcon,
-} from "lucide-react-native";
+} from "./AppIcons";
 import type {
   JourneyGuideStage,
   JourneyInstructionStep,
@@ -156,6 +159,7 @@ export function JourneyVisualGuide({
   onContinueWithoutRerouting?: () => void;
 }) {
   const [detailsVisible, setDetailsVisible] = useState(false);
+  const sizes = usePresentationSizes();
   const palette = colors(lightMode, highContrast);
   const currentStageIndex = stageIndex[instruction.stage];
   const toneSurface =
@@ -189,7 +193,7 @@ export function JourneyVisualGuide({
       accessible={false}
     >
       <View
-        style={styles.stageRail}
+        style={[styles.stageRail, { flexWrap: "wrap", rowGap: 12 }]}
         accessible
         accessibilityLabel={`Journey progress. Current stage ${instruction.stage.toLowerCase()}.`}
       >
@@ -197,11 +201,20 @@ export function JourneyVisualGuide({
           const current = stage.id === instruction.stage;
           const complete = index < currentStageIndex;
           return (
-            <View key={stage.id} style={styles.stageItem} accessible={false}>
+            <View
+              key={stage.id}
+              style={[
+                styles.stageItem,
+                sizes.enlarged && { flexBasis: "30%", flexGrow: 0 },
+              ]}
+              accessible={false}
+            >
               <View
                 style={[
                   styles.stageMarker,
                   {
+                    width: sizes.statusIcon + 16,
+                    height: sizes.statusIcon + 16,
                     backgroundColor:
                       current || complete ? palette.selected : palette.raised,
                     borderColor:
@@ -233,9 +246,9 @@ export function JourneyVisualGuide({
                 )}
               </View>
               <Text
-                numberOfLines={1}
                 style={[
                   styles.stageLabel,
+                  { fontSize: sizes.bodyText, textAlign: "center" },
                   { color: current ? palette.text : palette.muted },
                   current && styles.stageLabelCurrent,
                 ]}

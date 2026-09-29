@@ -1,0 +1,45 @@
+Part,Quantity,Print X mm,Print Y mm,Print Z mm,Plate,Notes
+01_body_rear,1,200.0,180.0,202.0,plate_02_body,Upright on floor underside. Organic supports for hinge/receiver ledges. Hollow bay; keys inserted from roof.
+04_roof_rear,1,199.4,180.0,18.0,plate_04_roof,Outer roof face down; support latch guide recesses. Lift after retracting both printed bolts.
+02_body_centre,1,200.0,192.0,197.0,plate_01_body,Upright on floor underside. Organic supports for hinge/receiver ledges. Hollow bay; keys inserted from roof.
+05_roof_centre,1,199.4,180.0,18.0,plate_05_roof,Outer roof face down; support latch guide recesses. Lift after retracting both printed bolts.
+03_body_front,1,200.0,180.0,202.0,plate_03_body,Upright on floor underside. Organic supports for hinge/receiver ledges. Hollow bay; keys inserted from roof.
+06_roof_front,1,199.4,180.0,18.0,plate_06_roof,Outer roof face down; support latch guide recesses. Lift after retracting both printed bolts.
+07_join_key,8,26.0,10.0,6.4,plate_13_hardware,Rounded bow-tie key. 0.3 mm pocket clearance.
+08_key_retaining_pin,16,6.0,6.0,21.0,plate_14_hardware,Split barb. Insert downward; coupon first.
+09_roof_sliding_latch,6,44.0,5.4,8.7,plate_14_hardware,"Slide +15 mm in X to unlock. Removable sliding bolt, not a snap latch."
+10_static_wheel,4,64.0,64.0,11.0,plate_13_hardware,Flat face down; static display wheel.
+11_wheel_axle,4,9.0,9.0,28.0,plate_13_hardware,Printed split-tip axle; head faces outward.
+12_breadboard_tray,1,190.0,85.0,20.0,plate_07_tray,Tray feet on floor Z40; support under elevated tray floor. Remove roof to extract tray.
+13_electronics_tray,1,110.0,90.0,20.0,plate_07_tray,Tray feet on floor Z40; support under elevated tray floor. Remove roof to extract tray.
+14_tray_adjustable_retainer,8,11.0,9.0,18.0,plate_13_hardware,Move retainers between tray slots; opposing lips accommodate nominal 55 mm breadboard width. Fit coupon first.
+15_L1_yoke,1,77.0,50.0,42.0,plate_10_laser,Remove split foot pin to lift from fixed body receiver. Supports required on side-face orientation.
+16_L2_yoke,1,77.0,50.0,42.0,plate_10_laser,Remove split foot pin to lift from fixed body receiver. Supports required on side-face orientation.
+17_L3_yoke,1,99.0,70.0,42.0,plate_10_laser,Remove split foot pin to lift from fixed body receiver. Supports required on side-face orientation.
+18_laser_split_carrier_12p6,3,54.0,48.0,23.4,plate_10_laser,12.6 bore for nominal 12 barrel. Split collet compressed by tapered collar. Teeth index at 5 degrees; supports required.
+19_laser_taper_collar,3,24.0,24.0,8.0,plate_13_hardware,Notch faces toothed disc. Taper compresses split end approximately 0.3 mm radially. Seat by hand after checking real barrel.
+20_laser_pivot_pin,3,9.0,9.0,15.0,plate_13_hardware,Short single-sided axle stays outside laser aperture. Withdraw pin to disengage face teeth; reseat at desired 5-degree index.
+21_mount_foot_pin,4,6.0,6.0,42.0,plate_14_hardware,Three laser receiver pins and one camera receiver pin.
+22_camera_mast,1,54.0,192.0,18.0,plate_11_camera,Lay mast flat; insert foot pin. Mast is roof-independent.
+23_camera_forward_rail,1,217.0,20.0,10.0,plate_11_camera,217 mm rail; index carriage along Y. Collar stop prevents rail falling through mast.
+24_camera_platform,1,56.0,40.0,13.0,plate_11_camera,"Platform top Z392. Set actual optical centre Z400 using camera adjustment/shims. Y20 forward default, Y-60 reference option."
+25_camera_sliding_jaw,2,11.0,20.0,25.0,plate_13_hardware,Sliding printed clamp jaws; actual camera fit must be checked.
+26_camera_index_pin,1,6.0,6.0,19.0,plate_14_hardware,Locks forward rail through platform.
+27_ToF_removable_bar,1,156.0,19.0,4.0,plate_12_sensor,"Place ToF optical centre at (0,0,140), use printed retaining cap. Remove bar for boarding/ramp access."
+28_ToF_retaining_cap,1,26.6,20.0,8.3,plate_13_hardware,Estimated sensor envelope. Optical opening stays unobstructed.
+29_ramp_inner,1,140.0,126.0,17.0,plate_08_ramp,Print walking surface down; supports beneath knuckles. Fold outer half upward before lifting assembly.
+30_ramp_outer,1,140.0,110.0,13.0,plate_09_ramp,Print walking surface down. Deployed upper length of two halves: 220 mm. Tapered tip.
+31_ramp_root_pin,1,7.0,156.0,7.0,plate_14_hardware,Long split-tip pin; print horizontal with supports. Do not load ramp with heavy objects.
+32_ramp_fold_pin,1,7.0,146.0,7.0,plate_13_hardware,Manual fold hinge pin.
+33_ramp_stow_latch,1,30.0,3.4,8.0,plate_14_hardware,Slide across folded ramp edge to retain upright packet. Remove ToF bar first. Slide +20 mm X to retract.
+C01_joint_0p2,1,36.0,20.0,10.0,plate_15_coupon,Test with 07_join_key before large body prints.
+C01_joint_0p3,1,36.0,20.0,10.0,plate_15_coupon,Test with 07_join_key before large body prints.
+C01_joint_0p4,1,36.0,20.0,10.0,plate_15_coupon,Test with 07_join_key before large body prints.
+C02_laser_bore_12,1,20.0,20.0,8.0,plate_15_coupon,"Measure real laser, select slip-fit bore before carrier printing."
+C02_laser_bore_12p2,1,20.0,20.0,8.0,plate_15_coupon,"Measure real laser, select slip-fit bore before carrier printing."
+C02_laser_bore_12p4,1,20.0,20.0,8.0,plate_15_coupon,"Measure real laser, select slip-fit bore before carrier printing."
+C02_laser_bore_12p6,1,20.0,20.0,8.0,plate_15_coupon,"Measure real laser, select slip-fit bore before carrier printing."
+C02_laser_bore_12p8,1,20.0,20.0,8.0,plate_15_coupon,"Measure real laser, select slip-fit bore before carrier printing."
+C03_roof_latch_channel,1,25.0,12.0,8.0,plate_15_coupon,Use 09 latch tongue: 5.4 wide x 2.4 high in 6 x 3 channel.
+C04_hinge_bore_4p6,1,12.0,12.0,12.0,plate_15_coupon,Use a short pin coupon to check nominal 4 mm hinge pin.
+C05_short_hinge_pin,1,7.0,7.0,17.0,plate_15_coupon,Check bore and split-barb fit.

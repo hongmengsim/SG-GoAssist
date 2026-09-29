@@ -1,0 +1,87 @@
+[
+  {
+    "plate": "plate_01_body",
+    "parts": [
+      {
+        "id": "01_body_rear",
+        "copy": 1
+      },
+      {
+        "id": "02_body_front",
+        "copy": 1
+      }
+    ],
+    "bounds_min": [
+      5.0,
+      5.0,
+      0.0
+    ],
+    "bounds_max": [
+      233.0,
+      155.0,
+      105.5999984741211
+    ]
+  },
+  {
+    "plate": "plate_02_roof",
+    "parts": [
+      {
+        "id": "03_roof_rear",
+        "copy": 1
+      },
+      {
+        "id": "04_roof_front",
+        "copy": 1
+      }
+    ],
+    "bounds_min": [
+      5.0,
+      5.0,
+      0.0
+    ],
+    "bounds_max": [
+      232.99999999999997,
+      154.39999389648438,
+      1.200000047683698
+    ]
+  },
+  {
+    "plate": "plate_03_laser",
+    "parts": [
+      {
+        "id": "18_laser_carrier",
+        "copy": 1
+      },
+      {
+        "id": "18_laser_carrier",
+        "copy": 2
+      },
+      {
+        "id": "18_laser_carrier",
+        "copy": 3
+      },
+      {
+        "id": "15_L1_yoke",
+        "copy": 1
+      },
+      {
+        "id": "15_L1_yoke",
+        "copy": 2
+      },
+      {
+        "id": "15_L1_yoke",
+        "copy": 3
+      }
+    ],
+    "bounds_min": [
+      4.999999999999982,
+      5.000278935214737,
+      0.0
+    ],
+    "bounds_max": [
+      197.99893951416016,
+      52.996449846366886,
+      18.200000762939453
+    ]
+  }
+]

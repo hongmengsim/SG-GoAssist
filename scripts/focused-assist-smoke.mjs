@@ -8,7 +8,7 @@ const DEBUG_PORT = Number(process.env.GOASSIST_FOCUSED_CDP_PORT ?? 9337);
 const EDGE_PATH =
   process.env.EDGE_PATH ??
   "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe";
-const WIDTHS = [280, 320, 360, 390, 430];
+const WIDTHS = [280, 320, 360, 390, 430, 441, 526];
 const HEIGHT = 844;
 const profileDir = await mkdtemp(join(tmpdir(), "goassist-focused-smoke-"));
 const browser = spawn(
@@ -302,6 +302,22 @@ try {
             ],
           });
         }
+        if (url.includes("/api/location/bus-stops/18301/vehicles")) {
+          const multiple = localStorage.getItem("goassist-focused-smoke-mode") === "MULTIPLE";
+          const parked = (busService, destination) => ({
+            busId: "SGA-" + busService + "-FOCUSED", busService,
+            stopCode: boardingStop.busStopCode, state: "PARKED",
+            destination, wheelchairAccessible: true,
+            observedAt: new Date().toISOString(), fresh: true,
+          });
+          return jsonResponse({
+            stopCode: boardingStop.busStopCode,
+            vehicles: [
+              parked("151", "Kent Ridge Terminal"),
+              ...(multiple ? [parked("183", "Buona Vista")] : []),
+            ],
+          });
+        }
         if (url.includes("/api/bus-stops/18301/services/151/routes")) {
           return jsonResponse({
             busStop: boardingStop, serviceNo: "151",
@@ -352,7 +368,7 @@ try {
     "profile",
   );
   await clickLabel(client, "Edit accessibility preferences");
-  await clickLabel(client, "Apply Wheelchair preset");
+  await clickLabel(client, "Turn on Mobility support group");
   await clickLabel(client, "Save needs");
 
   await openFocusedAssist(client);

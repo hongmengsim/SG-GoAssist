@@ -77,6 +77,46 @@ test("API keeps multiple selected assistance needs on one request ID", async () 
   }
 });
 
+test("focused boarding requests do not require or invent a destination", async () => {
+  const server = await startTestServer();
+  try {
+    const { destination: _destination, ...focusedPayload } = wheelchairPayload;
+    const created = await requestJson(
+      server.baseUrl,
+      "/api/assistance/request",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          ...focusedPayload,
+          sessionId: "focused-stop-request",
+        }),
+      },
+    );
+    assert.equal(created.status, 201);
+    const requests = await requestJson(server.baseUrl, "/api/assistance");
+    const request = requests.body.requests.find(
+      (item: any) => item.requestId === created.body.requestId,
+    );
+    assert.equal(request.destination, undefined);
+
+    const alighting = await requestJson(
+      server.baseUrl,
+      "/api/assistance/request",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          ...focusedPayload,
+          sessionId: "alighting-without-destination",
+          boardingOrAlighting: "ALIGHTING",
+        }),
+      },
+    );
+    assert.equal(alighting.status, 400);
+  } finally {
+    await server.close();
+  }
+});
+
 test("API returns useful validation errors for malformed assistance requests", async () => {
   const server = await startTestServer();
   try {

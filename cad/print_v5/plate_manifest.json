@@ -1,0 +1,410 @@
+[
+  {
+    "plate": "plate_01_body",
+    "parts": [
+      {
+        "id": "01_body_rear",
+        "copy": 1
+      },
+      {
+        "id": "02_body_front",
+        "copy": 1
+      }
+    ],
+    "bounds_min": [
+      5.0,
+      5.0,
+      0.0
+    ],
+    "bounds_max": [
+      235.0,
+      155.0,
+      105.5999984741211
+    ]
+  },
+  {
+    "plate": "plate_02_roof",
+    "parts": [
+      {
+        "id": "03_roof_rear",
+        "copy": 1
+      },
+      {
+        "id": "04_roof_front",
+        "copy": 1
+      }
+    ],
+    "bounds_min": [
+      5.0,
+      5.0,
+      0.0
+    ],
+    "bounds_max": [
+      232.99999999999997,
+      154.39999389648438,
+      4.699999809265119
+    ]
+  },
+  {
+    "plate": "plate_03_tray",
+    "parts": [
+      {
+        "id": "11_controller_tray",
+        "copy": 1
+      },
+      {
+        "id": "10_breadboard_tray",
+        "copy": 1
+      }
+    ],
+    "bounds_min": [
+      5.0,
+      5.0,
+      0.0
+    ],
+    "bounds_max": [
+      180.0,
+      168.0,
+      3.0
+    ]
+  },
+  {
+    "plate": "plate_04_laser",
+    "parts": [
+      {
+        "id": "17_L3_yoke",
+        "copy": 1
+      },
+      {
+        "id": "13_laser_pivot_adapter",
+        "copy": 1
+      },
+      {
+        "id": "13_laser_pivot_adapter",
+        "copy": 2
+      },
+      {
+        "id": "13_laser_pivot_adapter",
+        "copy": 3
+      },
+      {
+        "id": "15_L1_yoke",
+        "copy": 1
+      },
+      {
+        "id": "16_L2_yoke",
+        "copy": 1
+      },
+      {
+        "id": "18_laser_carrier",
+        "copy": 1
+      },
+      {
+        "id": "18_laser_carrier",
+        "copy": 2
+      },
+      {
+        "id": "18_laser_carrier",
+        "copy": 3
+      }
+    ],
+    "bounds_min": [
+      5.0,
+      5.0,
+      -4.440892098500626e-15
+    ],
+    "bounds_max": [
+      230.99347668129485,
+      58.99739456176758,
+      30.0
+    ]
+  },
+  {
+    "plate": "plate_05_camera",
+    "parts": [
+      {
+        "id": "23_camera_mast_rail",
+        "copy": 1
+      },
+      {
+        "id": "24_camera_platform",
+        "copy": 1
+      }
+    ],
+    "bounds_min": [
+      5.0,
+      5.0,
+      0.0
+    ],
+    "bounds_max": [
+      190.0,
+      105.0,
+      28.0
+    ]
+  },
+  {
+    "plate": "plate_06_sensor",
+    "parts": [
+      {
+        "id": "07_fixed_sensor_header",
+        "copy": 1
+      },
+      {
+        "id": "27_ToF_bar",
+        "copy": 1
+      },
+      {
+        "id": "28_ToF_cap",
+        "copy": 1
+      }
+    ],
+    "bounds_min": [
+      5.0,
+      4.999999999999991,
+      1.7763568394002505e-14
+    ],
+    "bounds_max": [
+      219.00000190734863,
+      27.799999237060547,
+      8.0
+    ]
+  },
+  {
+    "plate": "plate_07_hardware",
+    "parts": [
+      {
+        "id": "08_static_wheel",
+        "copy": 1
+      },
+      {
+        "id": "08_static_wheel",
+        "copy": 2
+      },
+      {
+        "id": "08_static_wheel",
+        "copy": 3
+      },
+      {
+        "id": "08_static_wheel",
+        "copy": 4
+      },
+      {
+        "id": "19_laser_collar",
+        "copy": 1
+      },
+      {
+        "id": "19_laser_collar",
+        "copy": 2
+      },
+      {
+        "id": "19_laser_collar",
+        "copy": 3
+      },
+      {
+        "id": "12_tray_retainer",
+        "copy": 1
+      },
+      {
+        "id": "12_tray_retainer",
+        "copy": 2
+      },
+      {
+        "id": "12_tray_retainer",
+        "copy": 3
+      },
+      {
+        "id": "12_tray_retainer",
+        "copy": 4
+      },
+      {
+        "id": "12_tray_retainer",
+        "copy": 5
+      },
+      {
+        "id": "12_tray_retainer",
+        "copy": 6
+      },
+      {
+        "id": "12_tray_retainer",
+        "copy": 7
+      },
+      {
+        "id": "12_tray_retainer",
+        "copy": 8
+      },
+      {
+        "id": "25_camera_jaw",
+        "copy": 1
+      },
+      {
+        "id": "25_camera_jaw",
+        "copy": 2
+      },
+      {
+        "id": "20_pivot_pin",
+        "copy": 1
+      },
+      {
+        "id": "20_pivot_pin",
+        "copy": 2
+      },
+      {
+        "id": "20_pivot_pin",
+        "copy": 3
+      },
+      {
+        "id": "06_roof_clip",
+        "copy": 1
+      },
+      {
+        "id": "06_roof_clip",
+        "copy": 2
+      },
+      {
+        "id": "06_roof_clip",
+        "copy": 3
+      },
+      {
+        "id": "06_roof_clip",
+        "copy": 4
+      },
+      {
+        "id": "29_ToF_jamb_clip",
+        "copy": 1
+      },
+      {
+        "id": "29_ToF_jamb_clip",
+        "copy": 2
+      },
+      {
+        "id": "09_wheel_pin",
+        "copy": 1
+      },
+      {
+        "id": "09_wheel_pin",
+        "copy": 2
+      },
+      {
+        "id": "09_wheel_pin",
+        "copy": 3
+      },
+      {
+        "id": "09_wheel_pin",
+        "copy": 4
+      },
+      {
+        "id": "05_join_key",
+        "copy": 1
+      },
+      {
+        "id": "05_join_key",
+        "copy": 2
+      },
+      {
+        "id": "05_join_key",
+        "copy": 3
+      },
+      {
+        "id": "22_mount_pin",
+        "copy": 1
+      },
+      {
+        "id": "22_mount_pin",
+        "copy": 2
+      },
+      {
+        "id": "22_mount_pin",
+        "copy": 3
+      },
+      {
+        "id": "22_mount_pin",
+        "copy": 4
+      },
+      {
+        "id": "26_camera_index_pin",
+        "copy": 1
+      },
+      {
+        "id": "21_pivot_wedge",
+        "copy": 1
+      },
+      {
+        "id": "21_pivot_wedge",
+        "copy": 2
+      },
+      {
+        "id": "21_pivot_wedge",
+        "copy": 3
+      }
+    ],
+    "bounds_min": [
+      5.0,
+      5.0,
+      -3.469446951953614e-16
+    ],
+    "bounds_max": [
+      237.0,
+      105.59686149680056,
+      19.0
+    ]
+  },
+  {
+    "plate": "plate_08_coupon",
+    "parts": [
+      {
+        "id": "C04_angle_gauge",
+        "copy": 1
+      },
+      {
+        "id": "C02_bore_12p8",
+        "copy": 1
+      },
+      {
+        "id": "C02_bore_12p6",
+        "copy": 1
+      },
+      {
+        "id": "C02_bore_12p4",
+        "copy": 1
+      },
+      {
+        "id": "C02_bore_12p2",
+        "copy": 1
+      },
+      {
+        "id": "C02_bore_12",
+        "copy": 1
+      },
+      {
+        "id": "C03_pivot_fit",
+        "copy": 1
+      },
+      {
+        "id": "C03_pivot_fit",
+        "copy": 2
+      },
+      {
+        "id": "C01_key_0p2",
+        "copy": 1
+      },
+      {
+        "id": "C01_key_0p3",
+        "copy": 1
+      },
+      {
+        "id": "C01_key_0p4",
+        "copy": 1
+      }
+    ],
+    "bounds_min": [
+      5.0,
+      5.0,
+      0.0
+    ],
+    "bounds_max": [
+      235.99927904561628,
+      45.0,
+      5.0
+    ]
+  }
+]

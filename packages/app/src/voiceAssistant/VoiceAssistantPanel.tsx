@@ -1,12 +1,9 @@
 import React, { useEffect, useRef, useState } from "react";
+import { ActivityIndicator, StyleSheet, TextInput, View } from "react-native";
 import {
-  ActivityIndicator,
-  Pressable,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
+  PassengerPressable as Pressable,
+  PassengerText as Text,
+} from "../accessibility/PassengerControls";
 import {
   BookOpenCheck,
   CheckCircle2,
@@ -15,7 +12,7 @@ import {
   Share2,
   ShieldCheck,
   Square,
-} from "lucide-react-native";
+} from "../components/AppIcons";
 import type { VoiceAssistantController } from "./VoiceAssistantController";
 import {
   speechListeningWindowMs,
@@ -158,28 +155,28 @@ export function VoiceAssistantPanel({
     interactionState === "PREPARING"
       ? assistantCopy(resolvedLocale, "preparingSpeech")
       : interactionState === "LISTENING"
-      ? assistantCopy(resolvedLocale, "listening")
-      : interactionState === "FINALISING"
-        ? assistantCopy(resolvedLocale, "finalisingSpeech")
-      : interactionState === "PROCESSING"
-        ? assistantCopy(resolvedLocale, "thinking")
-        : interactionState === "SPEAKING"
-          ? assistantCopy(resolvedLocale, "speaking")
-          : interactionState === "FAILED"
-            ? assistantCopy(resolvedLocale, "retry")
-            : assistantCopy(resolvedLocale, "talk");
+        ? assistantCopy(resolvedLocale, "listening")
+        : interactionState === "FINALISING"
+          ? assistantCopy(resolvedLocale, "finalisingSpeech")
+          : interactionState === "PROCESSING"
+            ? assistantCopy(resolvedLocale, "thinking")
+            : interactionState === "SPEAKING"
+              ? assistantCopy(resolvedLocale, "speaking")
+              : interactionState === "FAILED"
+                ? assistantCopy(resolvedLocale, "retry")
+                : assistantCopy(resolvedLocale, "talk");
   const helpText =
     interactionState === "PREPARING"
       ? assistantCopy(resolvedLocale, "preparingSpeechHelp")
       : interactionState === "LISTENING"
-      ? assistantCopy(resolvedLocale, "listeningHelp", {
-          seconds: speechListeningWindowMs / 1000,
-        })
-      : interactionState === "FINALISING"
-        ? assistantCopy(resolvedLocale, "finalisingSpeechHelp")
-      : interactionState === "FAILED"
-        ? assistantCopy(resolvedLocale, "retryHelp")
-        : assistantCopy(resolvedLocale, "idleHelp");
+        ? assistantCopy(resolvedLocale, "listeningHelp", {
+            seconds: speechListeningWindowMs / 1000,
+          })
+        : interactionState === "FINALISING"
+          ? assistantCopy(resolvedLocale, "finalisingSpeechHelp")
+          : interactionState === "FAILED"
+            ? assistantCopy(resolvedLocale, "retryHelp")
+            : assistantCopy(resolvedLocale, "idleHelp");
   const textColor = highContrast && !lightMode ? "#FFFFFF" : "#102A2E";
   const mutedColor = highContrast && !lightMode ? "#FFFFFF" : "#52666A";
   const borderColor = highContrast
@@ -221,7 +218,8 @@ export function VoiceAssistantPanel({
           <Text style={[styles.runtimeDetail, { color: mutedColor }]}>
             {assistantCopy(resolvedLocale, "statusBasicDetail")}
           </Text>
-          {runtimeStatus.retryAllowed && (retryAssistant || prepareAssistant) ? (
+          {runtimeStatus.retryAllowed &&
+          (retryAssistant || prepareAssistant) ? (
             <Pressable
               accessibilityRole="button"
               onPress={() => void (retryAssistant ?? prepareAssistant)?.()}
@@ -425,8 +423,7 @@ export function VoiceAssistantPanel({
                   style={[
                     styles.feedbackButtonText,
                     {
-                      color:
-                        turnHelpful === helpful ? "#FFFFFF" : textColor,
+                      color: turnHelpful === helpful ? "#FFFFFF" : textColor,
                     },
                   ]}
                 >
@@ -472,47 +469,44 @@ export function VoiceAssistantPanel({
       ) : null}
 
       <View style={styles.textFallback}>
-          <TextInput
-            accessibilityLabel="Ask GoAssist"
-            accessibilityHint="Enter a journey or accessibility command."
-            value={typedCommand}
-            onChangeText={setTypedCommand}
-            maxLength={500}
-            onSubmitEditing={submitTypedCommand}
-            placeholder={assistantCopy(resolvedLocale, "askPlaceholder")}
-            placeholderTextColor={
-              highContrast && !lightMode ? "#FFFFFF" : "#617478"
-            }
-            returnKeyType="send"
-            style={[
-              styles.input,
-              { borderColor, color: textColor },
-              highContrast && styles.highContrastInput,
-            ]}
-          />
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={assistantCopy(resolvedLocale, "send")}
-            accessibilityState={{ disabled: !typedCommand.trim() }}
-            disabled={!typedCommand.trim() || interactionState === "PROCESSING"}
-            onPress={submitTypedCommand}
-            style={({ pressed }) => [
-              styles.sendButton,
-              !typedCommand.trim() && styles.disabled,
-              pressed && styles.pressed,
-            ]}
-          >
-            <Send size={26} color="#FFFFFF" />
-          </Pressable>
+        <TextInput
+          accessibilityLabel="Ask GoAssist"
+          accessibilityHint="Enter a journey or accessibility command."
+          value={typedCommand}
+          onChangeText={setTypedCommand}
+          maxLength={500}
+          onSubmitEditing={submitTypedCommand}
+          placeholder={assistantCopy(resolvedLocale, "askPlaceholder")}
+          placeholderTextColor={
+            highContrast && !lightMode ? "#FFFFFF" : "#617478"
+          }
+          returnKeyType="send"
+          style={[
+            styles.input,
+            { borderColor, color: textColor },
+            highContrast && styles.highContrastInput,
+          ]}
+        />
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={assistantCopy(resolvedLocale, "send")}
+          accessibilityState={{ disabled: !typedCommand.trim() }}
+          disabled={!typedCommand.trim() || interactionState === "PROCESSING"}
+          onPress={submitTypedCommand}
+          style={({ pressed }) => [
+            styles.sendButton,
+            !typedCommand.trim() && styles.disabled,
+            pressed && styles.pressed,
+          ]}
+        >
+          <Send size={26} color="#FFFFFF" />
+        </Pressable>
       </View>
     </View>
   );
 }
 
-function speechFailureMessage(
-  error: unknown,
-  locale: AssistantLocale,
-) {
+function speechFailureMessage(error: unknown, locale: AssistantLocale) {
   if (!(error instanceof SpeechRecognitionProviderError)) {
     return assistantCopy(locale, "speechServiceError");
   }

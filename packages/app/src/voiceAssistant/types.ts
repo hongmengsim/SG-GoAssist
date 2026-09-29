@@ -1,4 +1,9 @@
-import type { AssistanceRequestStatus, JourneyPhase } from "@buspass/shared";
+import type {
+  AssistanceRequestStatus,
+  JourneyPhase,
+  ServiceAdvisory,
+  StopAmenityProfile,
+} from "@buspass/shared";
 import type {
   BusPresenceConfidence,
   FocusedAssistState,
@@ -13,6 +18,8 @@ export type AssistantIntent =
   | { type: "GET_STOPS_REMAINING" }
   | { type: "GET_DESTINATION" }
   | { type: "GET_SHELTERED_ROUTE" }
+  | { type: "GET_STOP_AMENITIES" }
+  | { type: "GET_SERVICE_ADVISORIES" }
   | { type: "REQUEST_RAMP"; serviceNo?: string }
   | { type: "REQUEST_EXTRA_TIME"; serviceNo?: string }
   | { type: "REQUEST_ALIGHTING_HELP" }
@@ -185,6 +192,8 @@ export type AssistantContext = {
   walkingGuidanceActive: boolean;
   walkingRouteAvailable: boolean;
   routeOptions?: AssistantRouteOptionContext[];
+  currentStopAmenities?: StopAmenityProfile | null;
+  serviceAdvisories?: ServiceAdvisory[];
   preferences: {
     wheelchairAssistance: boolean;
     spokenGuidance: boolean;
@@ -243,9 +252,7 @@ export type AssistantInteractionState =
   | "FAILED";
 
 export type SpeechRecognitionSessionState =
-  | "PREPARING"
-  | "LISTENING"
-  | "FINALISING";
+  "PREPARING" | "LISTENING" | "FINALISING";
 
 export type SpeechRecognitionSession = {
   onStateChange?: (state: SpeechRecognitionSessionState) => void;

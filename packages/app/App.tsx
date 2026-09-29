@@ -1,5 +1,4 @@
 import React, {
-  createContext,
   memo,
   useCallback,
   useContext,
@@ -18,13 +17,11 @@ import {
   Linking,
   Modal,
   type LayoutChangeEvent,
-  Pressable,
   SafeAreaView,
   ScrollView,
   Image,
   Platform,
   StyleSheet,
-  Text,
   TextInput,
   useWindowDimensions,
   View,
@@ -85,7 +82,7 @@ import {
   Vibrate,
   Volume2,
   type LucideIcon,
-} from "lucide-react-native";
+} from "./src/components/AppIcons";
 import type {
   AccessibilityPreferences,
   AccessibilityRequirements,
@@ -105,9 +102,12 @@ import type {
   JourneyPhase,
   NearbyBusStop,
   NearbyBusStopsResponse,
+  PassengerContextSnapshot,
   PassengerProfile,
   RouteStop,
+  SafetyTelemetry,
   StatusUpdateMessage,
+  StopVehiclePresence,
   VerificationMethod,
   VehicleStatus,
 } from "@buspass/shared";
@@ -124,18 +124,34 @@ import {
   fetchBusStop,
   fetchBusStopArrivals,
   fetchBusStopServiceRoutes,
+  fetchStopVehiclePresence,
+  fetchVehicleSafetyTelemetry,
   fetchRegionalBusStops,
   findNearbyBusStops,
   requestPassengerOperatorHelp,
   searchBusStops,
 } from "./src/api/assistanceApi";
-import { subscribeToRequestStatus } from "./src/api/statusSocket";
+import {
+  subscribeToRequestStatus,
+  subscribeToStopVehiclePresence,
+} from "./src/api/statusSocket";
 import { FeatureIllustration } from "./src/components/FeatureIllustration";
 import { CameraDirectionGuide } from "./src/components/CameraDirectionGuide";
 import { JourneyMap } from "./src/components/JourneyMap";
 import { JourneyVisualGuide } from "./src/components/JourneyVisualGuide";
+import { BusIdentificationGraphic } from "./src/components/BusIdentificationGraphic";
+import {
+  OperationalGuidancePanel,
+  OperationalVehicleDiagram,
+} from "./src/components/OperationalGuidancePanel";
 import { ThemedSceneArtwork } from "./src/components/ThemedSceneArtwork";
 import { DEFAULT_ZOOM } from "./src/mapConfig";
+import {
+  deriveMapStopPresentation,
+  type AccessibleStopRouteStatus,
+  type MapStopDensity,
+  type MapStopRecommendation,
+} from "./src/mapStopPresentation";
 import {
   createFocusedAssistController,
   deriveFocusedAssistContext,
@@ -162,13 +178,15 @@ import {
   type JourneyVisualInstruction,
 } from "./src/guidance/visualJourneyGuidance";
 import {
+  deriveOperationalGuidance,
+  operationalTelemetryFreshnessMs,
+} from "./src/operationalGuidance/operationalGuidance";
+import {
   VoiceAssistantController,
   type VoiceAssistantActions,
 } from "./src/voiceAssistant/VoiceAssistantController";
 import { VoiceAssistantPanel } from "./src/voiceAssistant/VoiceAssistantPanel";
-import {
-  shouldSuppressAssistantTts,
-} from "./src/voiceAssistant/SpeechRecognitionProvider";
+import { shouldSuppressAssistantTts } from "./src/voiceAssistant/SpeechRecognitionProvider";
 import { createSpeechRecognitionProvider } from "./src/voiceAssistant/createSpeechRecognitionProvider";
 import { HybridAssistantTurnProvider } from "./src/voiceAssistant/AssistantTurnProvider";
 import { developmentE2EAssistantGenerator } from "./src/voiceAssistant/E2EAssistantBridge";
@@ -221,6 +239,26 @@ import {
 } from "./src/routing/routeMonitor";
 import * as Location from "expo-location";
 import { subscribeToDevelopmentE2ELocation } from "./src/E2ELocationBridge";
+import {
+  fetchJourneyPlanOptions,
+  fetchPassengerContext,
+} from "./src/api/passengerContextApi";
+import { JourneyHub } from "./src/passengerJourney/JourneyHub";
+import { ActiveJourneyContextStrip } from "./src/passengerJourney/ActiveJourneyContextStrip";
+import { JourneyCompletionSummary } from "./src/passengerJourney/JourneyCompletionSummary";
+import { AccessibilityRuntimeContext, usePresentationSizes, useNavigationInset } from "./src/accessibility/AccessibilityRuntime";
+import { resolvePresentationSizes } from "./src/accessibility/presentationSizes";
+import { PassengerPressable as Pressable, PassengerText as Text } from "./src/accessibility/PassengerControls";
+import {
+  emptyPassengerJourneyLocalState,
+  readPassengerJourneyLocalState,
+  savePassengerJourneyLocalState,
+  withPassengerContext,
+  withRecentJourney,
+  toggleFavouriteDestination,
+  toggleFavouriteStop,
+  type PassengerJourneyLocalState,
+} from "./src/passengerJourney/passengerJourneyPersistence";
 
 const brandLogo = require("./assets/applogo.png");
 type TabIconName = "journey" | "assist" | "profile";
@@ -241,18 +279,6 @@ type AppTab = "JOURNEY" | "ASSISTANCE" | "PROFILE";
 type JourneyCompletionKind = "ENDED_EARLY" | "FINISHED";
 type AccessibilityPreferenceSection =
   "MOBILITY" | "VISION" | "HEARING" | "JOURNEY_SUPPORT" | "INTERACTION";
-type AccessibilityRuntimeValue = {
-  largerControls: boolean;
-  reducedMotion: boolean;
-  textSize: AccessibilityTextSize;
-  preserveViewport: (getAnchor: () => View | null, update: () => void) => void;
-};
-const AccessibilityRuntimeContext = createContext<AccessibilityRuntimeValue>({
-  largerControls: false,
-  reducedMotion: false,
-  textSize: "STANDARD",
-  preserveViewport: (_getAnchor, update) => update(),
-});
 export type JourneyNextAction = {
   step: number;
   title: string;
@@ -353,6 +379,10 @@ type JourneyAlternative = {
   legs: JourneyLeg[];
   nextBusEtaSeconds: number | null;
   accessibilityKnown: boolean;
+  accessibilityFit: "VERIFIED" | "PARTIAL" | "UNKNOWN";
+  shelterCoverage: "FULL" | "PARTIAL" | "UNVERIFIED";
+  advisories: string[];
+  provenanceLabel?: string;
 };
 type JourneyPlannerState = {
   origin: JourneyPoint | null;
@@ -461,7 +491,7 @@ function FeatureGlyph({
   size?: FeatureGlyphSize;
 }) {
   const theme = resolveVisualTheme(lightMode, highContrast);
-  const iconSize = size === "large" ? 30 : size === "small" ? 22 : 26;
+  const sizes = usePresentationSizes();
 
   return (
     <View
@@ -471,6 +501,9 @@ function FeatureGlyph({
         size === "large" && styles.largeFeatureGlyph,
         selected && styles.selectedFeatureGlyph,
         {
+          width: sizes.featureContainer,
+          height: sizes.featureContainer,
+          flexShrink: 0,
           backgroundColor: selected
             ? theme.colors.actionPrimary
             : theme.colors.actionSecondary,
@@ -484,7 +517,7 @@ function FeatureGlyph({
       importantForAccessibility="no"
     >
       <Icon
-        size={iconSize}
+        presentationRole="feature"
         color={
           selected ? theme.colors.actionPrimaryText : theme.colors.iconPrimary
         }
@@ -783,7 +816,7 @@ const mapZoomLimits = {
 const bottomNavigationHeight = 86;
 const mapOverlayMargin = 12;
 const mapTopOverlayMargin = 18;
-const rightToolbarWidth = 64;
+const rightToolbarWidth = 80;
 const mapTopControlGap = 8;
 const mapTopControlRowHeight = 52;
 const contextualMapControlHeight = 44;
@@ -803,7 +836,7 @@ const mapBottomSheetHeights: Record<BottomSheetState, number> = {
   MEDIUM: 330,
   EXPANDED: 560,
 };
-const mapSideControlTopOffset = 190;
+const mapSideControlTopOffset = 122;
 const defaultMapCanvasHeight = 720;
 const defaultMapCanvasWidth = 390;
 const mapTopOverlayHeight =
@@ -1079,9 +1112,6 @@ type DirectionsStatus =
   | "KNOWN_BARRIER";
 type GuidanceStatus = "INACTIVE" | "ACTIVE" | "ARRIVED";
 type GuidanceMode = "INACTIVE" | "PREVIEW" | "ACTIVE" | "ARRIVED";
-type AccessibleStopRouteStatus =
-  "CHECKING" | "AVAILABLE" | "LIMITED_DATA" | "UNAVAILABLE";
-
 export function rankStopsForWheelchair(
   stops: NearbyBusStop[],
   routeStatuses: Record<string, AccessibleStopRouteStatus>,
@@ -1899,6 +1929,7 @@ function createPlatformHapticAdapter() {
 
 function SgGoAssistApp() {
   const { fontScale, height, width } = useWindowDimensions();
+  const [navigationHeight, setNavigationHeight] = useState(bottomNavigationHeight);
   const preserveViewport = useCallback(
     (_getAnchor: () => View | null, update: () => void) => update(),
     [],
@@ -1919,12 +1950,13 @@ function SgGoAssistApp() {
   const [verificationMethod, setVerificationMethod] =
     useState<VerificationMethod>("DEMO_CREDENTIAL");
   const [credentialLast4, setCredentialLast4] = useState("");
-  const [appPreferences, setAppPreferences] = useState<AccessibilityPreferences>(() => ({
-    ...defaultAppPreferences,
-    assistantLocale: normalizeAssistantLocale(
-      Intl.DateTimeFormat().resolvedOptions().locale,
-    ),
-  }));
+  const [appPreferences, setAppPreferences] =
+    useState<AccessibilityPreferences>(() => ({
+      ...defaultAppPreferences,
+      assistantLocale: normalizeAssistantLocale(
+        Intl.DateTimeFormat().resolvedOptions().locale,
+      ),
+    }));
   const assistantLocaleRef = useRef(
     normalizeAssistantLocale(appPreferences.assistantLocale),
   );
@@ -2007,6 +2039,11 @@ function SgGoAssistApp() {
     null,
   );
   const [mapViewMode, setMapViewMode] = useState<"MAP" | "LIST">("MAP");
+  const [mapStopDensity, setMapStopDensity] =
+    useState<MapStopDensity>("PRIORITIZED");
+  const [mapRecommendation, setMapRecommendation] =
+    useState<MapStopRecommendation | null>(null);
+  const mapRecommendationInteractedRef = useRef(false);
   const [nearbyOpen, setNearbyOpen] = useState(false);
   const [accessibleRoutesOnly, setAccessibleRoutesOnly] = useState(false);
   const [accessibleStopRoutes, setAccessibleStopRoutes] = useState<
@@ -2133,8 +2170,18 @@ function SgGoAssistApp() {
   const [journeyPhase, setJourneyPhase] = useState<JourneyPhase>("DISCOVERY");
   const [lastCompletedJourney, setLastCompletedJourney] = useState<{
     destinationName: string;
+    destination: RouteStop | null;
     serviceNo: string;
+    elapsedMinutes: number;
+    stopsTravelled: number;
+    assistanceOutcome: string;
   } | null>(null);
+  const journeyStartedAtRef = useRef<number | null>(null);
+  const [passengerJourneyLocalState, setPassengerJourneyLocalState] =
+    useState<PassengerJourneyLocalState>(emptyPassengerJourneyLocalState);
+  const [passengerContextSnapshot, setPassengerContextSnapshot] =
+    useState<PassengerContextSnapshot | null>(null);
+  const passengerContextRequestRef = useRef(0);
   const [routeStops, setRouteStops] = useState<RouteStop[]>([]);
   const [currentStopIndex, setCurrentStopIndex] = useState(0);
   const [selectedAlightingStop, setSelectedAlightingStop] =
@@ -2143,6 +2190,12 @@ function SgGoAssistApp() {
   const [caseId, setCaseId] = useState<string | null>(null);
   const [assistanceCaseState, setAssistanceCaseState] =
     useState<AssistanceCaseState | null>(null);
+  const [assistanceEscalationReason, setAssistanceEscalationReason] = useState<
+    string | null
+  >(null);
+  const [latestSafetyTelemetry, setLatestSafetyTelemetry] =
+    useState<SafetyTelemetry | null>(null);
+  const [operationalNowMs, setOperationalNowMs] = useState(() => Date.now());
   const [requestStatus, setRequestStatus] =
     useState<AssistanceRequestStatus | null>(null);
   const requestStatusRef = useRef<AssistanceRequestStatus | null>(null);
@@ -2158,17 +2211,24 @@ function SgGoAssistApp() {
   const [focusedAssistArrivals, setFocusedAssistArrivals] = useState<
     ArrivalBus[]
   >([]);
+  const [focusedAssistStopVehicles, setFocusedAssistStopVehicles] = useState<
+    StopVehiclePresence[]
+  >([]);
   const [focusedAssistSelectedBusId, setFocusedAssistSelectedBusId] = useState<
     string | null
   >(null);
   const [focusedAssistRequest, setFocusedAssistRequest] =
     useState<FocusedAssistRequestContext>({
       requestId: null,
+      caseId: null,
+      caseState: null,
+      escalationReason: null,
       status: null,
       assistanceType: null,
       submitting: false,
       bus: null,
       stop: null,
+      safetyTelemetry: null,
       error: null,
     });
   const requestPhaseRef = useRef<AssistancePhase | null>(null);
@@ -2489,6 +2549,16 @@ function SgGoAssistApp() {
   }, []);
 
   useEffect(() => {
+    if (
+      selectedBus &&
+      (screen === "STATUS" || screen === "ONBOARD") &&
+      journeyStartedAtRef.current === null
+    ) {
+      journeyStartedAtRef.current = Date.now();
+    }
+  }, [screen, selectedBus]);
+
+  useEffect(() => {
     let active = true;
     void AccessibilityInfo.isScreenReaderEnabled?.().then((enabled) => {
       if (active && enabled) setScreenReaderDetected(true);
@@ -2769,6 +2839,9 @@ function SgGoAssistApp() {
   );
   const activeJourneyFocusedRequest: FocusedAssistRequestContext = {
     requestId,
+    caseId,
+    caseState: assistanceCaseState,
+    escalationReason: assistanceEscalationReason,
     status: requestStatus,
     assistanceType:
       activeJourneyRequestEvent?.type === "REQUEST_STATUS"
@@ -2777,6 +2850,7 @@ function SgGoAssistApp() {
     submitting: isLoading && Boolean(selectedBus),
     bus: focusedAssistActiveBus,
     stop: selectedStop,
+    safetyTelemetry: latestSafetyTelemetry,
     error: null,
   };
   const effectiveFocusedAssistRequest = focusedAssistOnboard
@@ -2784,11 +2858,15 @@ function SgGoAssistApp() {
       ? activeJourneyFocusedRequest
       : {
           requestId: null,
+          caseId: null,
+          caseState: null,
+          escalationReason: null,
           status: null,
           assistanceType: null,
           submitting: false,
           bus: focusedAssistActiveBus,
           stop: selectedStop,
+          safetyTelemetry: latestSafetyTelemetry,
           error: null,
         }
     : focusedAssistRequest.requestId ||
@@ -2807,6 +2885,7 @@ function SgGoAssistApp() {
           nearbyStops: focusedAssistNearbyStops,
           manuallySelectedStop: focusedAssistManualStop,
           arrivals: focusedAssistArrivalCandidates,
+          stopVehicles: focusedAssistStopVehicles,
           activeJourney: focusedAssistActiveJourney,
           onboard: focusedAssistOnboard,
           destinationName: selectedAlightingStop?.description ?? null,
@@ -2827,11 +2906,150 @@ function SgGoAssistApp() {
       focusedAssistNearbyStops,
       focusedAssistOnboard,
       focusedAssistSelectedBusId,
+      focusedAssistStopVehicles,
       journeyPhase,
       selectedAlightingStop?.description,
       selectedStopIsNext,
     ],
   );
+  useEffect(() => {
+    const stopCode = focusedAssistContext.stop?.busStopCode;
+    if (screen !== "ACCESSIBILITY" || !stopCode || focusedAssistOnboard) {
+      return;
+    }
+    return subscribeToStopVehiclePresence(
+      stopCode,
+      (vehicle) => {
+        setFocusedAssistStopVehicles((current) => {
+          const withoutVehicle = current.filter(
+            (candidate) => candidate.busId !== vehicle.busId,
+          );
+          return vehicle.state === "DEPARTED" || !vehicle.fresh
+            ? withoutVehicle
+            : [...withoutVehicle, vehicle];
+        });
+      },
+      () => {
+        setFocusedAssistContextError(
+          (current) =>
+            current ?? "Live parked-bus updates are temporarily unavailable.",
+        );
+      },
+      {
+        onConnected: () =>
+          setFocusedAssistContextError((current) =>
+            current === "Live parked-bus updates are temporarily unavailable."
+              ? null
+              : current,
+          ),
+      },
+    );
+  }, [focusedAssistContext.stop?.busStopCode, focusedAssistOnboard, screen]);
+  useEffect(() => {
+    if (screen !== "ACCESSIBILITY" || focusedAssistStopVehicles.length === 0) {
+      return;
+    }
+    const timer = setInterval(() => {
+      const now = Date.now();
+      setFocusedAssistStopVehicles((current) =>
+        current.filter((vehicle) => {
+          const observedAt = new Date(vehicle.observedAt).getTime();
+          return (
+            vehicle.fresh &&
+            Number.isFinite(observedAt) &&
+            Math.abs(now - observedAt) <= 5_000
+          );
+        }),
+      );
+    }, 1_000);
+    return () => clearInterval(timer);
+  }, [focusedAssistStopVehicles.length, screen]);
+  const focusedOperationalBusId =
+    focusedAssistContext.selectedBus?.vehicleId ??
+    focusedAssistContext.selectedBus?.id ??
+    null;
+  const useFocusedOperationalState =
+    screen === "ACCESSIBILITY" && !focusedAssistHasActiveJourney;
+  const activeOperationalBusId =
+    requestId || caseId ? (selectedBus?.busId ?? null) : null;
+  const operationalBusId = useFocusedOperationalState
+    ? focusedOperationalBusId
+    : activeOperationalBusId;
+  const operationalSnapshotKey = useFocusedOperationalState
+    ? `focused:${operationalBusId ?? "none"}:${focusedAssistRequest.requestId ?? focusedAssistRequest.caseId ?? "selection"}`
+    : `journey:${operationalBusId ?? "none"}:${requestId ?? caseId ?? "none"}`;
+  useEffect(() => {
+    if (!operationalBusId) {
+      if (useFocusedOperationalState) {
+        setFocusedAssistRequest((current) => ({
+          ...current,
+          safetyTelemetry: null,
+        }));
+      } else {
+        setLatestSafetyTelemetry(null);
+      }
+      return undefined;
+    }
+    const controller = new AbortController();
+    if (useFocusedOperationalState) {
+      setFocusedAssistRequest((current) => ({
+        ...current,
+        safetyTelemetry:
+          current.safetyTelemetry?.busId === operationalBusId
+            ? current.safetyTelemetry
+            : null,
+      }));
+    } else {
+      setLatestSafetyTelemetry((current) =>
+        current?.busId === operationalBusId ? current : null,
+      );
+    }
+    void fetchVehicleSafetyTelemetry(operationalBusId, controller.signal)
+      .then((telemetry) => {
+        setOperationalNowMs(Date.now());
+        if (useFocusedOperationalState) {
+          setFocusedAssistRequest((current) => ({
+            ...current,
+            safetyTelemetry: newerSafetyTelemetry(
+              current.safetyTelemetry,
+              telemetry,
+            ),
+          }));
+        } else {
+          setLatestSafetyTelemetry((current) =>
+            newerSafetyTelemetry(current, telemetry),
+          );
+        }
+      })
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [operationalBusId, operationalSnapshotKey, useFocusedOperationalState]);
+  useEffect(() => {
+    if (!latestSafetyTelemetry && !focusedAssistRequest.safetyTelemetry) {
+      return undefined;
+    }
+    const nowMs = Date.now();
+    setOperationalNowMs(nowMs);
+    const nextExpiry = [
+      latestSafetyTelemetry,
+      focusedAssistRequest.safetyTelemetry,
+    ]
+      .filter((telemetry): telemetry is SafetyTelemetry => Boolean(telemetry))
+      .map(
+        (telemetry) =>
+          Date.parse(telemetry.observedAt) +
+          operationalTelemetryFreshnessMs +
+          25,
+      )
+      .filter((expiry) => Number.isFinite(expiry) && expiry > nowMs)
+      .sort((left, right) => left - right)[0];
+    if (!nextExpiry) return undefined;
+    const timer = setTimeout(
+      () => setOperationalNowMs(Date.now()),
+      nextExpiry - nowMs,
+    );
+    return () => clearTimeout(timer);
+  }, [focusedAssistRequest.safetyTelemetry, latestSafetyTelemetry]);
   const focusedAssistController = useMemo<FocusedAssistController>(
     () =>
       createFocusedAssistController({
@@ -2880,8 +3098,7 @@ function SgGoAssistApp() {
       selectedBus?.busService ??
       focusedAssistContext.selectedBus?.serviceNo ??
       null,
-    busId:
-      focusedAssistContext.selectedBus?.id ?? selectedBus?.busId ?? null,
+    busId: focusedAssistContext.selectedBus?.id ?? selectedBus?.busId ?? null,
     destination: selectedAlightingStop?.description ?? null,
     caseId,
     requestId,
@@ -2965,7 +3182,7 @@ function SgGoAssistApp() {
               title: alternative.title,
               serviceNo: alternative.serviceNo,
               walkingMinutes: alternative.walkingMinutes,
-              shelterCoverage: "UNVERIFIED" as const,
+              shelterCoverage: alternative.shelterCoverage,
             }))
           : selectedBus
             ? [
@@ -2981,6 +3198,11 @@ function SgGoAssistApp() {
                 },
               ]
             : [],
+      currentStopAmenities:
+        passengerContextSnapshot?.nearbyStops.find(
+          (item) => item.stop.busStopCode === assistantCurrentStop?.busStopCode,
+        )?.amenities ?? null,
+      serviceAdvisories: passengerContextSnapshot?.advisories ?? [],
       preferences: {
         wheelchairAssistance: appPreferences.wheelchairAssistance,
         spokenGuidance: appPreferences.spokenGuidance,
@@ -3005,6 +3227,7 @@ function SgGoAssistApp() {
       journeyPhase,
       journeyPlanner.alternatives,
       nextRouteStop?.description,
+      passengerContextSnapshot,
       requestPhase,
       requestId,
       requestStatus,
@@ -3241,17 +3464,13 @@ function SgGoAssistApp() {
           },
         ],
       );
-    }, [
-      appPreferences.assistantLocale,
-      assistantContext,
-      assistantRuntimeStatus,
-    ],
+    },
+    [appPreferences.assistantLocale, assistantContext, assistantRuntimeStatus],
   );
   useEffect(() => {
     voiceAssistantControllerRef.current?.clearPendingAction();
     voiceAssistantControllerRef.current?.clearConversation();
-    assistantAnonymousTokenRef.current =
-      `assistant-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    assistantAnonymousTokenRef.current = `assistant-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
   }, [activeProfile?.profileId]);
 
   useEffect(() => {
@@ -3321,7 +3540,7 @@ function SgGoAssistApp() {
   useEffect(() => {
     if (
       !appPreferences.preferAccessibleStops ||
-      !nearbyOpen ||
+      screen !== "STOP" ||
       !currentLocation ||
       filteredNearbyStops.length === 0
     ) {
@@ -3382,7 +3601,7 @@ function SgGoAssistApp() {
     currentLocation?.latitude,
     currentLocation?.longitude,
     filteredNearbyStops,
-    nearbyOpen,
+    screen,
   ]);
   const visibleNearbyStops = useMemo(() => {
     if (!appPreferences.preferAccessibleStops) {
@@ -3399,18 +3618,82 @@ function SgGoAssistApp() {
     appPreferences.preferAccessibleStops,
     filteredNearbyStops,
   ]);
-  const recommendedAccessibleStopCode = appPreferences.preferAccessibleStops
-    ? (visibleNearbyStops.find(
-        (stop) => accessibleStopRoutes[stop.busStopCode] === "AVAILABLE",
-      )?.busStopCode ?? visibleNearbyStops[0]?.busStopCode)
-    : undefined;
+  const mapPresentationStops = useMemo(() => {
+    const byCode = new Map<string, NearbyBusStop>();
+    for (const stop of [...visibleNearbyStops, ...regionalStops]) {
+      byCode.set(stop.busStopCode, stop);
+    }
+    return [...byCode.values()];
+  }, [regionalStops, visibleNearbyStops]);
+  const derivedMapStopPresentation = useMemo(
+    () =>
+      deriveMapStopPresentation({
+        stops: mapPresentationStops,
+        selectedStopCode: selectedStop?.busStopCode,
+        preferAccessibleStops: appPreferences.preferAccessibleStops,
+        accessibleOnly: accessibleRoutesOnly,
+        routeStatuses: accessibleStopRoutes,
+        serviceFilter: selectedBus?.busService,
+      }),
+    [
+      accessibleRoutesOnly,
+      accessibleStopRoutes,
+      appPreferences.preferAccessibleStops,
+      mapPresentationStops,
+      selectedBus?.busService,
+      selectedStop?.busStopCode,
+    ],
+  );
+  const effectiveMapRecommendation =
+    mapRecommendation ?? derivedMapStopPresentation.recommendation;
+  const activeMapRecommendationStop = useMemo(
+    () =>
+      mapPresentationStops.find(
+        (stop) => stop.busStopCode === effectiveMapRecommendation?.stopCode,
+      ) ??
+      derivedMapStopPresentation.rankedStops[0] ??
+      null,
+    [
+      derivedMapStopPresentation.rankedStops,
+      effectiveMapRecommendation?.stopCode,
+      mapPresentationStops,
+    ],
+  );
+  const prioritizedMapStops = useMemo(() => {
+    const byCode = new Map<string, NearbyBusStop>();
+    if (activeMapRecommendationStop) {
+      byCode.set(
+        activeMapRecommendationStop.busStopCode,
+        activeMapRecommendationStop,
+      );
+    }
+    if (selectedStop) byCode.set(selectedStop.busStopCode, selectedStop);
+    for (const stop of derivedMapStopPresentation.rankedStops) {
+      if (byCode.size >= 3) break;
+      byCode.set(stop.busStopCode, stop);
+    }
+    return [...byCode.values()];
+  }, [
+    activeMapRecommendationStop,
+    derivedMapStopPresentation.rankedStops,
+    selectedStop,
+  ]);
   const visibleMapStops = useMemo(() => {
     const byCode = new Map<string, NearbyBusStop>();
-    for (const stop of regionalStops) byCode.set(stop.busStopCode, stop);
-    for (const stop of nearbyStops) byCode.set(stop.busStopCode, stop);
+    const sourceStops =
+      mapStopDensity === "ALL"
+        ? [...regionalStops, ...nearbyStops]
+        : prioritizedMapStops;
+    for (const stop of sourceStops) byCode.set(stop.busStopCode, stop);
     if (selectedStop) byCode.set(selectedStop.busStopCode, selectedStop);
     return [...byCode.values()];
-  }, [nearbyStops, regionalStops, selectedStop]);
+  }, [
+    mapStopDensity,
+    nearbyStops,
+    prioritizedMapStops,
+    regionalStops,
+    selectedStop,
+  ]);
   const availableDestinationStops = useMemo(() => {
     const query = destinationSearchQuery.trim().toLowerCase();
     const upcoming = plannedRouteStops.slice(1);
@@ -3815,6 +4098,8 @@ function SgGoAssistApp() {
   ]);
   const selectStopForBoarding = useCallback(
     (stop: NearbyBusStop) => {
+      mapRecommendationInteractedRef.current = true;
+      setMapRecommendation(effectiveMapRecommendation);
       const selectionIntentId = selectedStopCameraIntentRef.current + 1;
       selectedStopCameraIntentRef.current = selectionIntentId;
       setSelectedStop(stop);
@@ -3840,6 +4125,7 @@ function SgGoAssistApp() {
     },
     [
       currentLocation,
+      effectiveMapRecommendation,
       mapViewport,
       measuredMapLayout,
       runCameraCommand,
@@ -3847,12 +4133,14 @@ function SgGoAssistApp() {
     ],
   );
   const markMapMoved = useCallback(() => {
+    mapRecommendationInteractedRef.current = true;
+    setMapRecommendation(effectiveMapRecommendation);
     selectedStopCameraIntentRef.current += 1;
     setViewportSource("USER_PAN");
     setMapCameraMode("MANUAL");
     setMapManuallyMoved(true);
     setFollowState("FREE");
-  }, []);
+  }, [effectiveMapRecommendation]);
   const handleProviderViewportChange = useCallback(
     ({ center, zoom, bearing, pitch }: ProviderViewportChange) => {
       selectedStopCameraIntentRef.current += 1;
@@ -3926,6 +4214,7 @@ function SgGoAssistApp() {
         setFocusedAssistManualStop(focusedStop);
         setFocusedAssistSelectedBusId(null);
         setFocusedAssistArrivals([]);
+        setFocusedAssistStopVehicles([]);
         setSelectedStop(focusedAssistPreviousSelectedStopRef.current);
         focusedAssistPreviousSelectedStopRef.current = null;
         setScreen("ACCESSIBILITY");
@@ -4588,6 +4877,8 @@ function SgGoAssistApp() {
   }, []);
   const focusSearchStop = useCallback(
     (stop: NearbyBusStop) => {
+      mapRecommendationInteractedRef.current = true;
+      setMapRecommendation(effectiveMapRecommendation);
       const selectionIntentId = selectedStopCameraIntentRef.current + 1;
       selectedStopCameraIntentRef.current = selectionIntentId;
       setSelectedStop(stop);
@@ -4627,6 +4918,7 @@ function SgGoAssistApp() {
     },
     [
       currentLocation,
+      effectiveMapRecommendation,
       mapViewport,
       measuredMapLayout,
       runCameraCommand,
@@ -4664,8 +4956,82 @@ function SgGoAssistApp() {
           ? `Journey options ready for ${destinationPoint.label}.`
           : `No journey options found for ${destinationPoint.label}.`,
       );
+      void fetchJourneyPlanOptions({
+        origin: {
+          latitude: originPoint.coordinate.latitude,
+          longitude: originPoint.coordinate.longitude,
+          label: originPoint.label,
+        },
+        destination: {
+          latitude: destinationPoint.coordinate.latitude,
+          longitude: destinationPoint.coordinate.longitude,
+          label: destinationPoint.label,
+        },
+        preferences: {
+          wheelchairRouting: appPreferences.wheelchairRouting,
+          preferAccessibleStops: appPreferences.preferAccessibleStops,
+          avoidSteepSlopes: appPreferences.avoidSteepSlopes,
+          preferSmoothSurfaces: appPreferences.preferSmoothSurfaces,
+        },
+      })
+        .then((verifiedPlan) => {
+          setJourneyPlanner((current) => ({
+            ...current,
+            alternatives: current.alternatives.map((alternative) => {
+              const verified = verifiedPlan.options.find(
+                (option) =>
+                  option.boardingStop.busStopCode ===
+                    alternative.boardingStop.busStopCode &&
+                  option.destinationStop.busStopCode ===
+                    alternative.alightingStop.busStopCode &&
+                  option.legs.some(
+                    (leg) =>
+                      leg.type === "BUS" &&
+                      leg.serviceNo === alternative.serviceNo,
+                  ),
+              );
+              if (!verified) return alternative;
+              const evidenceBadges = [
+                verified.shelterCoverage === "FULL"
+                  ? "Fully sheltered"
+                  : verified.shelterCoverage === "PARTIAL"
+                    ? "Partly sheltered"
+                    : "Shelter unverified",
+                verified.accessibilityFit === "VERIFIED"
+                  ? "Accessibility verified"
+                  : verified.accessibilityFit === "PARTIAL"
+                    ? "Accessibility partially verified"
+                    : "Accessibility unknown",
+              ];
+              return {
+                ...alternative,
+                totalMinutes: verified.totalMinutes,
+                walkingMinutes: verified.walkingMinutes,
+                transferCount: verified.transferCount,
+                accessibilityFit: verified.accessibilityFit,
+                shelterCoverage: verified.shelterCoverage,
+                advisories: verified.advisories.map((item) => item.title),
+                provenanceLabel: verifiedPlan.provenance.sourceLabel,
+                badges: [
+                  ...new Set([...alternative.badges, ...evidenceBadges]),
+                ],
+              };
+            }),
+          }));
+        })
+        .catch(() => {
+          // Local route planning remains fully usable without enrichment.
+        });
     },
-    [effectiveJourneyOrigin, requirements, updateBottomSheetState],
+    [
+      appPreferences.avoidSteepSlopes,
+      appPreferences.preferAccessibleStops,
+      appPreferences.preferSmoothSurfaces,
+      appPreferences.wheelchairRouting,
+      effectiveJourneyOrigin,
+      requirements,
+      updateBottomSheetState,
+    ],
   );
   const applyJourneyPlanOrigin = useCallback(
     (originPoint: JourneyPoint) => {
@@ -4883,6 +5249,8 @@ function SgGoAssistApp() {
     setRequestId(null);
     setCaseId(null);
     setAssistanceCaseState(null);
+    setAssistanceEscalationReason(null);
+    setLatestSafetyTelemetry(null);
     setRequestStatus(null);
     setRequestPhase(null);
     setEvents([]);
@@ -4997,6 +5365,27 @@ function SgGoAssistApp() {
       preferencesHydratedRef.current = true;
       if (!saved) {
         void savePreferencesLocally(latestPreferencesRef.current);
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    void readPassengerJourneyLocalState().then((saved) => {
+      if (!active) return;
+      setPassengerJourneyLocalState(saved);
+      if (saved.lastContext) {
+        setPassengerContextSnapshot({
+          ...saved.lastContext,
+          provenance: {
+            kind: "CACHED",
+            sourceLabel: `${saved.lastContext.provenance.sourceLabel} · saved`,
+            observedAt: saved.lastContext.generatedAt,
+          },
+        });
       }
     });
     return () => {
@@ -5162,6 +5551,7 @@ function SgGoAssistApp() {
 
         if (message.type === "CASE_STATUS") {
           setAssistanceCaseState(message.state);
+          setAssistanceEscalationReason(message.escalationReason ?? null);
           setEvents((current) =>
             current.some(
               (event) =>
@@ -5184,6 +5574,39 @@ function SgGoAssistApp() {
           return;
         }
 
+        if (message.type === "SAFETY_TELEMETRY") {
+          setLatestSafetyTelemetry((current) =>
+            newerSafetyTelemetry(current, message.telemetry),
+          );
+          setOperationalNowMs(Date.now());
+          setEvents((current) =>
+            current.some(
+              (event) =>
+                event.type === "SAFETY_TELEMETRY" &&
+                event.telemetry.observedAt === message.telemetry.observedAt,
+            )
+              ? current
+              : [message, ...current],
+          );
+          return;
+        }
+
+        if (message.type === "OPERATOR_ESCALATION") {
+          setAssistanceEscalationReason(message.reason);
+          setEvents((current) => [message, ...current]);
+          notifyPassenger("An operator is checking your assistance request.", {
+            haptic: "WARNING",
+            id: `operator-${message.caseId}-${message.timestamp}`,
+            priority: "BUS",
+          });
+          return;
+        }
+
+        if (message.type === "ACTUATOR_STATUS") {
+          setEvents((current) => [message, ...current]);
+          return;
+        }
+
         if (message.type === "AUTONOMY_STATUS") {
           setAutonomousDriveState(message.autonomy.state);
           setEvents((current) =>
@@ -5195,7 +5618,11 @@ function SgGoAssistApp() {
               ? current
               : [message, ...current],
           );
-          if (["EMERGENCY_STOP", "BLOCKED", "MANUAL_OVERRIDE"].includes(message.autonomy.state)) {
+          if (
+            ["EMERGENCY_STOP", "BLOCKED", "MANUAL_OVERRIDE"].includes(
+              message.autonomy.state,
+            )
+          ) {
             notifyPassenger(eventLabel(message), {
               haptic: "WARNING",
               id: `autonomy-${message.busId}-${message.autonomy.state}-${message.timestamp}`,
@@ -5303,46 +5730,78 @@ function SgGoAssistApp() {
     return subscribeToRequestStatus(
       focusedRequestId,
       (message) => {
-        if (
-          focusedSessionId !== focusedAssistRequestSessionRef.current ||
-          message.type !== "REQUEST_STATUS" ||
-          message.requestId !== focusedRequestId
-        ) {
+        if (focusedSessionId !== focusedAssistRequestSessionRef.current) {
           return;
         }
-        let becameAcknowledged = false;
-        setFocusedAssistRequest((current) => {
-          if (
-            !canApplyRequestStatus(current.status, message.status) ||
-            current.status === message.status
-          ) {
-            return current;
+
+        if (
+          message.type === "REQUEST_STATUS" &&
+          message.requestId === focusedRequestId
+        ) {
+          let becameAcknowledged = false;
+          setFocusedAssistRequest((current) => {
+            if (
+              !canApplyRequestStatus(current.status, message.status) ||
+              current.status === message.status
+            ) {
+              return current;
+            }
+            becameAcknowledged =
+              message.status === AssistanceRequestStatus.ACKNOWLEDGED;
+            return {
+              ...current,
+              status: message.status,
+              submitting: false,
+              error:
+                message.status === AssistanceRequestStatus.FAILED
+                  ? current.assistanceType === "EXTENDED_DWELL_TIME"
+                    ? "We couldn't request more boarding time."
+                    : "We couldn't complete the ramp request."
+                  : null,
+            };
+          });
+          if (becameAcknowledged) {
+            notifyPassenger(
+              focusedAssistRequest.assistanceType === "EXTENDED_DWELL_TIME"
+                ? "The bus has received your request for more boarding time."
+                : "The bus has received your ramp request.",
+              {
+                haptic: "SUCCESS",
+                id: `focused-assist-${focusedRequestId}-received`,
+                priority: "BUS",
+              },
+            );
           }
-          becameAcknowledged =
-            message.status === AssistanceRequestStatus.ACKNOWLEDGED;
-          return {
+          return;
+        }
+
+        if (message.type === "CASE_STATUS") {
+          setFocusedAssistRequest((current) => ({
             ...current,
-            status: message.status,
-            submitting: false,
-            error:
-              message.status === AssistanceRequestStatus.FAILED
-                ? current.assistanceType === "EXTENDED_DWELL_TIME"
-                  ? "We couldn't request more boarding time."
-                  : "We couldn't complete the ramp request."
-                : null,
-          };
-        });
-        if (becameAcknowledged) {
-          notifyPassenger(
-            focusedAssistRequest.assistanceType === "EXTENDED_DWELL_TIME"
-              ? "The bus has received your request for more boarding time."
-              : "The bus has received your ramp request.",
-            {
-              haptic: "SUCCESS",
-              id: `focused-assist-${focusedRequestId}-received`,
-              priority: "BUS",
-            },
-          );
+            caseState: message.state,
+            escalationReason: message.escalationReason ?? null,
+          }));
+          return;
+        }
+
+        if (message.type === "SAFETY_TELEMETRY") {
+          setFocusedAssistRequest((current) => ({
+            ...current,
+            safetyTelemetry: newerSafetyTelemetry(
+              current.safetyTelemetry,
+              message.telemetry,
+            ),
+          }));
+          setOperationalNowMs(Date.now());
+          return;
+        }
+
+        if (message.type === "OPERATOR_ESCALATION") {
+          setFocusedAssistRequest((current) => ({
+            ...current,
+            caseState: "ESCALATED",
+            escalationReason: message.reason,
+          }));
         }
       },
       () => {
@@ -5355,6 +5814,7 @@ function SgGoAssistApp() {
         }
       },
       {
+        caseId: focusedAssistRequest.caseId ?? undefined,
         onConnected: () => {
           if (focusedSessionId === focusedAssistRequestSessionRef.current) {
             setFocusedAssistRequest((current) => ({
@@ -5369,7 +5829,11 @@ function SgGoAssistApp() {
         },
       },
     );
-  }, [focusedAssistRequest.assistanceType, focusedAssistRequest.requestId]);
+  }, [
+    focusedAssistRequest.assistanceType,
+    focusedAssistRequest.caseId,
+    focusedAssistRequest.requestId,
+  ]);
 
   useEffect(() => {
     const bus = focusedAssistContext.selectedBus;
@@ -5678,13 +6142,17 @@ function SgGoAssistApp() {
       return;
     }
     if (tab === "ASSISTANCE") {
-      setScreen("ACCESSIBILITY");
-      void prepareFocusedAssistContext();
+      openFocusedAssistMode();
       return;
     }
     setScreen("PROFILE");
     setIsEditingProfileNeeds(false);
     setProfilePreferenceSection(null);
+  }
+
+  function openFocusedAssistMode() {
+    setScreen("ACCESSIBILITY");
+    void prepareFocusedAssistContext();
   }
 
   function announceGuidance(message: string) {
@@ -5810,6 +6278,8 @@ function SgGoAssistApp() {
       requestOrigin?: MapCoordinate & { accuracyMeters?: number };
     } = {},
   ) {
+    mapRecommendationInteractedRef.current = false;
+    setMapRecommendation(null);
     if (!options.preserveSelection) {
       setSelectedStop(null);
       setSelectedLandmarkId(null);
@@ -5943,6 +6413,23 @@ function SgGoAssistApp() {
     return result;
   }
 
+  async function refreshPassengerContext(location: MapCoordinate) {
+    const requestId = passengerContextRequestRef.current + 1;
+    passengerContextRequestRef.current = requestId;
+    try {
+      const snapshot = await fetchPassengerContext(location, 200);
+      if (requestId !== passengerContextRequestRef.current) return;
+      setPassengerContextSnapshot(snapshot);
+      setPassengerJourneyLocalState((current) => {
+        const next = withPassengerContext(current, snapshot);
+        void savePassengerJourneyLocalState(next);
+        return next;
+      });
+    } catch {
+      // Context is supplemental. The existing map and stop list remain usable.
+    }
+  }
+
   async function findMyBusStop() {
     const locationLookupRequestId = locationLookupRequestRef.current + 1;
     locationLookupRequestRef.current = locationLookupRequestId;
@@ -6012,6 +6499,7 @@ function SgGoAssistApp() {
       initialCameraAppliedRef.current = true;
       setFollowState("FOLLOW_USER");
       setLocationPulseKey((current) => current + 1);
+      void refreshPassengerContext(position.coords);
       setMapViewMode("MAP");
       setScreen("STOP");
       let result: NearbyBusStopsResponse | null = null;
@@ -6081,23 +6569,37 @@ function SgGoAssistApp() {
 
   async function loadFocusedAssistArrivals(stop: NearbyBusStop) {
     const requestId = focusedAssistLocationRequestRef.current;
-    try {
-      const arrivals = await fetchBusStopArrivals(stop.busStopCode);
-      if (requestId !== focusedAssistLocationRequestRef.current) {
-        return;
-      }
-      setFocusedAssistArrivals(
-        arrivals.services.flatMap((service) => service.buses),
-      );
-      setFocusedAssistContextError(null);
-    } catch {
-      if (requestId === focusedAssistLocationRequestRef.current) {
-        setFocusedAssistArrivals([]);
-        setFocusedAssistContextError(
-          "We found your stop, but live bus detection is unavailable.",
-        );
-      }
+    const [arrivalsResult, presenceResult] = await Promise.allSettled([
+      fetchBusStopArrivals(stop.busStopCode),
+      fetchStopVehiclePresence(stop.busStopCode),
+    ]);
+    if (requestId !== focusedAssistLocationRequestRef.current) {
+      return;
     }
+    if (arrivalsResult.status === "fulfilled") {
+      setFocusedAssistArrivals(
+        arrivalsResult.value.services.flatMap((service) => service.buses),
+      );
+    } else {
+      setFocusedAssistArrivals([]);
+    }
+    if (presenceResult.status === "fulfilled") {
+      setFocusedAssistStopVehicles(
+        presenceResult.value.vehicles.filter(
+          (vehicle) => vehicle.fresh && vehicle.state !== "DEPARTED",
+        ),
+      );
+    } else {
+      setFocusedAssistStopVehicles([]);
+    }
+    setFocusedAssistContextError(
+      arrivalsResult.status === "rejected" &&
+        presenceResult.status === "rejected"
+        ? "We found your stop, but live bus detection is unavailable."
+        : presenceResult.status === "rejected"
+          ? "Live parked-bus detection is unavailable. Approaching times may still be shown."
+          : null,
+    );
   }
 
   async function prepareFocusedAssistContext() {
@@ -6110,6 +6612,7 @@ function SgGoAssistApp() {
       manuallySelectedStop: focusedAssistManualStop,
     });
     if (!resolution.stop) {
+      await refreshFocusedAssistContext();
       return;
     }
     focusedAssistLocationRequestRef.current += 1;
@@ -6129,6 +6632,7 @@ function SgGoAssistApp() {
     setFocusedAssistContextError(null);
     setFocusedAssistManualStop(null);
     setFocusedAssistSelectedBusId(null);
+    setFocusedAssistStopVehicles([]);
     try {
       const permission = await settleWithin(
         Location.requestForegroundPermissionsAsync(),
@@ -6192,6 +6696,7 @@ function SgGoAssistApp() {
       });
       if (!resolution.stop) {
         setFocusedAssistArrivals([]);
+        setFocusedAssistStopVehicles([]);
         setFocusedAssistContextError(
           resolution.reason === "POOR_ACCURACY"
             ? "We're not sure which bus stop you're at."
@@ -6203,6 +6708,7 @@ function SgGoAssistApp() {
     } catch {
       if (requestId === focusedAssistLocationRequestRef.current) {
         setFocusedAssistArrivals([]);
+        setFocusedAssistStopVehicles([]);
         setFocusedAssistContextError(
           "We couldn't update your location. Try again or choose a bus stop.",
         );
@@ -6455,6 +6961,8 @@ function SgGoAssistApp() {
     setRequestId(null);
     setCaseId(null);
     setAssistanceCaseState(null);
+    setAssistanceEscalationReason(null);
+    setLatestSafetyTelemetry(null);
     setRequestStatus(null);
     setRequestPhase(null);
     setEvents([]);
@@ -6635,6 +7143,7 @@ function SgGoAssistApp() {
       setRequestId(response.requestId);
       setCaseId(response.caseId ?? null);
       setAssistanceCaseState(response.assistanceCaseState ?? null);
+      setAssistanceEscalationReason(null);
       setRequestStatus(response.status);
       requestPhaseRef.current = "BOARDING";
       setRequestPhase("BOARDING");
@@ -6746,11 +7255,15 @@ function SgGoAssistApp() {
     focusedAssistRequestSessionRef.current = focusedSessionId;
     setFocusedAssistRequest({
       requestId: null,
+      caseId: null,
+      caseState: null,
+      escalationReason: null,
       status: null,
       assistanceType,
       submitting: true,
       bus,
       stop: context.stop,
+      safetyTelemetry: context.request.safetyTelemetry ?? null,
       error: null,
     });
     try {
@@ -6759,7 +7272,6 @@ function SgGoAssistApp() {
         busService: bus.serviceNo,
         busId: bus.vehicleId ?? bus.id,
         boardingStop: context.stop.busStopCode,
-        destination: bus.destination ?? "Destination not selected",
         stopCode: context.stop.busStopCode,
         assistanceTypes: [assistanceType],
         source: "MOBILE_APP",
@@ -6773,11 +7285,15 @@ function SgGoAssistApp() {
       }
       setFocusedAssistRequest({
         requestId: response.requestId,
+        caseId: response.caseId ?? null,
+        caseState: response.assistanceCaseState ?? null,
+        escalationReason: null,
         status: response.status,
         assistanceType,
         submitting: false,
         bus,
         stop: context.stop,
+        safetyTelemetry: context.request.safetyTelemetry ?? null,
         error: null,
       });
       notifyPassenger(
@@ -6839,6 +7355,8 @@ function SgGoAssistApp() {
     setRequestId(null);
     setCaseId(null);
     setAssistanceCaseState(null);
+    setAssistanceEscalationReason(null);
+    setLatestSafetyTelemetry(null);
     setRequestStatus(null);
     setRequestPhase(null);
     setEvents([]);
@@ -7334,6 +7852,7 @@ function SgGoAssistApp() {
       setRequestId(response.requestId);
       setCaseId(response.caseId ?? null);
       setAssistanceCaseState(response.assistanceCaseState ?? null);
+      setAssistanceEscalationReason(null);
       setRequestStatus(response.status);
       requestPhaseRef.current = "ALIGHTING";
       setRequestPhase("ALIGHTING");
@@ -7438,6 +7957,40 @@ function SgGoAssistApp() {
       selectedBus?.nextStop ??
       "your destination";
     const completedServiceNo = selectedBus?.busService ?? "your service";
+    const completedElapsedMinutes = Math.max(
+      1,
+      Math.round(
+        (Date.now() - (journeyStartedAtRef.current ?? Date.now())) / 60_000,
+      ),
+    );
+    const completedStopsTravelled = Math.max(1, currentStopIndex);
+    const completedAssistanceOutcome =
+      assistanceCaseState === "COMPLETED"
+        ? "Assistance completed"
+        : requestId
+          ? "Assistance confirmed"
+          : "No assistance requested";
+    if (
+      completionKind === "FINISHED" &&
+      selectedStop &&
+      selectedAlightingStop &&
+      selectedBus
+    ) {
+      setPassengerJourneyLocalState((current) => {
+        const next = withRecentJourney(current, {
+          id: `${selectedStop.busStopCode}-${selectedBus.busService}-${selectedAlightingStop.busStopCode}`,
+          completedAt: new Date().toISOString(),
+          serviceNo: selectedBus.busService,
+          boardingStop: selectedStop,
+          destination: {
+            ...selectedAlightingStop,
+            services: selectedAlightingStop.services ?? [],
+          },
+        });
+        void savePassengerJourneyLocalState(next);
+        return next;
+      });
+    }
     const activeAssistanceRequest =
       Boolean(journeyRequestId) &&
       assistanceCaseState !== "COMPLETED" &&
@@ -7537,13 +8090,20 @@ function SgGoAssistApp() {
       completionKind === "FINISHED"
         ? {
             destinationName: completedDestinationName,
+            destination: selectedAlightingStop,
             serviceNo: completedServiceNo,
+            elapsedMinutes: completedElapsedMinutes,
+            stopsTravelled: completedStopsTravelled,
+            assistanceOutcome: completedAssistanceOutcome,
           }
         : null,
     );
+    journeyStartedAtRef.current = null;
     setRequestId(null);
     setCaseId(null);
     setAssistanceCaseState(null);
+    setAssistanceEscalationReason(null);
+    setLatestSafetyTelemetry(null);
     setRequestStatus(null);
     setRequestPhase(null);
     setConfirmingCancelRequest(false);
@@ -7614,6 +8174,7 @@ function SgGoAssistApp() {
         largerControls: appPreferences.largerControls,
         reducedMotion,
         textSize: appPreferences.textSize,
+        navigationHeight,
         preserveViewport,
       }}
     >
@@ -7637,6 +8198,7 @@ function SgGoAssistApp() {
             isCompactWidth && styles.compactContainer,
             screen === "JOURNEY_IDLE" && styles.journeyEntryContainer,
             screen === "STOP" && styles.mapWorkspaceContainer,
+            screen !== "STOP" && { paddingBottom: navigationHeight + 64 },
           ]}
         >
           {screen !== "STOP" ? (
@@ -8023,35 +8585,203 @@ function SgGoAssistApp() {
                   }
                 />
               ) : null}
-              <FindBusPanel
-                state={findBusPanelState}
-                interactionBusy={isJourneyEntryLoading}
-                stacked={shouldStackJourneyIntro}
-                largeText={largeText}
-                lightMode={lightMode}
-                highContrast={appPreferences.highContrast}
-                canRepeatGuidance={canRepeatJourneyGuidance}
-                onUseLocation={() => {
-                  void findMyBusStop();
-                }}
-                onSelectManually={() => {
-                  void loadManualStops();
-                }}
-                onRetry={() => {
-                  void retryJourneyDiscovery();
-                }}
-                onRepeatGuidance={announceCurrentJourney}
-              />
+              {lastCompletedJourney ? (
+                <JourneyCompletionSummary
+                  serviceNo={lastCompletedJourney.serviceNo}
+                  destinationName={lastCompletedJourney.destinationName}
+                  elapsedMinutes={lastCompletedJourney.elapsedMinutes}
+                  stopsTravelled={lastCompletedJourney.stopsTravelled}
+                  assistanceOutcome={lastCompletedJourney.assistanceOutcome}
+                  destinationSaved={Boolean(
+                    lastCompletedJourney.destination &&
+                    passengerJourneyLocalState.favouriteDestinations.some(
+                      (item) =>
+                        item.id ===
+                        `stop:${lastCompletedJourney.destination?.busStopCode}`,
+                    ),
+                  )}
+                  simplified={appPreferences.simplifiedJourney}
+                  lightMode={lightMode}
+                  highContrast={appPreferences.highContrast}
+                  onRepeat={() => {
+                    const recent = passengerJourneyLocalState.recentJourneys[0];
+                    if (!recent) return;
+                    setLastCompletedJourney(null);
+                    setScreen("STOP");
+                    selectStopForBoarding({
+                      ...recent.boardingStop,
+                      distanceMeters:
+                        passengerContextSnapshot?.nearbyStops.find(
+                          (item) =>
+                            item.stop.busStopCode ===
+                            recent.boardingStop.busStopCode,
+                        )?.distanceMeters ?? 0,
+                    });
+                  }}
+                  onToggleSaveDestination={() => {
+                    const destinationStop = lastCompletedJourney.destination;
+                    if (!destinationStop) return;
+                    setPassengerJourneyLocalState((current) => {
+                      const next = toggleFavouriteDestination(current, {
+                        id: `stop:${destinationStop.busStopCode}`,
+                        label: destinationStop.description,
+                        latitude: destinationStop.latitude,
+                        longitude: destinationStop.longitude,
+                      });
+                      void savePassengerJourneyLocalState(next);
+                      return next;
+                    });
+                  }}
+                  onPlanAnother={() => setLastCompletedJourney(null)}
+                />
+              ) : null}
+              {passengerContextSnapshot && findBusPanelState.kind === "IDLE" ? (
+                <JourneyHub
+                  snapshot={passengerContextSnapshot}
+                  simplified={appPreferences.simplifiedJourney}
+                  highContrast={appPreferences.highContrast}
+                  lightMode={lightMode}
+                  onChooseStop={(stop) => {
+                    setTransportDiscovery((current) => ({
+                      ...current,
+                      nearbyStops: passengerContextSnapshot.nearbyStops.map(
+                        (item) => item.stop,
+                      ),
+                      nearbyStopsStatus: "success",
+                    }));
+                    setMapViewport((current) => ({
+                      ...current,
+                      center: {
+                        latitude: stop.latitude,
+                        longitude: stop.longitude,
+                      },
+                      zoom: DEFAULT_ZOOM,
+                      mode: "SELECTED_STOP",
+                    }));
+                    setScreen("STOP");
+                    selectStopForBoarding(stop);
+                  }}
+                  onCompareNearby={() => {
+                    setTransportDiscovery((current) => ({
+                      ...current,
+                      nearbyStops: passengerContextSnapshot.nearbyStops.map(
+                        (item) => item.stop,
+                      ),
+                      nearbyStopsStatus: "success",
+                    }));
+                    setBottomSheetContent("NEARBY");
+                    setNearbyOpen(true);
+                    updateBottomSheetState("MEDIUM");
+                    setScreen("STOP");
+                  }}
+                  onFocusedAssist={openFocusedAssistMode}
+                  onRefresh={() => void findMyBusStop()}
+                  favourite={passengerJourneyLocalState.favouriteStops.some(
+                    (stop) =>
+                      stop.busStopCode ===
+                      passengerContextSnapshot.nearbyStops[0]?.stop.busStopCode,
+                  )}
+                  savedStopNames={passengerJourneyLocalState.favouriteStops.map(
+                    (stop) => stop.description,
+                  )}
+                  recentJourneyLabel={
+                    passengerJourneyLocalState.recentJourneys[0]
+                      ? `Service ${passengerJourneyLocalState.recentJourneys[0].serviceNo} journey`
+                      : undefined
+                  }
+                  onToggleFavourite={() => {
+                    const stop = passengerContextSnapshot.nearbyStops[0]?.stop;
+                    if (!stop) return;
+                    setPassengerJourneyLocalState((current) => {
+                      const next = toggleFavouriteStop(current, stop);
+                      void savePassengerJourneyLocalState(next);
+                      return next;
+                    });
+                  }}
+                  onRepeatRecent={() => {
+                    const recent = passengerJourneyLocalState.recentJourneys[0];
+                    if (!recent) return;
+                    const stop = {
+                      ...recent.boardingStop,
+                      distanceMeters:
+                        passengerContextSnapshot.nearbyStops.find(
+                          (item) =>
+                            item.stop.busStopCode ===
+                            recent.boardingStop.busStopCode,
+                        )?.distanceMeters ?? 0,
+                    };
+                    setScreen("STOP");
+                    selectStopForBoarding(stop);
+                  }}
+                />
+              ) : (
+                <>
+                  <FindBusPanel
+                    state={findBusPanelState}
+                    interactionBusy={isJourneyEntryLoading}
+                    stacked={shouldStackJourneyIntro}
+                    largeText={largeText}
+                    lightMode={lightMode}
+                    highContrast={appPreferences.highContrast}
+                    canRepeatGuidance={canRepeatJourneyGuidance}
+                    onUseLocation={() => {
+                      void findMyBusStop();
+                    }}
+                    onSelectManually={() => {
+                      void loadManualStops();
+                    }}
+                    onRetry={() => {
+                      void retryJourneyDiscovery();
+                    }}
+                    onRepeatGuidance={announceCurrentJourney}
+                  />
+                  <View
+                    style={[
+                      styles.focusedStopEntryCard,
+                      lightMode && lightStyles.surface,
+                      appPreferences.highContrast && styles.highContrastControl,
+                    ]}
+                  >
+                    <View style={styles.focusedStopEntryHeading}>
+                      <BusFront size={34} color="#0B6670" />
+                      <View style={styles.flexFill}>
+                        <Text style={themedHeadingStyle()}>
+                          Already at a bus stop?
+                        </Text>
+                        <Text style={themedBodyStyle()}>
+                          Identify the parked bus and request its ramp without
+                          planning a journey.
+                        </Text>
+                      </View>
+                    </View>
+                    <PrimaryButton
+                      label="I'm at a bus stop"
+                      icon={Accessibility}
+                      onPress={openFocusedAssistMode}
+                      lightMode={lightMode}
+                      highContrast={appPreferences.highContrast}
+                      largerControls={appPreferences.largerControls}
+                    />
+                  </View>
+                </>
+              )}
             </View>
           )}
 
           {screen === "STOP" && (
             <MapFirstStopScreen
               stops={visibleMapStops}
-              nearbyStops={visibleNearbyStops}
+              nearbyStops={
+                mapStopDensity === "ALL"
+                  ? visibleNearbyStops
+                  : prioritizedMapStops
+              }
               accessibleStopRoutes={accessibleStopRoutes}
               accessibleRoutesOnly={accessibleRoutesOnly}
-              recommendedStopCode={recommendedAccessibleStopCode}
+              mapStopDensity={mapStopDensity}
+              recommendation={effectiveMapRecommendation}
+              recommendedStop={activeMapRecommendationStop}
+              recommendedStopCode={effectiveMapRecommendation?.stopCode}
               selectedStop={selectedStop}
               selectedLandmark={selectedLandmark}
               landmarks={visibleLandmarks}
@@ -8171,6 +8901,7 @@ function SgGoAssistApp() {
                   [layer]: !current[layer],
                 }))
               }
+              onChangeMapStopDensity={setMapStopDensity}
               onResetHeading={resetMapNorth}
               onDirections={startDirections}
               onRetryDirections={startDirections}
@@ -8229,10 +8960,24 @@ function SgGoAssistApp() {
                 selectedServiceNo={selectedBus?.busService ?? null}
                 requestPhase={requestPhase}
                 appPreferences={appPreferences}
+                operationalNowMs={operationalNowMs}
                 lightMode={lightMode}
                 highContrast={appPreferences.highContrast}
                 onChooseStop={chooseFocusedAssistBusStop}
                 onOpenJourney={() => openTab("JOURNEY")}
+                onAskOperator={() => {
+                  void voiceAssistantActionHandlersRef.current
+                    ?.requestOperatorHelp(
+                      "The detected bus cannot provide ramp assistance.",
+                    )
+                    .then((result) =>
+                      setVisualAlert(
+                        result.ok
+                          ? "An operator has been alerted."
+                          : (result.reason ?? "Unable to alert an operator."),
+                      ),
+                    );
+                }}
               />
               <VoiceAssistantPanel
                 controller={voiceAssistantControllerRef.current!}
@@ -8245,9 +8990,7 @@ function SgGoAssistApp() {
                 prepareAssistant={() =>
                   assistantRuntimeRef.current!.initialize()
                 }
-                retryAssistant={() =>
-                  assistantRuntimeRef.current!.retry()
-                }
+                retryAssistant={() => assistantRuntimeRef.current!.retry()}
                 diagnosticsConsent={Boolean(
                   appPreferences.assistantDiagnosticsConsent,
                 )}
@@ -8796,6 +9539,23 @@ function SgGoAssistApp() {
                 highContrast={appPreferences.highContrast}
                 lightMode={lightMode}
               />
+              {!appPreferences.simplifiedJourney ? (
+                <ActiveJourneyContextStrip
+                  serviceNo={selectedBus.busService}
+                  phase={journeyPhase}
+                  nextStop={
+                    journeyPhase === "WALKING_TO_STOP"
+                      ? selectedStop?.description
+                      : nextRouteStop?.description
+                  }
+                  stopsRemaining={stopsRemaining ?? undefined}
+                  assistanceState={assistanceCaseState}
+                  connected={transportDiscovery.connectivity === "online"}
+                  warning={assistanceEscalationReason}
+                  lightMode={lightMode}
+                  highContrast={appPreferences.highContrast}
+                />
+              ) : null}
               <JourneyVisualGuide
                 instruction={journeyVisualInstruction}
                 illustration={
@@ -9061,6 +9821,12 @@ function SgGoAssistApp() {
                   stopsAfterBoarding={selectedAlightingStopIndex}
                   assistanceTypes={assistanceTypes}
                   requestStatus={requestStatus}
+                  assistanceCaseState={assistanceCaseState}
+                  escalationReason={assistanceEscalationReason}
+                  safetyTelemetry={latestSafetyTelemetry}
+                  vehicleStatus={vehicleStatus}
+                  operationalNowMs={operationalNowMs}
+                  simplified={appPreferences.simplifiedJourney}
                   isLoading={isLoading}
                   lightMode={lightMode}
                   highContrast={appPreferences.highContrast}
@@ -9074,6 +9840,19 @@ function SgGoAssistApp() {
           {screen === "ONBOARD" && selectedBus && (
             <>
               <View style={styles.section}>
+                {!appPreferences.simplifiedJourney ? (
+                  <ActiveJourneyContextStrip
+                    serviceNo={selectedBus.busService}
+                    phase={journeyPhase}
+                    nextStop={nextRouteStop?.description}
+                    stopsRemaining={stopsRemaining ?? undefined}
+                    assistanceState={assistanceCaseState}
+                    connected={transportDiscovery.connectivity === "online"}
+                    warning={assistanceEscalationReason}
+                    lightMode={lightMode}
+                    highContrast={appPreferences.highContrast}
+                  />
+                ) : null}
                 <JourneyVisualGuide
                   instruction={journeyVisualInstruction}
                   illustration={
@@ -9101,6 +9880,16 @@ function SgGoAssistApp() {
                 alightingRequestStatus={
                   requestPhase === "ALIGHTING" ? requestStatus : null
                 }
+                assistanceCaseState={
+                  requestPhase === "ALIGHTING" ? assistanceCaseState : null
+                }
+                assistanceEscalationReason={
+                  requestPhase === "ALIGHTING"
+                    ? assistanceEscalationReason
+                    : null
+                }
+                safetyTelemetry={latestSafetyTelemetry}
+                operationalNowMs={operationalNowMs}
                 selectedStopIsNext={selectedStopIsNext}
                 selectedStopReached={selectedStopReached}
                 journeyPhase={journeyPhase}
@@ -9252,6 +10041,7 @@ function SgGoAssistApp() {
           highContrast={appPreferences.highContrast}
           compact={isCompactWidth}
           onSelect={openTab}
+          onHeightChange={setNavigationHeight}
         />
       </SafeAreaView>
     </AccessibilityRuntimeContext.Provider>
@@ -10318,31 +11108,7 @@ function StatusConceptVisual({
 
   if (kind === "audio") {
     return (
-      <View
-        style={[
-          styles.statusConceptVisual,
-          compact && styles.compactStatusConceptVisual,
-        ]}
-        accessibilityElementsHidden
-        importantForAccessibility="no"
-      >
-        <BusFront
-          size={compact ? 38 : 48}
-          color={iconColor}
-          strokeWidth={2.75}
-          accessible={false}
-        />
-        <Animated.View style={[styles.audioWaveGroup, pulseStyle]}>
-          <View style={[styles.audioWave, { borderColor: accentColor }]} />
-          <View style={[styles.audioWaveWide, { borderColor: accentColor }]} />
-        </Animated.View>
-        <Volume2
-          size={compact ? 24 : 30}
-          color={accentColor}
-          strokeWidth={3}
-          accessible={false}
-        />
-      </View>
+      <BusIdentificationGraphic lightMode={lightMode} highContrast={highContrast} />
     );
   }
 
@@ -10540,10 +11306,12 @@ function FocusedAssistScreen({
   selectedServiceNo,
   requestPhase,
   appPreferences,
+  operationalNowMs,
   lightMode,
   highContrast,
   onChooseStop,
   onOpenJourney,
+  onAskOperator,
 }: {
   context: FocusedAssistContext;
   controller: FocusedAssistController;
@@ -10551,11 +11319,14 @@ function FocusedAssistScreen({
   selectedServiceNo: string | null;
   requestPhase: AssistancePhase | null;
   appPreferences: AccessibilityPreferences;
+  operationalNowMs: number;
   lightMode: boolean;
   highContrast: boolean;
   onChooseStop: () => void;
   onOpenJourney: () => void;
+  onAskOperator: () => void;
 }) {
+  const [confirmingBusId, setConfirmingBusId] = useState<string | null>(null);
   const largeText = isLargeText(appPreferences);
   const extraLargeText = appPreferences.textSize === "EXTRA_LARGE";
   const theme = resolveVisualTheme(lightMode, highContrast);
@@ -10592,6 +11363,17 @@ function FocusedAssistScreen({
   const requestActive =
     context.request.status === AssistanceRequestStatus.SENDING ||
     context.request.status === AssistanceRequestStatus.ACKNOWLEDGED;
+  useEffect(() => {
+    if (
+      (context.state === "ONE_BUS_PRESENT" &&
+        (context.selectedBus?.presenceState === "PARKED" ||
+          context.selectedBus?.source === "DEMO")) ||
+      requestActive ||
+      (confirmingBusId && context.selectedBus?.id !== confirmingBusId)
+    ) {
+      setConfirmingBusId(null);
+    }
+  }, [confirmingBusId, context.selectedBus?.id, context.state, requestActive]);
 
   if (context.state === "LOCATING") {
     return (
@@ -10754,6 +11536,32 @@ function FocusedAssistScreen({
               highContrast && styles.focusedAssistHighContrastChoice,
             ]}
           >
+            <OperationalVehicleDiagram
+              guidance={deriveOperationalGuidance(
+                {
+                  serviceNumber: bus.serviceNo,
+                  mode: "BOARDING",
+                  expectedStopCode: context.stop?.busStopCode,
+                  presenceState: bus.presenceState ?? "APPROACHING",
+                  caseState:
+                    context.request.bus?.id === bus.id
+                      ? context.request.caseState
+                      : null,
+                  requestActive:
+                    context.request.bus?.id === bus.id && requestActive,
+                  telemetry:
+                    context.request.safetyTelemetry?.busId ===
+                    (bus.vehicleId ?? bus.id)
+                      ? context.request.safetyTelemetry
+                      : null,
+                },
+                operationalNowMs,
+              )}
+              lightMode={lightMode}
+              highContrast={highContrast}
+              compact
+              style={styles.focusedAssistBusChoiceDiagram}
+            />
             <Text style={styles.focusedAssistBusChoiceService}>
               Service {bus.serviceNo}
             </Text>
@@ -10761,9 +11569,9 @@ function FocusedAssistScreen({
               <Text style={bodyStyle}>Towards {bus.destination}</Text>
             ) : null}
             <Text style={bodyStyle}>
-              {bus.confidence === "HIGH"
-                ? "Detected at this stop"
-                : "Appears to be arriving"}
+              {bus.presenceState === "PARKED" && bus.confidence === "HIGH"
+                ? "Parked at this stop"
+                : "Approaching this stop"}
             </Text>
           </Pressable>
         ))}
@@ -10794,7 +11602,26 @@ function FocusedAssistScreen({
 
   const simplified = appPreferences.simplifiedJourney;
   const oneTouch = context.state === "ONE_BUS_PRESENT";
+  const parked =
+    oneTouch &&
+    bus.confidence === "HIGH" &&
+    (bus.presenceState === "PARKED" ||
+      bus.source === "ACTIVE_JOURNEY" ||
+      bus.source === "DEMO");
   const statusContent = focusedAssistStatusContent(context, simplified);
+  const operationalGuidance = deriveOperationalGuidance(
+    {
+      serviceNumber: bus.serviceNo,
+      mode: "BOARDING",
+      expectedStopCode: context.stop?.busStopCode,
+      presenceState: parked ? "PARKED" : (bus.presenceState ?? "APPROACHING"),
+      requestActive,
+      caseState: context.request.caseState,
+      escalationReason: context.request.escalationReason,
+      telemetry: context.request.safetyTelemetry,
+    },
+    operationalNowMs,
+  );
   return (
     <View style={panelStyle}>
       <Text style={eyebrowStyle} accessibilityRole="header">
@@ -10802,12 +11629,20 @@ function FocusedAssistScreen({
           ? oneTouch
             ? "BUS HERE"
             : "BUS COMING"
-          : oneTouch
+          : parked
             ? "BUS AT YOUR STOP"
             : bus.activeJourneyMatch
               ? "YOUR BUS IS APPROACHING"
               : "BUS APPEARS TO BE ARRIVING"}
       </Text>
+      <OperationalGuidancePanel
+        guidance={operationalGuidance}
+        lightMode={lightMode}
+        highContrast={highContrast}
+        simplified={simplified}
+        largeText={largeText}
+        testID="focused-assist-operational-guidance"
+      />
       <Text style={servicePrefixStyle}>SERVICE</Text>
       <Text
         style={[
@@ -10868,14 +11703,56 @@ function FocusedAssistScreen({
             lightMode={lightMode}
             highContrast={highContrast}
           />
+          <SecondaryButton
+            label="Ask an operator"
+            icon={MessageSquareText}
+            onPress={onAskOperator}
+            lightMode={lightMode}
+            highContrast={highContrast}
+          />
         </>
+      ) : confirmingBusId === bus.id ? (
+        <View
+          style={[
+            styles.focusedAssistConfirmation,
+            highContrast && styles.focusedAssistHighContrastChoice,
+          ]}
+          accessibilityRole="alert"
+        >
+          <Text style={headingStyle}>
+            Request the ramp before Service {bus.serviceNo} arrives?
+          </Text>
+          <Text style={bodyStyle}>
+            Confirm this is the bus you need. The request will not operate the
+            ramp directly.
+          </Text>
+          <PrimaryButton
+            label={`Confirm Service ${bus.serviceNo}`}
+            icon={CircleCheck}
+            onPress={() => {
+              setConfirmingBusId(null);
+              void controller.requestRamp();
+            }}
+            lightMode={lightMode}
+            highContrast={highContrast}
+          />
+          <SecondaryButton
+            label="Cancel"
+            icon={CircleX}
+            onPress={() => setConfirmingBusId(null)}
+            lightMode={lightMode}
+            highContrast={highContrast}
+          />
+        </View>
       ) : (
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={`${oneTouch ? "Request ramp" : bus.activeJourneyMatch ? "Request ramp in advance" : "Confirm bus and request ramp"} for Service ${bus.serviceNo}`}
           accessibilityHint="Sends a boarding assistance request. Bus safety systems remain responsible for ramp operation."
           disabled={requestActive || context.request.submitting}
-          onPress={() => void controller.requestRamp()}
+          onPress={() =>
+            parked ? void controller.requestRamp() : setConfirmingBusId(bus.id)
+          }
           style={({ pressed }) => [
             styles.focusedAssistRampAction,
             (largeText || appPreferences.largerControls) &&
@@ -10886,9 +11763,9 @@ function FocusedAssistScreen({
         >
           <Accessibility size={48} color="#FFFFFF" />
           <Text style={styles.focusedAssistActionLabel}>
-            {simplified
+            {simplified && parked
               ? "RAMP"
-              : oneTouch
+              : parked
                 ? "REQUEST RAMP"
                 : bus.activeJourneyMatch
                   ? "REQUEST IN ADVANCE"
@@ -11077,6 +11954,20 @@ function isActiveAssistanceRequest(
   return requestStatus === "SENDING" || requestStatus === "ACKNOWLEDGED";
 }
 
+function newerSafetyTelemetry(
+  current: SafetyTelemetry | null | undefined,
+  incoming: SafetyTelemetry,
+) {
+  if (current?.busId !== incoming.busId) return incoming;
+  const currentObservedAt = Date.parse(current.observedAt);
+  const incomingObservedAt = Date.parse(incoming.observedAt);
+  if (!Number.isFinite(incomingObservedAt)) return current ?? null;
+  return !Number.isFinite(currentObservedAt) ||
+    incomingObservedAt >= currentObservedAt
+    ? incoming
+    : current;
+}
+
 function WaitingForBusStatus({
   serviceNo,
   accessibleBus,
@@ -11086,6 +11977,12 @@ function WaitingForBusStatus({
   stopsAfterBoarding,
   assistanceTypes,
   requestStatus,
+  assistanceCaseState,
+  escalationReason,
+  safetyTelemetry,
+  vehicleStatus,
+  operationalNowMs,
+  simplified,
   isLoading,
   lightMode,
   highContrast,
@@ -11100,6 +11997,12 @@ function WaitingForBusStatus({
   stopsAfterBoarding: number;
   assistanceTypes: AssistanceType[];
   requestStatus: AssistanceRequestStatus | null;
+  assistanceCaseState: AssistanceCaseState | null;
+  escalationReason: string | null;
+  safetyTelemetry: SafetyTelemetry | null;
+  vehicleStatus: VehicleStatus | null;
+  operationalNowMs: number;
+  simplified: boolean;
   isLoading: boolean;
   lightMode: boolean;
   highContrast: boolean;
@@ -11134,6 +12037,21 @@ function WaitingForBusStatus({
   const rampRequestUnavailable = !accessibleBus;
   const rampRequestDisabled =
     isLoading || rampStatus !== "Not requested" || rampRequestUnavailable;
+  const operationalGuidance = deriveOperationalGuidance(
+    {
+      serviceNumber: serviceNo,
+      mode: "BOARDING",
+      expectedStopCode: boardingStop?.busStopCode,
+      presenceState: vehicleStatus === "ARRIVED" ? "PARKED" : "APPROACHING",
+      journeyPhase:
+        vehicleStatus === "ARRIVED" ? "BOARDING" : "WAITING_FOR_BUS",
+      requestActive: isActiveAssistanceRequest(requestStatus),
+      caseState: assistanceCaseState,
+      escalationReason,
+      telemetry: safetyTelemetry,
+    },
+    operationalNowMs,
+  );
 
   return (
     <View style={styles.waitingScreen} testID="waiting-for-bus-status">
@@ -11236,6 +12154,15 @@ function WaitingForBusStatus({
           </View>
         ) : null}
       </View>
+
+      <OperationalGuidancePanel
+        guidance={operationalGuidance}
+        lightMode={lightMode}
+        highContrast={highContrast}
+        simplified={simplified}
+        largeText={runtimeAccessibility.textSize !== "STANDARD"}
+        testID="waiting-operational-guidance"
+      />
 
       <View
         style={[
@@ -11442,7 +12369,11 @@ function WaitingForBusStatus({
           icon={BusFront}
           accessibilityHint="Enter onboard journey mode after you have safely boarded."
           onPress={onBoard}
-          disabled={isLoading}
+          disabled={
+            isLoading ||
+            (rampStatus !== "Not requested" &&
+              !operationalGuidance.canTraverseRamp)
+          }
           lightMode={lightMode}
           highContrast={highContrast}
         />
@@ -14375,6 +15306,7 @@ function TabBar({
   highContrast,
   compact,
   onSelect,
+  onHeightChange,
 }: {
   activeTab: AppTab;
   journeyStateDescription: string;
@@ -14383,11 +15315,13 @@ function TabBar({
   highContrast: boolean;
   compact: boolean;
   onSelect: (tab: AppTab) => void;
+  onHeightChange: (height: number) => void;
 }) {
   const runtimeAccessibility = useContext(AccessibilityRuntimeContext);
   const theme = resolveVisualTheme(lightMode, highContrast);
   return (
     <View
+      onLayout={(event) => onHeightChange(Math.ceil(event.nativeEvent.layout.height))}
       style={[
         styles.tabBar,
         {
@@ -14822,6 +15756,10 @@ function OnboardJourneyScreen({
   stopsRemaining,
   alightingAssistanceTypes,
   alightingRequestStatus,
+  assistanceCaseState,
+  assistanceEscalationReason,
+  safetyTelemetry,
+  operationalNowMs,
   selectedStopIsNext,
   selectedStopReached,
   journeyPhase,
@@ -14848,6 +15786,10 @@ function OnboardJourneyScreen({
   stopsRemaining: number | null;
   alightingAssistanceTypes: AssistanceType[];
   alightingRequestStatus: AssistanceRequestStatus | null;
+  assistanceCaseState: AssistanceCaseState | null;
+  assistanceEscalationReason: string | null;
+  safetyTelemetry: SafetyTelemetry | null;
+  operationalNowMs: number;
   selectedStopIsNext: boolean;
   selectedStopReached: boolean;
   journeyPhase: JourneyPhase;
@@ -14925,6 +15867,23 @@ function OnboardJourneyScreen({
     selectedStopReached ||
     assistanceRequestActive ||
     assistanceRequestFailed;
+  const alightingOperationalGuidance = deriveOperationalGuidance(
+    {
+      serviceNumber: selectedBus.busService,
+      mode: "ALIGHTING",
+      expectedStopCode:
+        selectedStopReached || destinationIsNext
+          ? selectedAlightingStop?.busStopCode
+          : currentStop?.busStopCode,
+      presenceState: safetyTelemetry?.vehicleStopped ? "PARKED" : "APPROACHING",
+      journeyPhase,
+      requestActive: assistanceRequestActive,
+      caseState: assistanceCaseState,
+      escalationReason: assistanceEscalationReason,
+      telemetry: safetyTelemetry,
+    },
+    operationalNowMs,
+  );
   const rampAssistanceSelected =
     alightingAssistanceTypes.includes("WHEELCHAIR_RAMP");
   const extraAlightingTimeSelected = alightingAssistanceTypes.includes(
@@ -15264,6 +16223,17 @@ function OnboardJourneyScreen({
               Alighting assistance
             </Text>
           )}
+
+          {rampAssistanceSelected ? (
+            <OperationalGuidancePanel
+              guidance={alightingOperationalGuidance}
+              lightMode={lightMode}
+              highContrast={highContrast}
+              simplified={appPreferences.simplifiedJourney}
+              largeText={isLargeText(appPreferences)}
+              testID="alighting-operational-guidance"
+            />
+          ) : null}
 
           {!appPreferences.simplifiedJourney ? (
             <>
@@ -16493,6 +17463,7 @@ const BusStopSearchOverlay = memo(function BusStopSearchOverlay({
   onSelectService: (serviceNo: string) => void;
   onChooseOnMap: () => void;
 }) {
+  const navigationInset = useNavigationInset(0);
   const theme = resolveVisualTheme(lightMode, highContrast);
   const hasQuery = searchState.query.trim().length > 0;
   const hasResults =
@@ -16504,6 +17475,7 @@ const BusStopSearchOverlay = memo(function BusStopSearchOverlay({
     <View
       style={[
         styles.busStopSearchOverlay,
+        { bottom: navigationInset },
         {
           backgroundColor: theme.colors.map.sheetSurface,
           borderColor: theme.colors.map.sheetBorder,
@@ -16923,13 +17895,13 @@ export function MapStatusPill({
   return (
     <View
       testID="map-status-pill"
-      pointerEvents={children ? "auto" : "none"}
       accessible
       accessibilityRole={isAlert ? "alert" : undefined}
       accessibilityLiveRegion={isAlert ? "assertive" : "polite"}
       accessibilityLabel={normalizedMessage}
       style={[
         styles.regionalStopsStatus,
+        { pointerEvents: children ? "auto" : "none" },
         {
           backgroundColor: theme.colors.map.overlaySurfaceElevated,
           borderColor: error
@@ -16957,6 +17929,9 @@ function MapFirstStopScreen({
   nearbyStops,
   accessibleStopRoutes,
   accessibleRoutesOnly,
+  mapStopDensity,
+  recommendation,
+  recommendedStop,
   recommendedStopCode,
   selectedStop,
   selectedLandmark,
@@ -17044,6 +18019,7 @@ function MapFirstStopScreen({
   onViewFullRoute,
   onToggleFollow,
   onToggleLayer,
+  onChangeMapStopDensity,
   onResetHeading,
   onDirections,
   onRetryDirections,
@@ -17068,6 +18044,9 @@ function MapFirstStopScreen({
   nearbyStops: NearbyBusStop[];
   accessibleStopRoutes: Record<string, AccessibleStopRouteStatus>;
   accessibleRoutesOnly: boolean;
+  mapStopDensity: MapStopDensity;
+  recommendation: MapStopRecommendation | null;
+  recommendedStop: NearbyBusStop | null;
   recommendedStopCode?: string;
   selectedStop: NearbyBusStop | null;
   selectedLandmark: MapLandmark | null;
@@ -17160,6 +18139,7 @@ function MapFirstStopScreen({
   onViewFullRoute: () => void;
   onToggleFollow: () => void;
   onToggleLayer: (layer: MapLayerKey) => void;
+  onChangeMapStopDensity: (density: MapStopDensity) => void;
   onResetHeading: () => void;
   onDirections: () => void;
   onRetryDirections: () => void;
@@ -17181,6 +18161,8 @@ function MapFirstStopScreen({
   onSetBottomSheetState: (state: BottomSheetState) => void;
 }) {
   const [showMoreControls, setShowMoreControls] = useState(false);
+  const navigationInset = useNavigationInset();
+  const [recommendationHeight, setRecommendationHeight] = useState(0);
   const [mapProviderRetryKey, setMapProviderRetryKey] = useState(0);
   const [mapReady, setMapReady] = useState(false);
   const theme = resolveVisualTheme(lightMode, highContrast);
@@ -17200,7 +18182,12 @@ function MapFirstStopScreen({
           ? "FOLLOW_USER"
           : "BROWSE";
   const contextualMapControl =
-    mapReady && searchThisAreaVisible && !showMoreControls && !searchActive
+    mapReady &&
+    searchThisAreaVisible &&
+    !showMoreControls &&
+    !searchActive &&
+    !selectedStop &&
+    guidanceStatus !== "ACTIVE"
       ? {
           accessibilityLabel:
             "Find bus stops in the currently visible map area",
@@ -17320,7 +18307,7 @@ function MapFirstStopScreen({
       mapCameraGeometry.insets.right,
     ),
     bottom: Math.max(
-      bottomNavigationHeight + routeSheetHeight + mapOverlayMargin,
+      navigationInset + Math.max(routeSheetHeight, recommendationHeight) + mapOverlayMargin + 40,
       mapCameraGeometry.insets.bottom,
     ),
     left: Math.max(18, mapCameraGeometry.insets.left),
@@ -17337,6 +18324,8 @@ function MapFirstStopScreen({
     >
       <NearbyStopsMap
         stops={stops}
+        stopDensity={mapStopDensity}
+        recommendation={recommendation}
         recommendedStopCode={recommendedStopCode}
         selectedStop={selectedStop}
         selectedLandmark={selectedLandmark}
@@ -17390,8 +18379,11 @@ function MapFirstStopScreen({
         onResetHeading={onResetHeading}
       />
       <View
-        style={[styles.mapOverlayLayoutManager, overlayLayout]}
-        pointerEvents="box-none"
+        style={[
+          styles.mapOverlayLayoutManager,
+          overlayLayout,
+          { pointerEvents: "box-none" },
+        ]}
       >
         <View style={styles.mapTopControlRow}>
           <Pressable
@@ -17534,6 +18526,8 @@ function MapFirstStopScreen({
           moreOpen={showMoreControls}
           bearingDegrees={mapViewport.bearing}
           followState={followState}
+          selectedStop={selectedStop}
+          guidanceActive={guidanceStatus === "ACTIVE"}
           lightMode={lightMode}
           highContrast={highContrast}
           onLocate={() => {
@@ -17551,9 +18545,10 @@ function MapFirstStopScreen({
       ) : null}
       {mapReady && showMoreControls ? (
         <View
-          pointerEvents="none"
           style={[
             styles.mapOptionsScrim,
+            { bottom: navigationInset },
+            { pointerEvents: "none" },
             {
               backgroundColor: lightMode
                 ? "rgba(14, 34, 39, 0.12)"
@@ -17566,9 +18561,11 @@ function MapFirstStopScreen({
       {mapReady && showMoreControls ? (
         <MapLayerQuickControls
           layers={layers}
+          mapStopDensity={mapStopDensity}
           lightMode={lightMode}
           highContrast={highContrast}
           onToggleLayer={onToggleLayer}
+          onChangeMapStopDensity={onChangeMapStopDensity}
           onResetHeading={onResetHeading}
           onRotateMap={onRotateMap}
           onResetMap={onResetMap}
@@ -17580,6 +18577,26 @@ function MapFirstStopScreen({
           hasSelectedDestination={hasSelectedDestination}
           onClose={() => setShowMoreControls(false)}
           selectedStop={selectedStop}
+        />
+      ) : null}
+      {mapReady &&
+      recommendedStop &&
+      recommendation &&
+      !selectedStop &&
+      !directionsActive &&
+      !nearbyOpen &&
+      !searchActive &&
+      !showMoreControls &&
+      !mapPickMode ? (
+        <RecommendedStopCard
+            onHeightChange={setRecommendationHeight}
+          stop={recommendedStop}
+          recommendation={recommendation}
+          largeText={largeText}
+          lightMode={lightMode}
+          highContrast={highContrast}
+          onChoose={() => onSelectStop(recommendedStop)}
+          onCompare={onOpenNearby}
         />
       ) : null}
       {searchActive ? (
@@ -17905,12 +18922,14 @@ function MapDestinationPicker({
   highContrast: boolean;
   onConfirm: () => void;
 }) {
+  const navigationInset = useNavigationInset(66);
   const theme = resolveVisualTheme(lightMode, highContrast);
   return (
     <>
       <View
         style={[
           styles.fixedDestinationPin,
+          { pointerEvents: "none" },
           {
             backgroundColor: theme.colors.destination,
             borderColor: theme.colors.map.routeOutline,
@@ -17920,7 +18939,6 @@ function MapDestinationPicker({
             borderWidth: 3,
           },
         ]}
-        pointerEvents="none"
       >
         <MapPinned
           size={34}
@@ -17931,6 +18949,7 @@ function MapDestinationPicker({
       <View
         style={[
           styles.mapDestinationPickerCard,
+        { bottom: navigationInset },
           {
             backgroundColor: theme.colors.map.sheetSurface,
             borderColor: theme.colors.map.sheetBorder,
@@ -18034,6 +19053,18 @@ function JourneyPlanBottomSheet({
             </Text>
           ))}
         </View>
+        {selectedAlternative.advisories[0] ? (
+          <Text style={[styles.bodyText, lightMode && lightStyles.bodyText]}>
+            {selectedAlternative.advisories[0]}
+          </Text>
+        ) : null}
+        {selectedAlternative.provenanceLabel ? (
+          <Text
+            style={[styles.summaryLabel, lightMode && lightStyles.mutedText]}
+          >
+            {selectedAlternative.provenanceLabel}
+          </Text>
+        ) : null}
       </View>
 
       {alternatives.length > 1 ? (
@@ -18050,7 +19081,7 @@ function JourneyPlanBottomSheet({
               accessibilityState={{
                 selected: alternative.id === selectedAlternative.id,
               }}
-              accessibilityLabel={`${alternative.title}. ${alternative.totalMinutes} minutes. ${alternative.recommendation}.`}
+              accessibilityLabel={`${alternative.title}. ${alternative.totalMinutes} minutes. ${alternative.walkingMinutes} minutes walking. ${alternative.transferCount} transfers. Shelter ${alternative.shelterCoverage.toLowerCase()}. Accessibility ${alternative.accessibilityFit.toLowerCase()}. ${alternative.recommendation}.`}
               onPress={() => onSelectAlternative(alternative.id)}
               style={[
                 styles.routeAlternativeRow,
@@ -18133,6 +19164,211 @@ function JourneyStepList({
   );
 }
 
+function RecommendedStopCard({
+  onHeightChange,
+  stop,
+  recommendation,
+  largeText,
+  lightMode,
+  highContrast,
+  onChoose,
+  onCompare,
+}: {
+  stop: NearbyBusStop;
+  recommendation: MapStopRecommendation;
+  largeText: boolean;
+  lightMode: boolean;
+  highContrast: boolean;
+  onHeightChange: (height: number) => void;
+  onChoose: () => void;
+  onCompare: () => void;
+}) {
+  const navigationInset = useNavigationInset(12);
+  const theme = resolveVisualTheme(lightMode, highContrast);
+  const services = busServicesForStop(stop);
+  const visibleServices = services.slice(0, 3);
+  const additionalServiceCount = Math.max(
+    0,
+    services.length - visibleServices.length,
+  );
+  const walkingMinutes = Math.max(1, Math.round(stop.distanceMeters / 70));
+  const accessibilityText =
+    recommendation.accessibilityStatus === "AVAILABLE"
+      ? "Accessible route verified"
+      : recommendation.provisional
+        ? "Checking access"
+        : recommendation.accessibilityStatus === "LIMITED_DATA"
+          ? "Access unverified"
+          : recommendation.accessibilityStatus === "UNAVAILABLE"
+            ? "No accessible route"
+            : "Access unverified";
+
+  return (
+    <View
+      testID="recommended-stop-card"
+      onLayout={(event) => onHeightChange(event.nativeEvent.layout.height)}
+      style={[
+        styles.recommendedStopCard,
+        { bottom: navigationInset },
+        {
+          backgroundColor: theme.colors.map.overlaySurfaceElevated,
+          borderColor: theme.colors.map.selectionAccent,
+        },
+        lightMode && lightStyles.surface,
+        highContrast && !lightMode && styles.highContrastControl,
+        highContrast && lightMode && lightStyles.highContrastControl,
+      ]}
+    >
+      <View style={styles.recommendedStopHeader}>
+        <View
+          style={[
+            styles.recommendedStopIcon,
+            {
+              backgroundColor: theme.colors.selectedSurface,
+              borderColor: theme.colors.map.selectionAccent,
+            },
+          ]}
+          accessibilityElementsHidden
+          importantForAccessibility="no"
+        >
+          <MapPinCheck
+            size={27}
+            color={theme.colors.iconSelected}
+            strokeWidth={3}
+          />
+        </View>
+        <View style={styles.flexFill}>
+          <Text
+            style={[
+              styles.recommendedStopEyebrow,
+              { color: theme.colors.textSecondary },
+            ]}
+          >
+            RECOMMENDED
+          </Text>
+          <Text
+            numberOfLines={largeText ? 2 : 1}
+            style={[
+              styles.recommendedStopTitle,
+              largeText && styles.largeBody,
+              { color: theme.colors.textPrimary },
+            ]}
+          >
+            {stop.description}
+          </Text>
+          <Text
+            style={[
+              styles.recommendedStopMeta,
+              { color: theme.colors.textSecondary },
+            ]}
+          >
+            {stop.busStopCode} · {stop.distanceMeters} m · {walkingMinutes} min walk
+          </Text>
+        </View>
+      </View>
+      <View style={styles.recommendedStopServiceRow}>
+        {visibleServices.map((service) => (
+          <View
+            key={service}
+            style={[
+              styles.recommendedStopServiceChip,
+              {
+                backgroundColor: theme.colors.surfaceInteractive,
+                borderColor: theme.colors.borderInteractive,
+              },
+            ]}
+          >
+            <Text
+              style={[
+                styles.recommendedStopServiceText,
+                { color: theme.colors.textPrimary },
+              ]}
+            >
+              {service}
+            </Text>
+          </View>
+        ))}
+        {additionalServiceCount > 0 ? (
+          <Text
+            style={[
+              styles.recommendedStopMeta,
+              { color: theme.colors.textSecondary },
+            ]}
+          >
+            +{additionalServiceCount} more
+          </Text>
+        ) : null}
+      </View>
+      <View style={styles.recommendedStopReasonRow}>
+        <Accessibility
+          size={18}
+          color={theme.colors.actionPrimary}
+          strokeWidth={2.8}
+          accessibilityElementsHidden
+          importantForAccessibility="no"
+        />
+        <Text
+          style={[
+            styles.recommendedStopReason,
+            { color: theme.colors.textSecondary },
+          ]}
+        >
+          {accessibilityText}
+        </Text>
+      </View>
+      <View style={styles.recommendedStopActions}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Choose this stop"
+          onPress={onChoose}
+          style={[
+            styles.recommendedStopPrimaryAction,
+            {
+              backgroundColor: theme.colors.actionPrimary,
+              borderColor: theme.colors.borderSelected,
+            },
+          ]}
+        >
+          <CircleCheck
+            size={21}
+            color={theme.colors.actionPrimaryText}
+            strokeWidth={3}
+          />
+          <Text
+            style={[
+              styles.recommendedStopActionText,
+              { color: theme.colors.actionPrimaryText },
+            ]}
+          >
+            Choose stop
+          </Text>
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Compare nearby bus stops"
+          onPress={onCompare}
+          style={[
+            styles.recommendedStopSecondaryAction,
+            {
+              backgroundColor: theme.colors.surfaceInteractive,
+              borderColor: theme.colors.borderInteractive,
+            },
+          ]}
+        >
+          <Text
+            style={[
+              styles.recommendedStopActionText,
+              { color: theme.colors.actionPrimary },
+            ]}
+          >
+            Compare
+          </Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
 function MapSideControls({
   sheetState,
   sheetContent,
@@ -18140,6 +19376,8 @@ function MapSideControls({
   moreOpen,
   bearingDegrees,
   followState,
+  selectedStop,
+  guidanceActive,
   lightMode,
   highContrast,
   onLocate,
@@ -18153,6 +19391,8 @@ function MapSideControls({
   moreOpen: boolean;
   bearingDegrees: number;
   followState: MapFollowState;
+  selectedStop: NearbyBusStop | null;
+  guidanceActive: boolean;
   lightMode: boolean;
   highContrast: boolean;
   onLocate: () => void;
@@ -18164,10 +19404,10 @@ function MapSideControls({
   const theme = resolveVisualTheme(lightMode, highContrast);
   const mapIsRotated = normalizeBearing(bearingDegrees) !== 0;
   const nearbyActive = nearbyOpen;
-  const controls = [
+  const discoveryControls = [
     {
       key: "locate",
-      label: followState === "FREE" ? "Locate" : "Following",
+      label: followState === "FREE" ? "Locate" : "Follow",
       accessibilityLabel:
         followState === "FOLLOW_USER_HEADING"
           ? "Following my location and heading"
@@ -18194,16 +19434,30 @@ function MapSideControls({
       active: moreOpen,
     },
   ];
+  const controls = guidanceActive
+    ? discoveryControls.slice(0, 1)
+    : selectedStop
+      ? [
+          discoveryControls[0],
+          {
+            ...discoveryControls[1],
+            label: "Change",
+            accessibilityLabel: "Choose a different nearby bus stop",
+          },
+        ]
+      : discoveryControls;
 
   return (
-    <View testID="map-side-control-stack" style={styles.mapSideControls}>
-      <CompassResetControl
-        bearingDegrees={bearingDegrees}
-        prominent={mapIsRotated}
-        lightMode={lightMode}
-        highContrast={highContrast}
-        onPress={onResetHeading}
-      />
+    <View testID="map-side-control-stack" style={[styles.mapSideControls, { left: mapOverlayMargin, width: "auto", flexDirection: "row", alignItems: "stretch" }]}>
+      {mapIsRotated ? (
+        <CompassResetControl
+          bearingDegrees={bearingDegrees}
+          prominent={mapIsRotated}
+          lightMode={lightMode}
+          highContrast={highContrast}
+          onPress={onResetHeading}
+        />
+      ) : null}
       {controls.map(
         ({ key, label, accessibilityLabel, icon: Icon, onPress, active }) => (
           <Pressable
@@ -18224,6 +19478,7 @@ function MapSideControls({
             onPress={onPress}
             style={[
               styles.mapSideControl,
+              { flex: 1, width: undefined, minWidth: 0 },
               {
                 backgroundColor: theme.colors.map.controlSurface,
                 borderColor: theme.colors.map.controlBorder,
@@ -18246,6 +19501,7 @@ function MapSideControls({
                 borderColor: theme.colors.map.selectionAccent,
               },
               runtimeAccessibility.largerControls && styles.largerMapControl,
+              { flexBasis: 0, flexGrow: 1, width: "auto", paddingHorizontal: 6 },
             ]}
           >
             <Icon
@@ -18367,10 +19623,12 @@ function normalizeBearing(bearingDegrees: number) {
 
 function MapLayerQuickControls({
   layers,
+  mapStopDensity,
   selectedStop,
   lightMode,
   highContrast,
   onToggleLayer,
+  onChangeMapStopDensity,
   onResetHeading,
   onRotateMap,
   onResetMap,
@@ -18383,10 +19641,12 @@ function MapLayerQuickControls({
   onClose,
 }: {
   layers: MapLayers;
+  mapStopDensity: MapStopDensity;
   selectedStop: NearbyBusStop | null;
   lightMode: boolean;
   highContrast: boolean;
   onToggleLayer: (layer: MapLayerKey) => void;
+  onChangeMapStopDensity: (density: MapStopDensity) => void;
   onResetHeading: () => void;
   onRotateMap: () => void;
   onResetMap: () => void;
@@ -18398,6 +19658,7 @@ function MapLayerQuickControls({
   hasSelectedDestination: boolean;
   onClose: () => void;
 }) {
+  const navigationInset = useNavigationInset(12);
   const theme = resolveVisualTheme(lightMode, highContrast);
   const announceUnavailable = (reason: string) => {
     AccessibilityInfo.announceForAccessibility(reason);
@@ -18545,6 +19806,7 @@ function MapLayerQuickControls({
     <View
       style={[
         styles.mapMorePanel,
+        { bottom: navigationInset },
         {
           backgroundColor: theme.colors.map.overlaySurfaceElevated,
           borderColor: theme.colors.borderStrong,
@@ -18588,6 +19850,69 @@ function MapLayerQuickControls({
         >
           MAP LAYERS
         </Text>
+        <Pressable
+          accessibilityRole="switch"
+          accessibilityLabel="Show all bus stops"
+          accessibilityHint="Switches between three prioritized stops and all stops in this map area"
+          accessibilityState={{ checked: mapStopDensity === "ALL" }}
+          {...(Platform.OS === "web"
+            ? { "aria-checked": mapStopDensity === "ALL" }
+            : {})}
+          onPress={() =>
+            onChangeMapStopDensity(
+              mapStopDensity === "ALL" ? "PRIORITIZED" : "ALL",
+            )
+          }
+          style={[
+            styles.mapMoreRow,
+            {
+              borderColor: theme.colors.borderDefault,
+              backgroundColor:
+                mapStopDensity === "ALL"
+                  ? theme.colors.selectedSurface
+                  : normalRowSurface,
+            },
+          ]}
+        >
+          <List
+            size={18}
+            color={
+              mapStopDensity === "ALL"
+                ? selectedForeground
+                : theme.colors.iconPrimary
+            }
+            strokeWidth={2.8}
+          />
+          <View style={styles.mapMoreLabelGroup}>
+            <Text
+              style={[
+                styles.mapMoreControlText,
+                {
+                  color:
+                    mapStopDensity === "ALL"
+                      ? selectedForeground
+                      : theme.colors.textPrimary,
+                },
+              ]}
+            >
+              Show all stops
+            </Text>
+            <Text
+              style={[
+                styles.mapMoreReasonText,
+                { color: theme.colors.textSecondary },
+              ]}
+            >
+              {mapStopDensity === "ALL"
+                ? "All regional stops and clusters"
+                : "Recommended stop and two alternatives"}
+            </Text>
+          </View>
+          {renderCompactSwitch({
+            state: mapStopDensity === "ALL" ? "ON" : "OFF",
+            selected: mapStopDensity === "ALL",
+          })}
+        </Pressable>
         {layerRows.map(
           ({
             layer,
@@ -18988,6 +20313,7 @@ function JourneyBottomSheet({
   const { width: sheetViewportWidth } = useWindowDimensions();
   const compactServiceChips = sheetViewportWidth <= 320;
   const numberFirstServiceChips = sheetViewportWidth < 300;
+  const navigationInset = useNavigationInset(0);
   const theme = resolveVisualTheme(lightMode, highContrast);
   const sheetStyle =
     state === "HIDDEN_PEEK"
@@ -19080,6 +20406,7 @@ function JourneyBottomSheet({
     <View
       style={[
         styles.mapBottomSheet,
+        { bottom: navigationInset },
         {
           backgroundColor: theme.colors.map.sheetSurface,
           borderColor: theme.colors.map.sheetBorder,
@@ -20814,6 +22141,8 @@ function NearbySheetState({
 
 type NearbyStopsMapProps = {
   stops: NearbyBusStop[];
+  stopDensity?: MapStopDensity;
+  recommendation?: MapStopRecommendation | null;
   recommendedStopCode?: string;
   selectedStop: NearbyBusStop | null;
   selectedLandmark: MapLandmark | null;
@@ -20870,15 +22199,19 @@ type NearbyStopsMapProps = {
 
 function MapProviderUnavailableState({
   message,
+  stops = [],
   lightMode,
   highContrast,
   onRetryMap,
+  onSelectStop,
   onSelectBusStopManually,
 }: {
   message: string;
+  stops?: NearbyBusStop[];
   lightMode: boolean;
   highContrast: boolean;
   onRetryMap?: () => void;
+  onSelectStop?: (stop: NearbyBusStop) => void;
   onSelectBusStopManually?: () => void;
 }) {
   const theme = resolveVisualTheme(lightMode, highContrast);
@@ -20937,6 +22270,70 @@ function MapProviderUnavailableState({
       >
         {fallbackGuidance}
       </Text>
+      {stops.length > 0 && onSelectStop ? (
+        <View
+          style={styles.offlineStopList}
+          accessibilityLabel="Offline schematic map and nearby stop list"
+        >
+          <Text
+            style={[
+              styles.providerMapUnavailableTitle,
+              { color: theme.colors.textPrimary },
+            ]}
+          >
+            Nearby stops
+          </Text>
+          {stops.slice(0, 3).map((stop, index) => (
+            <Pressable
+              key={stop.busStopCode}
+              accessibilityRole="button"
+              accessibilityLabel={`${index === 0 ? "Recommended" : "Nearby"} bus stop ${stop.description}, stop ${stop.busStopCode}, ${stop.distanceMeters} metres away`}
+              onPress={() => onSelectStop(stop)}
+              style={[
+                styles.offlineStopRow,
+                {
+                  backgroundColor: theme.colors.map.controlSurface,
+                  borderColor: theme.colors.map.controlBorder,
+                },
+              ]}
+            >
+              <View
+                style={[
+                  styles.offlineStopMarker,
+                  { backgroundColor: theme.colors.map.stopRecommended },
+                ]}
+              >
+                <Text
+                  style={{
+                    color: theme.colors.iconSelected,
+                    fontWeight: "900",
+                  }}
+                >
+                  {index + 1}
+                </Text>
+              </View>
+              <View style={styles.flexFill}>
+                <Text
+                  style={[
+                    styles.summaryLabel,
+                    { color: theme.colors.textPrimary },
+                  ]}
+                >
+                  {stop.description}
+                </Text>
+                <Text
+                  style={[
+                    styles.providerMapUnavailableText,
+                    { color: theme.colors.textSecondary },
+                  ]}
+                >
+                  Stop {stop.busStopCode} · {stop.distanceMeters} m
+                </Text>
+              </View>
+            </Pressable>
+          ))}
+        </View>
+      ) : null}
       <View style={styles.providerMapUnavailableActions}>
         {onRetryMap ? (
           <PrimaryButton
@@ -20963,6 +22360,8 @@ function MapProviderUnavailableState({
 
 const NearbyStopsMap = memo(function NearbyStopsMap({
   stops,
+  stopDensity = "ALL",
+  recommendation,
   recommendedStopCode,
   selectedStop,
   currentLocation,
@@ -20991,6 +22390,7 @@ const NearbyStopsMap = memo(function NearbyStopsMap({
   onRetryMap,
   onSelectBusStopManually,
 }: NearbyStopsMapProps) {
+  const presentationSizes = usePresentationSizes();
   const theme = resolveVisualTheme(lightMode, highContrast);
   const openStreetMapProviderConfigured =
     shouldUseOpenStreetMapProvider(showInlineControls);
@@ -21040,9 +22440,11 @@ const NearbyStopsMap = memo(function NearbyStopsMap({
       >
         <MapProviderUnavailableState
           message={mapConfigurationMessage()}
+          stops={selectedStop ? [] : stops}
           lightMode={lightMode}
           highContrast={highContrast}
           onRetryMap={onRetryMap}
+          onSelectStop={onSelectStop}
           onSelectBusStopManually={onSelectBusStopManually}
         />
       </View>
@@ -21066,8 +22468,31 @@ const NearbyStopsMap = memo(function NearbyStopsMap({
       accessibilityLabel={`Nearby bus stop map powered by ${providerLabel}. ${stops.length} stops available.`}
     >
       <JourneyMap
+        presentationSizes={presentationSizes}
         stops={stops}
+        stopDensity={stopDensity}
         recommendedStopCode={recommendedStopCode}
+        recommendedStopCallout={
+          recommendation
+            ? {
+                label:
+                  stops.find(
+                    (stop) => stop.busStopCode === recommendation.stopCode,
+                  )?.description ?? "Recommended stop",
+                distanceLabel: `${
+                  stops.find(
+                    (stop) => stop.busStopCode === recommendation.stopCode,
+                  )?.distanceMeters ?? 0
+                } m`,
+                accessibilitySymbol:
+                  recommendation.accessibilityStatus === "AVAILABLE"
+                    ? "ACCESSIBLE"
+                    : recommendation.provisional
+                      ? "PROVISIONAL"
+                      : "STANDARD",
+              }
+            : undefined
+        }
         selectedStop={selectedStop}
         currentLocation={currentLocation}
         viewport={mapViewport}
@@ -21123,9 +22548,11 @@ const NearbyStopsMap = memo(function NearbyStopsMap({
         fallback={
           <MapProviderUnavailableState
             message={mapConfigurationMessage()}
+            stops={selectedStop ? [] : stops}
             lightMode={lightMode}
             highContrast={highContrast}
             onRetryMap={onRetryMap}
+            onSelectStop={onSelectStop}
             onSelectBusStopManually={onSelectBusStopManually}
           />
         }
@@ -21156,7 +22583,7 @@ function MapCameraDebugOverlay({
   });
 
   return (
-    <View pointerEvents="none" style={styles.mapCameraDebugLayer}>
+    <View style={[styles.mapCameraDebugLayer, { pointerEvents: "none" }]}>
       <View
         style={[
           styles.mapCameraDebugUsableRect,
@@ -21541,6 +22968,7 @@ function TabButton({
   onPress: () => void;
 }) {
   const runtimeAccessibility = useContext(AccessibilityRuntimeContext);
+  const sizes = usePresentationSizes();
   const Icon = appIcon(icon);
   const theme = resolveVisualTheme(lightMode, highContrast);
   const iconColor = tabIconColor({
@@ -21549,7 +22977,7 @@ function TabButton({
     lightMode,
     highContrast,
   });
-  const iconSize = compact ? 27 : 29;
+
   return (
     <Pressable
       accessibilityRole="button"
@@ -21571,6 +22999,7 @@ function TabButton({
       <View
         style={[
           styles.tabIconBadge,
+          { minWidth: sizes.featureContainer, minHeight: sizes.featureContainer, flexShrink: 0 },
           compact && styles.compactTabIconBadge,
           lightMode && lightStyles.tabIconBadge,
           selected && styles.selectedTabIconBadge,
@@ -21590,7 +23019,7 @@ function TabButton({
         ]}
       >
         <Icon
-          size={iconSize}
+          presentationRole="feature"
           color={iconColor}
           strokeWidth={highContrast || selected ? 3 : 2.65}
           accessibilityElementsHidden
@@ -21608,6 +23037,7 @@ function TabButton({
       <Text
         style={[
           styles.tabButtonText,
+          { fontSize: sizes.buttonText, lineHeight: Math.ceil(sizes.buttonText * 1.35) },
           compact && styles.compactTabButtonText,
           runtimeAccessibility.textSize !== "STANDARD" &&
             styles.largeTabButtonText,
@@ -22023,8 +23453,9 @@ function PrimaryButton({
   largerControls?: boolean;
 }) {
   const runtimeAccessibility = useContext(AccessibilityRuntimeContext);
+  const sizes = usePresentationSizes();
   const useLargerControls =
-    largerControls ?? runtimeAccessibility.largerControls;
+    largerControls ?? sizes.enlarged;
   const Icon = icon;
   const theme = resolveVisualTheme(lightMode, highContrast);
   const buttonForeground = disabled
@@ -22047,6 +23478,7 @@ function PrimaryButton({
       onPress={onPress}
       style={[
         styles.primaryButton,
+        { minHeight: sizes.primaryHeight },
         lightMode && lightStyles.primaryButton,
         highContrast && !lightMode && styles.highContrastSelectedControl,
         highContrast && lightMode && lightStyles.highContrastSelectedControl,
@@ -22071,14 +23503,11 @@ function PrimaryButton({
       <Text
         style={[
           styles.primaryButtonText,
+          { fontSize: sizes.buttonText, lineHeight: Math.ceil(sizes.buttonText * 1.35) },
           lightMode && lightStyles.primaryButtonText,
           highContrast && !lightMode && styles.highContrastSelectedText,
           highContrast && lightMode && styles.highContrastSelectedText,
           variant === "attention" && styles.attentionButtonText,
-          runtimeAccessibility.textSize !== "STANDARD" &&
-            styles.largeButtonText,
-          runtimeAccessibility.textSize === "EXTRA_LARGE" &&
-            styles.extraLargeButtonText,
           disabled && styles.disabledButtonText,
           { color: buttonForeground },
         ]}
@@ -22111,8 +23540,9 @@ function SecondaryButton({
   largerControls?: boolean;
 }) {
   const runtimeAccessibility = useContext(AccessibilityRuntimeContext);
+  const sizes = usePresentationSizes();
   const useLargerControls =
-    largerControls ?? runtimeAccessibility.largerControls;
+    largerControls ?? sizes.enlarged;
   const Icon = icon;
   const iconColor = disabled
     ? colors.disabledText
@@ -22135,6 +23565,7 @@ function SecondaryButton({
       onPress={onPress}
       style={[
         styles.secondaryButton,
+        { minHeight: sizes.controlHeight },
         lightMode && lightStyles.secondaryButton,
         variant === "destructive" && styles.destructiveSecondaryButton,
         highContrast && !lightMode && styles.highContrastControl,
@@ -22155,16 +23586,13 @@ function SecondaryButton({
       <Text
         style={[
           styles.secondaryButtonText,
+          { fontSize: sizes.buttonText, lineHeight: Math.ceil(sizes.buttonText * 1.35) },
           lightMode && lightStyles.secondaryButtonText,
           highContrast && !lightMode && styles.highContrastText,
           highContrast && lightMode && lightStyles.highContrastText,
           variant === "destructive" &&
             !highContrast &&
             styles.destructiveSecondaryButtonText,
-          runtimeAccessibility.textSize !== "STANDARD" &&
-            styles.largeButtonText,
-          runtimeAccessibility.textSize === "EXTRA_LARGE" &&
-            styles.extraLargeButtonText,
           disabled && styles.disabledButtonText,
         ]}
       >
@@ -22192,6 +23620,7 @@ function TertiaryButton({
   highContrast?: boolean;
 }) {
   const runtimeAccessibility = useContext(AccessibilityRuntimeContext);
+  const sizes = usePresentationSizes();
   const Icon = icon;
   const theme = resolveVisualTheme(lightMode, highContrast);
   const contentColor = disabled
@@ -22210,6 +23639,7 @@ function TertiaryButton({
       onPress={onPress}
       style={[
         styles.tertiaryButton,
+        { minHeight: sizes.controlHeight },
         lightMode && lightStyles.tertiaryButton,
         highContrast && !lightMode && styles.highContrastControl,
         highContrast && lightMode && lightStyles.highContrastControl,
@@ -22229,13 +23659,10 @@ function TertiaryButton({
       <Text
         style={[
           styles.tertiaryButtonText,
+          { fontSize: sizes.buttonText, lineHeight: Math.ceil(sizes.buttonText * 1.35) },
           lightMode && lightStyles.tertiaryButtonText,
           highContrast && !lightMode && styles.highContrastText,
           highContrast && lightMode && lightStyles.highContrastText,
-          runtimeAccessibility.textSize !== "STANDARD" &&
-            styles.largeButtonText,
-          runtimeAccessibility.textSize === "EXTRA_LARGE" &&
-            styles.extraLargeButtonText,
           disabled && styles.disabledButtonText,
           { color: contentColor },
         ]}
@@ -22525,7 +23952,7 @@ const journeyPlannerService = {
           (b.totalMinutes + b.walkingMinutes * 0.25 + accessibilityBiasB)
         );
       })
-      .slice(0, 4)
+      .slice(0, 3)
       .map((alternative, index) => ({
         ...alternative,
         title: index === 0 ? "Fastest accessible route" : alternative.title,
@@ -22669,6 +24096,9 @@ function buildJourneyAlternative(
     nextBusEtaSeconds: 180 + stopCount * 30,
     accessibilityKnown:
       accessibleKnown && !requirements.wheelchairRamp ? true : accessibleKnown,
+    accessibilityFit: accessibleKnown ? "VERIFIED" : "UNKNOWN",
+    shelterCoverage: "UNVERIFIED",
+    advisories: [],
   };
 }
 
@@ -24324,6 +25754,9 @@ function eventLabel(event: StatusUpdateMessage) {
       .toLowerCase()
       .replaceAll("_", " ")}`;
   }
+  if (event.type === "STOP_VEHICLE_PRESENCE") {
+    return `Service ${event.vehicle.busService}: ${event.vehicle.state.toLowerCase()} at stop ${event.stopCode}`;
+  }
   return `${event.health.deviceType.toLowerCase().replaceAll("_", " ")} status updated`;
 }
 
@@ -24420,7 +25853,11 @@ const styles = StyleSheet.create({
   compactContainer: {
     paddingHorizontal: 16,
     paddingTop: 16,
-    paddingBottom: 132,
+    // Leave enough scroll runway for enlarged actions to clear the fixed tab
+    // bar at narrow widths. This is intentionally larger than the tab bar so
+    // browser zoom and extra-large text cannot strand the final control under
+    // navigation.
+    paddingBottom: 180,
     gap: 16,
   },
   journeyEntryContainer: {
@@ -24605,7 +26042,7 @@ const styles = StyleSheet.create({
     lineHeight: 22,
   },
   compactBrandSubtitle: {
-    fontSize: 13,
+    fontSize: 14,
     lineHeight: 18,
   },
   subtitle: {
@@ -24659,7 +26096,7 @@ const styles = StyleSheet.create({
   },
   defaultsIconLabel: {
     color: colors.metadata,
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: "900",
     letterSpacing: 0.4,
     textTransform: "uppercase",
@@ -24734,7 +26171,7 @@ const styles = StyleSheet.create({
   },
   appearanceCompactLabel: {
     color: colors.metadata,
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: "800",
     lineHeight: 18,
   },
@@ -24911,9 +26348,9 @@ const styles = StyleSheet.create({
   },
   tabIconText: {
     color: colors.text,
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: "900",
-    lineHeight: 16,
+    lineHeight: 19,
     textAlign: "center",
   },
   selectedTabIconText: {
@@ -25012,12 +26449,12 @@ const styles = StyleSheet.create({
   },
   tabSelectedText: {
     color: colors.primaryDark,
-    fontSize: 11,
+    fontSize: 14,
     fontWeight: "800",
   },
   tabUnavailableText: {
     color: "#95A9AE",
-    fontSize: 10,
+    fontSize: 14,
     fontWeight: "800",
     textAlign: "center",
   },
@@ -25460,7 +26897,7 @@ const styles = StyleSheet.create({
   },
   accessibilityPreviewEyebrow: {
     color: colors.metadata,
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: "800",
     letterSpacing: 0.35,
     lineHeight: 17,
@@ -25488,7 +26925,7 @@ const styles = StyleSheet.create({
   },
   accessibilityPreviewChannelText: {
     color: colors.text,
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: "800",
     lineHeight: 18,
   },
@@ -25508,7 +26945,7 @@ const styles = StyleSheet.create({
   },
   accessibilityPreviewStatus: {
     color: colors.metadata,
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: "700",
     lineHeight: 18,
     textAlign: "center",
@@ -25626,7 +27063,7 @@ const styles = StyleSheet.create({
     width: 48,
   },
   preferenceSummaryLabel: {
-    fontSize: 13,
+    fontSize: 14,
     letterSpacing: 0.4,
     lineHeight: 18,
     textTransform: "uppercase",
@@ -25702,7 +27139,7 @@ const styles = StyleSheet.create({
   },
   preferencePresetDescription: {
     color: colors.metadata,
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: "600",
     lineHeight: 18,
   },
@@ -25717,10 +27154,10 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.xs,
   },
   preferencePresetActionText: {
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: "900",
     letterSpacing: 0.25,
-    lineHeight: 16,
+    lineHeight: 19,
     textTransform: "uppercase",
   },
   preferenceCustomizeHeader: {
@@ -25802,7 +27239,7 @@ const styles = StyleSheet.create({
   },
   preferenceSearchResultCategory: {
     color: colors.metadata,
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: "700",
     lineHeight: 18,
   },
@@ -25815,7 +27252,7 @@ const styles = StyleSheet.create({
   },
   preferenceBrowseLabel: {
     color: colors.metadata,
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: "900",
     letterSpacing: 0.3,
     lineHeight: 18,
@@ -25832,7 +27269,7 @@ const styles = StyleSheet.create({
   },
   preferenceCategoryDropdownLabel: {
     color: colors.metadata,
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: "800",
     letterSpacing: 0.35,
     lineHeight: 17,
@@ -25848,7 +27285,7 @@ const styles = StyleSheet.create({
   preferenceCategoryCount: {
     color: colors.metadata,
     flexShrink: 0,
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: "600",
     lineHeight: 18,
   },
@@ -25931,10 +27368,10 @@ const styles = StyleSheet.create({
   },
   preferenceSelectedCategoryEyebrow: {
     color: colors.metadata,
-    fontSize: 11,
+    fontSize: 14,
     fontWeight: "800",
     letterSpacing: 0.7,
-    lineHeight: 15,
+    lineHeight: 19,
     textTransform: "uppercase",
   },
   preferenceSelectedCategoryTitle: {
@@ -25956,7 +27393,7 @@ const styles = StyleSheet.create({
   preferenceGroupCount: {
     color: colors.metadata,
     flexShrink: 0,
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: "800",
     letterSpacing: 0.25,
     lineHeight: 17,
@@ -26038,10 +27475,10 @@ const styles = StyleSheet.create({
   },
   preferenceChoiceType: {
     color: colors.metadata,
-    fontSize: 11,
+    fontSize: 14,
     fontWeight: "800",
     letterSpacing: 0.3,
-    lineHeight: 15,
+    lineHeight: 19,
     textTransform: "uppercase",
   },
   textSizePreview: {
@@ -26054,10 +27491,10 @@ const styles = StyleSheet.create({
   },
   textSizePreviewEyebrow: {
     color: colors.metadata,
-    fontSize: 11,
+    fontSize: 14,
     fontWeight: "800",
     letterSpacing: 0.4,
-    lineHeight: 15,
+    lineHeight: 19,
     textTransform: "uppercase",
   },
   textSizePreviewText: {
@@ -26066,7 +27503,7 @@ const styles = StyleSheet.create({
   },
   textSizePreviewNote: {
     color: colors.metadata,
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: "700",
     lineHeight: 17,
   },
@@ -26086,10 +27523,10 @@ const styles = StyleSheet.create({
   },
   preferenceSectionHeadingEyebrow: {
     color: colors.metadata,
-    fontSize: 11,
+    fontSize: 14,
     fontWeight: "800",
     letterSpacing: 0.65,
-    lineHeight: 15,
+    lineHeight: 19,
     textTransform: "uppercase",
   },
   preferenceSectionHeading: {
@@ -26370,7 +27807,7 @@ const styles = StyleSheet.create({
   },
   searchGroupLabel: {
     color: colors.metadata,
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: "900",
     textTransform: "uppercase",
   },
@@ -26513,8 +27950,118 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 7,
     justifyContent: "center",
-    minHeight: 44,
+    minHeight: 48,
     paddingHorizontal: 16,
+  },
+  recommendedStopCard: {
+    borderRadius: 18,
+    borderWidth: 2,
+    bottom: bottomNavigationHeight + mapOverlayMargin,
+    gap: 9,
+    left: mapOverlayMargin,
+    padding: 14,
+    position: "absolute",
+    right: mapOverlayMargin,
+    zIndex: mapLayerZ.sheet,
+  },
+  recommendedStopHeader: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 11,
+    minWidth: 0,
+  },
+  recommendedStopIcon: {
+    alignItems: "center",
+    borderRadius: 14,
+    borderWidth: 2,
+    height: 56,
+    justifyContent: "center",
+    width: 56,
+  },
+  recommendedStopEyebrow: {
+    fontSize: 16,
+    fontWeight: "900",
+    letterSpacing: 0.7,
+    lineHeight: 19,
+  },
+  recommendedStopTitle: {
+    fontSize: 20,
+    fontWeight: "900",
+    lineHeight: 24,
+  },
+  recommendedStopMeta: {
+    fontSize: 16,
+    fontWeight: "800",
+    lineHeight: 22,
+  },
+  recommendedStopServiceRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 6,
+  },
+  recommendedStopServiceChip: {
+    borderRadius: 999,
+    borderWidth: 1,
+    minHeight: 30,
+    minWidth: 40,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  recommendedStopServiceText: {
+    fontSize: 16,
+    fontWeight: "900",
+    lineHeight: 22,
+    textAlign: "center",
+  },
+  recommendedStopReasonRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 7,
+  },
+  recommendedStopReason: {
+    flex: 1,
+    fontSize: 16,
+    fontWeight: "800",
+    lineHeight: 22,
+  },
+  recommendedStopActions: {
+    alignItems: "stretch",
+    flexDirection: "row",
+    gap: 8,
+  },
+  recommendedStopPrimaryAction: {
+    alignItems: "center",
+    borderRadius: 14,
+    borderWidth: 2,
+    flex: 1,
+    flexDirection: "row",
+    gap: 7,
+    justifyContent: "center",
+    minHeight: 64,
+    minWidth: 0,
+    paddingHorizontal: 9,
+    paddingVertical: 8,
+  },
+  recommendedStopSecondaryAction: {
+    alignItems: "center",
+    borderRadius: 14,
+    borderWidth: 2,
+    flex: 1,
+    flexDirection: "row",
+    gap: 7,
+    justifyContent: "center",
+    minHeight: 52,
+    minWidth: 0,
+    paddingHorizontal: 9,
+    paddingVertical: 8,
+  },
+  recommendedStopActionText: {
+    flexShrink: 1,
+    fontSize: 18,
+    fontWeight: "900",
+    lineHeight: 19,
+    textAlign: "center",
   },
   regionalStopsStatus: {
     alignItems: "center",
@@ -26534,7 +28081,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     flexDirection: "row",
     gap: 5,
-    minHeight: 44,
+    minHeight: 48,
     paddingHorizontal: 4,
   },
   mapBackButton: {
@@ -26555,7 +28102,7 @@ const styles = StyleSheet.create({
   },
   mapFirstSubtitle: {
     color: colors.metadata,
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: "800",
     lineHeight: 17,
     marginBottom: 8,
@@ -26625,7 +28172,7 @@ const styles = StyleSheet.create({
   },
   quickDestinationText: {
     color: colors.text,
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: "900",
     lineHeight: 17,
   },
@@ -26724,10 +28271,15 @@ const styles = StyleSheet.create({
     minHeight: 56,
     paddingBottom: 5,
     paddingTop: 4,
-    shadowColor: "#000000",
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.22,
-    shadowRadius: 5,
+    ...Platform.select({
+      web: { boxShadow: "0 3px 5px rgba(0, 0, 0, 0.22)" },
+      default: {
+        shadowColor: "#000000",
+        shadowOffset: { width: 0, height: 3 },
+        shadowOpacity: 0.22,
+        shadowRadius: 5,
+      },
+    }),
     width: 56,
   },
   subtleMapCompassControl: {
@@ -26737,7 +28289,7 @@ const styles = StyleSheet.create({
     color: colors.text,
     fontSize: 14,
     fontWeight: "900",
-    lineHeight: 15,
+    lineHeight: 19,
     textAlign: "center",
   },
   mapCompassDial: {
@@ -26815,9 +28367,9 @@ const styles = StyleSheet.create({
   },
   mapSideControlText: {
     color: colors.text,
-    fontSize: 11,
+fontSize: 16,
     fontWeight: "800",
-    lineHeight: 14,
+    lineHeight: 21,
     textAlign: "center",
   },
   mapMorePanel: {
@@ -26848,9 +28400,9 @@ const styles = StyleSheet.create({
   },
   mapMoreCloseButton: {
     alignItems: "center",
-    height: 36,
+    height: 48,
     justifyContent: "center",
-    width: 36,
+    width: 48,
   },
   mapMoreTitle: {
     color: colors.text,
@@ -26861,10 +28413,10 @@ const styles = StyleSheet.create({
   },
   mapMoreSectionTitle: {
     color: colors.metadata,
-    fontSize: 10,
+    fontSize: 14,
     fontWeight: "900",
     letterSpacing: 0,
-    lineHeight: 13,
+    lineHeight: 19,
     paddingHorizontal: 4,
     paddingTop: 3,
   },
@@ -26880,7 +28432,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     flexDirection: "row",
     gap: 8,
-    minHeight: 44,
+    minHeight: 48,
     paddingHorizontal: 8,
     paddingVertical: 3,
   },
@@ -26897,15 +28449,15 @@ const styles = StyleSheet.create({
   },
   mapMoreControlText: {
     color: colors.text,
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: "900",
-    lineHeight: 16,
+    lineHeight: 19,
   },
   mapMoreReasonText: {
     color: colors.metadata,
-    fontSize: 11,
+    fontSize: 14,
     fontWeight: "700",
-    lineHeight: 14,
+    lineHeight: 19,
   },
   mapMoreStateText: {
     color: colors.metadata,
@@ -26934,9 +28486,9 @@ const styles = StyleSheet.create({
     opacity: 0.82,
   },
   mapMoreSwitchText: {
-    fontSize: 10,
+    fontSize: 14,
     fontWeight: "900",
-    lineHeight: 13,
+    lineHeight: 19,
   },
   mapMoreSwitchKnob: {
     borderRadius: 6,
@@ -27126,9 +28678,9 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   routingAttribution: {
-    fontSize: 11,
+    fontSize: 14,
     fontWeight: "800",
-    lineHeight: 16,
+    lineHeight: 19,
     minHeight: 24,
     textDecorationLine: "underline",
   },
@@ -27242,7 +28794,7 @@ const styles = StyleSheet.create({
   },
   mapMetaText: {
     color: colors.metadata,
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: "800",
   },
   providerMapUnavailable: {
@@ -27274,6 +28826,28 @@ const styles = StyleSheet.create({
     gap: 8,
     marginTop: 6,
   },
+  offlineStopList: {
+    alignSelf: "stretch",
+    gap: 8,
+    marginTop: 4,
+  },
+  offlineStopRow: {
+    alignItems: "center",
+    borderRadius: 10,
+    borderWidth: 1,
+    flexDirection: "row",
+    gap: 10,
+    minHeight: 56,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+  },
+  offlineStopMarker: {
+    alignItems: "center",
+    borderRadius: 22,
+    height: 44,
+    justifyContent: "center",
+    width: 44,
+  },
   mapCameraDebugLayer: {
     bottom: 0,
     left: 0,
@@ -27298,10 +28872,10 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(0, 0, 0, 0.74)",
     borderRadius: 6,
     color: "#FFFFFF",
-    fontSize: 11,
+    fontSize: 14,
     fontWeight: "800",
     left: 12,
-    lineHeight: 15,
+    lineHeight: 19,
     paddingHorizontal: 8,
     paddingVertical: 6,
     position: "absolute",
@@ -27361,7 +28935,7 @@ const styles = StyleSheet.create({
   },
   landmarkIconText: {
     color: colors.metadata,
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: "900",
   },
   landmarkLabel: {
@@ -27448,7 +29022,7 @@ const styles = StyleSheet.create({
   },
   mapControlText: {
     color: colors.text,
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: "900",
     textAlign: "center",
   },
@@ -27485,7 +29059,7 @@ const styles = StyleSheet.create({
   },
   layerControlText: {
     color: colors.text,
-    fontSize: 11,
+    fontSize: 14,
     fontWeight: "900",
   },
   activeLayerControlText: {
@@ -27504,7 +29078,7 @@ const styles = StyleSheet.create({
   },
   mapScaleText: {
     color: colors.metadata,
-    fontSize: 10,
+    fontSize: 14,
     fontWeight: "800",
   },
   nearbyStopsList: {
@@ -27543,7 +29117,7 @@ const styles = StyleSheet.create({
   },
   selectedStopServicePillText: {
     color: colors.primary,
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: "900",
     lineHeight: 17,
   },
@@ -27671,7 +29245,7 @@ const styles = StyleSheet.create({
   },
   etaLabel: {
     color: colors.textOnWarning,
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: "900",
   },
   destinationText: {
@@ -27790,10 +29364,85 @@ const styles = StyleSheet.create({
   buttonPressed: {
     opacity: 0.82,
   },
+  flexFill: {
+    flex: 1,
+  },
+  focusedStopEntryCard: {
+    backgroundColor: colors.surface,
+    borderColor: colors.primary,
+    borderRadius: 18,
+    borderWidth: 2,
+    gap: spacing.md,
+    padding: spacing.lg,
+  },
+  focusedStopEntryHeading: {
+    alignItems: "flex-start",
+    flexDirection: "row",
+    flexWrap: "nowrap",
+    gap: spacing.md,
+  },
   focusedAssistPanel: {
     backgroundColor: colors.surface,
     borderColor: colors.border,
     borderRadius: 18,
+    borderWidth: 2,
+    gap: spacing.md,
+    padding: spacing.lg,
+  },
+  focusedAssistBusVisual: {
+    alignItems: "center",
+    borderColor: "#86A7AD",
+    borderRadius: 18,
+    borderWidth: 2,
+    flexDirection: "row",
+    gap: spacing.md,
+    minHeight: 140,
+    overflow: "hidden",
+    padding: spacing.lg,
+    position: "relative",
+  },
+  focusedAssistBusVisualHighContrast: {
+    borderColor: "#FFFF00",
+    borderWidth: 4,
+  },
+  focusedAssistBusVisualRoad: {
+    backgroundColor: "#86C5DA",
+    bottom: 0,
+    height: 12,
+    left: 0,
+    position: "absolute",
+    right: 0,
+  },
+  focusedAssistBusVisualIcon: {
+    alignItems: "center",
+    backgroundColor: "#FFFFFF",
+    borderColor: "#0B6670",
+    borderRadius: 18,
+    borderWidth: 3,
+    height: 94,
+    justifyContent: "center",
+    width: 104,
+  },
+  focusedAssistBusVisualCopy: {
+    flex: 1,
+    gap: spacing.xs,
+  },
+  focusedAssistBusVisualStatus: {
+    color: "#0B6670",
+    fontSize: 16,
+    fontWeight: "900",
+    letterSpacing: 1.1,
+  },
+  focusedAssistBusVisualService: {
+    color: colors.text,
+    fontSize: 25,
+    fontWeight: "900",
+    lineHeight: 32,
+  },
+  focusedAssistConfirmation: {
+    backgroundColor: colors.surfaceSecondary,
+    borderColor: colors.primary,
+    borderRadius: 16,
     borderWidth: 2,
     gap: spacing.md,
     padding: spacing.lg,
@@ -27886,8 +29535,8 @@ const styles = StyleSheet.create({
   },
   focusedAssistDiagnostic: {
     color: colors.metadata,
-    fontSize: 12,
-    lineHeight: 16,
+    fontSize: 14,
+    lineHeight: 19,
     textAlign: "center",
   },
   focusedAssistBusChoice: {
@@ -27898,6 +29547,9 @@ const styles = StyleSheet.create({
     gap: spacing.xs,
     minHeight: 88,
     padding: spacing.md,
+  },
+  focusedAssistBusChoiceDiagram: {
+    marginBottom: spacing.sm,
   },
   focusedAssistHighContrastChoice: {
     borderColor: "#FFFFFF",
@@ -27930,9 +29582,14 @@ const styles = StyleSheet.create({
     borderColor: "#B42318",
   },
   focusedAssistStatusLight: {
-    shadowColor: "#000000",
-    shadowOpacity: 0.08,
-    shadowRadius: 4,
+    ...Platform.select({
+      web: { boxShadow: "0 2px 4px rgba(0, 0, 0, 0.08)" },
+      default: {
+        shadowColor: "#000000",
+        shadowOpacity: 0.08,
+        shadowRadius: 4,
+      },
+    }),
   },
   focusedAssistStatusHighContrast: {
     borderColor: "#000000",
@@ -28267,23 +29924,6 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     height: 28,
     width: 22,
-  },
-  audioWaveGroup: {
-    flexDirection: "row",
-    gap: 5,
-    marginHorizontal: 6,
-  },
-  audioWave: {
-    borderRadius: 12,
-    borderRightWidth: 3,
-    height: 30,
-    width: 10,
-  },
-  audioWaveWide: {
-    borderRadius: 16,
-    borderRightWidth: 3,
-    height: 42,
-    width: 14,
   },
   journeyProgressVisual: {
     alignItems: "center",

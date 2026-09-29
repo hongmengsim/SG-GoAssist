@@ -1,0 +1,330 @@
+{
+  "static_intersections": [
+    {
+      "a": "18_laser_carrier:1",
+      "b": "19_laser_collar:1",
+      "mm3": 29.097
+    },
+    {
+      "a": "18_laser_carrier:2",
+      "b": "19_laser_collar:2",
+      "mm3": 29.097
+    },
+    {
+      "a": "18_laser_carrier:3",
+      "b": "19_laser_collar:3",
+      "mm3": 29.097
+    }
+  ],
+  "tests": [
+    {
+      "test": "03_roof_rear:1 lift 3",
+      "hits": []
+    },
+    {
+      "test": "03_roof_rear:1 lift 6",
+      "hits": []
+    },
+    {
+      "test": "03_roof_rear:1 lift 12",
+      "hits": []
+    },
+    {
+      "test": "03_roof_rear:1 lift 25",
+      "hits": []
+    },
+    {
+      "test": "03_roof_rear:1 lift 45",
+      "hits": []
+    },
+    {
+      "test": "03_roof_rear:1 lift 60",
+      "hits": []
+    },
+    {
+      "test": "03_roof_rear:1 lift 70",
+      "hits": []
+    },
+    {
+      "test": "04_roof_front:1 lift 3",
+      "hits": []
+    },
+    {
+      "test": "04_roof_front:1 lift 6",
+      "hits": []
+    },
+    {
+      "test": "04_roof_front:1 lift 12",
+      "hits": []
+    },
+    {
+      "test": "04_roof_front:1 lift 25",
+      "hits": []
+    },
+    {
+      "test": "04_roof_front:1 lift 45",
+      "hits": []
+    },
+    {
+      "test": "04_roof_front:1 lift 60",
+      "hits": []
+    },
+    {
+      "test": "04_roof_front:1 lift 70",
+      "hits": []
+    },
+    {
+      "test": "10_breadboard_tray:1 lift 3",
+      "hits": []
+    },
+    {
+      "test": "10_breadboard_tray:1 lift 6",
+      "hits": []
+    },
+    {
+      "test": "10_breadboard_tray:1 lift 12",
+      "hits": []
+    },
+    {
+      "test": "10_breadboard_tray:1 lift 25",
+      "hits": []
+    },
+    {
+      "test": "10_breadboard_tray:1 lift 45",
+      "hits": []
+    },
+    {
+      "test": "10_breadboard_tray:1 lift 60",
+      "hits": []
+    },
+    {
+      "test": "10_breadboard_tray:1 lift 70",
+      "hits": []
+    },
+    {
+      "test": "11_controller_tray:1 lift 3",
+      "hits": []
+    },
+    {
+      "test": "11_controller_tray:1 lift 6",
+      "hits": []
+    },
+    {
+      "test": "11_controller_tray:1 lift 12",
+      "hits": []
+    },
+    {
+      "test": "11_controller_tray:1 lift 25",
+      "hits": []
+    },
+    {
+      "test": "11_controller_tray:1 lift 45",
+      "hits": []
+    },
+    {
+      "test": "11_controller_tray:1 lift 60",
+      "hits": []
+    },
+    {
+      "test": "11_controller_tray:1 lift 70",
+      "hits": []
+    },
+    {
+      "test": "L1 tilt 40",
+      "hits": []
+    },
+    {
+      "test": "L1 tilt 45",
+      "hits": []
+    },
+    {
+      "test": "L1 tilt 50",
+      "hits": []
+    },
+    {
+      "test": "L1 tilt 55",
+      "hits": []
+    },
+    {
+      "test": "L1 tilt 60",
+      "hits": []
+    },
+    {
+      "test": "L1 tilt 65",
+      "hits": []
+    },
+    {
+      "test": "L1 tilt 70",
+      "hits": []
+    },
+    {
+      "test": "L1 tilt 75",
+      "hits": []
+    },
+    {
+      "test": "L1 tilt 80",
+      "hits": []
+    },
+    {
+      "test": "L1 tilt 85",
+      "hits": []
+    },
+    {
+      "test": "L2 tilt 40",
+      "hits": []
+    },
+    {
+      "test": "L2 tilt 45",
+      "hits": []
+    },
+    {
+      "test": "L2 tilt 50",
+      "hits": []
+    },
+    {
+      "test": "L2 tilt 55",
+      "hits": []
+    },
+    {
+      "test": "L2 tilt 60",
+      "hits": []
+    },
+    {
+      "test": "L2 tilt 65",
+      "hits": []
+    },
+    {
+      "test": "L2 tilt 70",
+      "hits": []
+    },
+    {
+      "test": "L2 tilt 75",
+      "hits": []
+    },
+    {
+      "test": "L2 tilt 80",
+      "hits": []
+    },
+    {
+      "test": "L2 tilt 85",
+      "hits": []
+    },
+    {
+      "test": "L3 tilt 40",
+      "hits": []
+    },
+    {
+      "test": "L3 tilt 45",
+      "hits": []
+    },
+    {
+      "test": "L3 tilt 50",
+      "hits": []
+    },
+    {
+      "test": "L3 tilt 55",
+      "hits": []
+    },
+    {
+      "test": "L3 tilt 60",
+      "hits": []
+    },
+    {
+      "test": "L3 tilt 65",
+      "hits": []
+    },
+    {
+      "test": "L3 tilt 70",
+      "hits": []
+    },
+    {
+      "test": "L3 tilt 75",
+      "hits": []
+    },
+    {
+      "test": "L3 tilt 80",
+      "hits": []
+    },
+    {
+      "test": "L3 tilt 85",
+      "hits": []
+    },
+    {
+      "test": "03_roof_rear:1 outward removal 5",
+      "hits": []
+    },
+    {
+      "test": "03_roof_rear:1 outward removal 15",
+      "hits": []
+    },
+    {
+      "test": "03_roof_rear:1 outward removal 35",
+      "hits": []
+    },
+    {
+      "test": "03_roof_rear:1 outward removal 50",
+      "hits": []
+    },
+    {
+      "test": "03_roof_rear:1 outward removal 100",
+      "hits": []
+    },
+    {
+      "test": "03_roof_rear:1 outward removal 160",
+      "hits": []
+    },
+    {
+      "test": "04_roof_front:1 outward removal 5",
+      "hits": []
+    },
+    {
+      "test": "04_roof_front:1 outward removal 15",
+      "hits": []
+    },
+    {
+      "test": "04_roof_front:1 outward removal 35",
+      "hits": []
+    },
+    {
+      "test": "04_roof_front:1 outward removal 50",
+      "hits": []
+    },
+    {
+      "test": "04_roof_front:1 outward removal 100",
+      "hits": []
+    },
+    {
+      "test": "04_roof_front:1 outward removal 160",
+      "hits": []
+    },
+    {
+      "test": "camera Y -30",
+      "hits": []
+    },
+    {
+      "test": "camera Y -20",
+      "hits": []
+    },
+    {
+      "test": "camera Y -10",
+      "hits": []
+    },
+    {
+      "test": "camera Y 0",
+      "hits": []
+    },
+    {
+      "test": "camera Y 10",
+      "hits": []
+    },
+    {
+      "test": "breadboard_clearance",
+      "hits": []
+    },
+    {
+      "test": "controller_clearance",
+      "hits": []
+    }
+  ],
+  "body_instances": 61
+}

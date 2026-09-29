@@ -29,7 +29,8 @@ import { getBusesByService, mockBuses } from "../data/buses.mock";
 export const router = Router();
 
 router.get("/buses/mock", (req: Request, res: Response) => {
-  const service = typeof req.query.service === "string" ? req.query.service : undefined;
+  const service =
+    typeof req.query.service === "string" ? req.query.service : undefined;
   const buses = service ? getBusesByService(service) : mockBuses;
 
   res.json({
@@ -51,7 +52,7 @@ router.post("/simulator/command", (req: Request, res: Response) => {
 });
 
 router.post("/simulator/vehicle", (req: Request, res: Response) => {
-  const { busId, status } = req.body;
+  const { busId, status, busService, stopCode } = req.body;
 
   if (!busId || !Object.values(VehicleStatus).includes(status)) {
     return res.status(400).json({
@@ -61,7 +62,7 @@ router.post("/simulator/vehicle", (req: Request, res: Response) => {
     });
   }
 
-  const result = processVehicleCommand({ busId, status });
+  const result = processVehicleCommand({ busId, status, busService, stopCode });
   res.status(result.success ? 200 : 409).json(result);
 });
 
@@ -73,7 +74,7 @@ router.post("/request", (req: Request, res: Response) => {
       !payload.busService ||
       !payload.busId ||
       !payload.boardingStop ||
-      !payload.destination ||
+      (payload.boardingOrAlighting === "ALIGHTING" && !payload.destination) ||
       !Array.isArray(payload.assistanceTypes) ||
       payload.assistanceTypes.length === 0 ||
       !payload.boardingOrAlighting
@@ -84,14 +85,18 @@ router.post("/request", (req: Request, res: Response) => {
           "busService",
           "busId",
           "boardingStop",
-          "destination",
           "assistanceTypes",
           "boardingOrAlighting",
+          ...(payload.boardingOrAlighting === "ALIGHTING"
+            ? ["destination"]
+            : []),
         ],
       });
     }
 
-    const invalidTypes = payload.assistanceTypes.filter((type) => !isAssistanceType(type));
+    const invalidTypes = payload.assistanceTypes.filter(
+      (type) => !isAssistanceType(type),
+    );
     if (invalidTypes.length > 0) {
       return res.status(400).json({
         error: "Unsupported assistance type",
@@ -120,7 +125,8 @@ router.post("/request", (req: Request, res: Response) => {
         assistanceTypes: payload.assistanceTypes,
         boardingOrAlighting: payload.boardingOrAlighting,
         source: payload.source ?? "MOBILE_APP",
-        accessibilityVerificationStatus: payload.accessibilityVerificationStatus,
+        accessibilityVerificationStatus:
+          payload.accessibilityVerificationStatus,
         verificationMethod: payload.verificationMethod,
       });
 
@@ -151,65 +157,71 @@ router.post("/request", (req: Request, res: Response) => {
   }
 });
 
-router.post("/hardware/physical-button/wheelchair-ramp", async (req: Request, res: Response) => {
-  try {
-    const payload: PhysicalButtonRequestPayload = req.body;
+router.post(
+  "/hardware/physical-button/wheelchair-ramp",
+  async (req: Request, res: Response) => {
+    try {
+      const payload: PhysicalButtonRequestPayload = req.body;
 
-    if (!payload.busId || !payload.busService) {
-      return res.status(400).json({
-        error: "Missing required fields",
-        required: ["busId", "busService"],
+      if (!payload.busId || !payload.busService) {
+        return res.status(400).json({
+          error: "Missing required fields",
+          required: ["busId", "busService"],
+          feedback: {
+            led: "ERROR_BLINK",
+            message: "Request missing bus identifier.",
+          },
+        });
+      }
+
+      const { request, duplicateOfRequestId } =
+        createStandardizedAssistanceRequest({
+          sessionId: `PHYSICAL_BUTTON:${payload.busId}`,
+          busId: payload.busId,
+          busService: payload.busService,
+          boardingStop: payload.boardingStop,
+          assistanceType: "WHEELCHAIR_RAMP",
+          source: "PHYSICAL_BUTTON",
+        });
+
+      const acknowledgedRequest = await waitForRequestStatus(
+        request.requestId,
+        AssistanceRequestStatus.ACKNOWLEDGED,
+        2000,
+      );
+      const status = acknowledgedRequest?.status ?? request.status;
+
+      const response: PhysicalButtonRequestResponse = {
+        requestId: request.requestId,
+        caseId: request.caseId,
+        status,
+        source: "PHYSICAL_BUTTON",
+        duplicateOfRequestId,
+        feedback: {
+          led: status === "ACKNOWLEDGED" ? "CONFIRMATION_ON" : "ERROR_BLINK",
+          buzzer: status === "ACKNOWLEDGED" ? "SHORT_CONFIRMATION" : undefined,
+          message:
+            status === "ACKNOWLEDGED"
+              ? `Bus ${request.busService} acknowledged wheelchair ramp request.`
+              : `Bus ${request.busService} request sent, acknowledgement pending.`,
+        },
+      };
+
+      res.status(duplicateOfRequestId ? 200 : 201).json(response);
+    } catch (error) {
+      logger.error("Physical button request failed", undefined, {
+        error: String(error),
+      });
+      res.status(400).json({
+        error: "Unable to create physical assistance request",
         feedback: {
           led: "ERROR_BLINK",
-          message: "Request missing bus identifier.",
+          message: "Unable to send wheelchair ramp request.",
         },
       });
     }
-
-    const { request, duplicateOfRequestId } = createStandardizedAssistanceRequest({
-      sessionId: `PHYSICAL_BUTTON:${payload.busId}`,
-      busId: payload.busId,
-      busService: payload.busService,
-      boardingStop: payload.boardingStop,
-      assistanceType: "WHEELCHAIR_RAMP",
-      source: "PHYSICAL_BUTTON",
-    });
-
-    const acknowledgedRequest = await waitForRequestStatus(
-      request.requestId,
-      AssistanceRequestStatus.ACKNOWLEDGED,
-      2000
-    );
-    const status = acknowledgedRequest?.status ?? request.status;
-
-    const response: PhysicalButtonRequestResponse = {
-      requestId: request.requestId,
-      caseId: request.caseId,
-      status,
-      source: "PHYSICAL_BUTTON",
-      duplicateOfRequestId,
-      feedback: {
-        led: status === "ACKNOWLEDGED" ? "CONFIRMATION_ON" : "ERROR_BLINK",
-        buzzer: status === "ACKNOWLEDGED" ? "SHORT_CONFIRMATION" : undefined,
-        message:
-          status === "ACKNOWLEDGED"
-            ? `Bus ${request.busService} acknowledged wheelchair ramp request.`
-            : `Bus ${request.busService} request sent, acknowledgement pending.`,
-      },
-    };
-
-    res.status(duplicateOfRequestId ? 200 : 201).json(response);
-  } catch (error) {
-    logger.error("Physical button request failed", undefined, { error: String(error) });
-    res.status(400).json({
-      error: "Unable to create physical assistance request",
-      feedback: {
-        led: "ERROR_BLINK",
-        message: "Unable to send wheelchair ramp request.",
-      },
-    });
-  }
-});
+  },
+);
 
 router.post("/:requestId/cancel", (req: Request, res: Response) => {
   const result = cancelRequest(req.params.requestId);
@@ -237,7 +249,8 @@ router.get("/:requestId/logs", (req: Request, res: Response) => {
     metrics: {
       timeToAcknowledgeMs:
         request.acknowledgedAt && request.createdAt
-          ? new Date(request.acknowledgedAt).getTime() - new Date(request.createdAt).getTime()
+          ? new Date(request.acknowledgedAt).getTime() -
+            new Date(request.createdAt).getTime()
           : undefined,
     },
   });

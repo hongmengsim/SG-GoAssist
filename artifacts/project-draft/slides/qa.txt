@@ -1,0 +1,7 @@
+QA completed 25 September 2026.
+Final deck: output/project-draft/SG_GoAssist_Project_Presentation_Draft.pptx
+16 slides, 10 native editable tables, 16 speaker-note parts. All 16 final-import renders inspected individually at 1280 x 720.
+Artifact finalizer passed package integrity, declared layout checks, Arial font policy and first-party reimport.
+Eight conservative geometry warnings reviewed against full-size renders. No unintended clipping or overlap visible. Blanks in validation, feedback, costs, evidence links, names and demonstration result are intentional.
+Native PowerPoint/Google Slides interaction was not tested. CAD pictures are embedded raster source images; all text and tables are editable native objects.
+Source citations and evidence limitations appear in notes and relevant slide content.

@@ -1,0 +1,15 @@
+{
+  "nominal_dimensions_mm": {
+    "length": 5500,
+    "width": 2050,
+    "height": 2650,
+    "wheelbase": 3800
+  },
+  "body_count": 112,
+  "timeline_features": 344,
+  "detail_basis": "Photographic exterior approximation. Opaque glazing; no engineered interior. Sensors and trim may exceed nominal envelope.",
+  "warnings": [],
+  "invalid_bodies": [],
+  "feature_warnings": [],
+  "rear_skirt_segments_repaired": 2
+}

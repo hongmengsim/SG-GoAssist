@@ -1,0 +1,135 @@
+{
+  "invalid_bodies": [],
+  "feature_warnings": [],
+  "named_positions": {
+    "Travel": {
+      "Door front plug": 0,
+      "Door rear plug": 0,
+      "Door front slide": 0,
+      "Door rear slide": 0,
+      "Ramp slide": 0,
+      "Ramp lift": 0,
+      "Ramp hinge": 0,
+      "Bridge hinge": 1.3962634015954636
+    },
+    "Doors Open": {
+      "Door front plug": 70.0,
+      "Door rear plug": 70.0,
+      "Door front slide": -570.0,
+      "Door rear slide": 570.0,
+      "Ramp slide": 0,
+      "Ramp lift": 0,
+      "Ramp hinge": 0,
+      "Bridge hinge": 1.3962634015954636
+    },
+    "Ramp Extended": {
+      "Door front plug": 70.0,
+      "Door rear plug": 70.0,
+      "Door front slide": -570.0,
+      "Door rear slide": 570.0,
+      "Ramp slide": 1825.0,
+      "Ramp lift": 0,
+      "Ramp hinge": 0,
+      "Bridge hinge": 1.3962634015954636
+    },
+    "Boarding Ready": {
+      "Door front plug": 70.0,
+      "Door rear plug": 70.0,
+      "Door front slide": -570.0,
+      "Door rear slide": 570.0,
+      "Ramp slide": 1825.0,
+      "Ramp lift": 75.0,
+      "Ramp hinge": -0.11134101434096388,
+      "Bridge hinge": 0
+    }
+  },
+  "dimensions_mm": {
+    "ramp_body_bbox": [
+      900.0,
+      1800.0,
+      35.0
+    ],
+    "ramp_root_top": [
+      3000.0,
+      1024.9999999999998,
+      350.0
+    ],
+    "ramp_tip_top": [
+      3000.0,
+      2813.854382727434,
+      150.00000650787658
+    ],
+    "curb_leading_y": 2813.8543819998317,
+    "actual_tip_vertex": [
+      3450.0,
+      2813.8543827274325,
+      150.00000650787666
+    ]
+  },
+  "parameter_checks": [
+    {
+      "name": "rampWidth",
+      "tested_mm": 901,
+      "value_mm": 901.0000000000001,
+      "measured_width_mm": 901.0000000000002
+    },
+    {
+      "name": "doorWidth",
+      "tested_mm": 1101,
+      "value_mm": 1101.0,
+      "measured_sketch_dimension_mm": 1101.0
+    },
+    {
+      "name": "doorHeight",
+      "tested_mm": 2001,
+      "value_mm": 2001.0000000000002,
+      "measured_sketch_dimension_mm": 2001.0000000000002
+    },
+    {
+      "name": "curbHeight",
+      "tested_mm": 151,
+      "value_mm": 151.0,
+      "measured_height_mm": 151.0
+    }
+  ],
+  "solid_count": 189,
+  "timeline_features": 855,
+  "joint_count": 8,
+  "actual_hinge_degrees": -6.37937,
+  "entrance_passage_check": {
+    "state": "Boarding Ready",
+    "upper_probe_mm": {
+      "x": [
+        2450.1,
+        3549.9
+      ],
+      "y": [
+        1000,
+        1024
+      ],
+      "z": [
+        400.1,
+        2349.9
+      ]
+    },
+    "lower_walking_strip_mm": {
+      "x": [
+        2565.1,
+        3434.9
+      ],
+      "y": [
+        1000,
+        1024
+      ],
+      "z": [
+        350.1,
+        400.1
+      ]
+    },
+    "note": "Ramp hinge and lift-bearing hardware occupies the lower side margins, outside the 870 mm ramp walking strip.",
+    "intersections": [],
+    "corrected_bodies": [
+      "Previously cut crossing right silver lower skirt"
+    ]
+  }
+}

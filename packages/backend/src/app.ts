@@ -5,6 +5,8 @@ import { router as locationRouter } from "./routes/location";
 import { router as busStopsRouter } from "./routes/busStops";
 import { router as operationsRouter } from "./routes/operations";
 import { router as assistantDiagnosticsRouter } from "./routes/assistantDiagnostics";
+import { router as passengerRouter } from "./routes/passenger";
+import { router as journeysRouter } from "./routes/journeys";
 import { getConnectedClientCount } from "./services/websocket";
 import { logger } from "./services/logger";
 import { clearAllRequests, getAllRequests } from "./services/aviator";
@@ -28,7 +30,8 @@ export function createApp() {
         // Device signatures cover the exact bytes sent over the wire. Keeping the
         // original body prevents JSON parsing/serialization from changing values
         // such as 1.00 before HMAC verification.
-        (req as express.Request & { rawBody?: Buffer }).rawBody = Buffer.from(buffer);
+        (req as express.Request & { rawBody?: Buffer }).rawBody =
+          Buffer.from(buffer);
       },
     }),
   );
@@ -43,7 +46,7 @@ export function createApp() {
         );
       },
       credentials: true,
-    })
+    }),
   );
 
   app.use("/api/assistance", assistanceRouter);
@@ -51,6 +54,8 @@ export function createApp() {
   app.use("/api/bus-stops", busStopsRouter);
   app.use("/api/operations", operationsRouter);
   app.use("/api/assistant", assistantDiagnosticsRouter);
+  app.use("/api/passenger", passengerRouter);
+  app.use("/api/journeys", journeysRouter);
 
   app.get("/operator", (_req, res) => {
     res.sendFile(path.resolve(__dirname, "../operator/index.html"));
@@ -105,7 +110,7 @@ export function createApp() {
       error: any,
       req: express.Request,
       res: express.Response,
-      next: express.NextFunction
+      next: express.NextFunction,
     ) => {
       logger.error("Unhandled error", undefined, {
         message: error.message,
@@ -116,7 +121,7 @@ export function createApp() {
         error: "Internal server error",
         message: NODE_ENV === "development" ? error.message : undefined,
       });
-    }
+    },
   );
 
   return app;

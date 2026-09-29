@@ -164,7 +164,7 @@ it("gives every Leaflet stop DivIcon meaningful marker content", () => {
   expect(mapSource).toContain("const busGlyph =");
   expect(mapSource).toContain("const stateBadge =");
   expect(mapSource).toContain('<svg aria-hidden="true" viewBox="0 0 16 16"');
-  expect(mapSource).toContain("${busGlyph}${stateBadge}</span>");
+  expect(mapSource).toContain("${busGlyph}${stateBadge}${calloutHtml}</span>");
   expect(mapSource).not.toContain(
     'const centerContent = kind === "selected" ? "&#10003;" : ""',
   );
@@ -435,6 +435,7 @@ function focusMapSearchField() {
 function mockSuccessfulJourneyApis(
   assistanceStatus: "SENDING" | "ACKNOWLEDGED" = "ACKNOWLEDGED",
 ) {
+  let assistanceRequestCount = 0;
   (global.fetch as jest.Mock).mockImplementation((url: string) => {
     if (url.includes("routing.openstreetmap.de/routed-foot")) {
       return Promise.resolve({
@@ -534,14 +535,40 @@ function mockSuccessfulJourneyApis(
       });
     }
 
+    if (url.includes("/api/location/bus-stops/18301/vehicles")) {
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ stopCode: "18301", vehicles: [] }),
+      });
+    }
+
     if (url.includes("/api/assistance/request")) {
+      assistanceRequestCount += 1;
       return Promise.resolve({
         ok: true,
         json: () =>
           Promise.resolve({
-            requestId: "REQ-ONBOARD-1",
+            requestId: `REQ-ONBOARD-${assistanceRequestCount}`,
             status: assistanceStatus,
             createdAt: "2026-08-15T13:00:00.000Z",
+          }),
+      });
+    }
+
+    if (url.includes("/api/operations/vehicles/SGA-95-001/telemetry")) {
+      return Promise.resolve({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            busId: "SGA-95-001",
+            stopCode: mockedOperationalStopCode,
+            vehicleStopped: true,
+            parkingBrakeActive: true,
+            doorOpen: true,
+            deploymentPathClear: true,
+            rampPosition: assistanceRequestCount > 0 ? "DEPLOYED" : "STOWED",
+            observedAt: new Date().toISOString(),
+            source: "test-fixture",
           }),
       });
     }
@@ -553,6 +580,8 @@ function mockSuccessfulJourneyApis(
     return Promise.reject(new Error(`Unexpected request: ${url}`));
   });
 }
+
+let mockedOperationalStopCode = "18301";
 
 function mockExplorableMapApis() {
   (global.fetch as jest.Mock).mockImplementation(
@@ -752,6 +781,7 @@ beforeEach(() => {
   (global.fetch as jest.Mock).mockReset();
   (globalThis as any).__GOASSIST_REGIONAL_MAP_TEST__ = false;
   delete (globalThis as any).document;
+  mockedOperationalStopCode = "18301";
   Object.defineProperty(Platform, "OS", {
     configurable: true,
     value: "ios",
@@ -771,6 +801,8 @@ it("renders the journey entry actions without inactive repeat guidance", () => {
   ).toBeTruthy();
   expect(screen.getByText("Use my location")).toBeTruthy();
   expect(screen.getByText("Select bus stop manually")).toBeTruthy();
+  expect(screen.getByText("Already at a bus stop?")).toBeTruthy();
+  expect(screen.getByLabelText("I'm at a bus stop")).toBeTruthy();
   expect(screen.queryByText("Find a nearby bus stop")).toBeNull();
   expect(
     screen.queryByLabelText(
@@ -808,6 +840,93 @@ it("renders the journey entry actions without inactive repeat guidance", () => {
     width: "100%",
   });
   expect(illustrationStyle.height).toBeUndefined();
+});
+
+it("opens stop-focused assistance without creating a journey plan", async () => {
+  mockSuccessfulJourneyApis();
+  (Location.requestForegroundPermissionsAsync as jest.Mock).mockResolvedValue({
+    status: "granted",
+  });
+  (Location.getCurrentPositionAsync as jest.Mock).mockResolvedValue({
+    coords: {
+      latitude: 1.2942,
+      longitude: 103.7711,
+      accuracy: 12,
+    },
+  });
+  render(<App />);
+
+  fireEvent.press(screen.getByLabelText("I'm at a bus stop"));
+  await screen.findByText("BUS AT YOUR STOP");
+  expect(screen.getByText("PARKED")).toBeTruthy();
+  expect(screen.getByLabelText("Request ramp for Service 95")).toBeTruthy();
+  expect(
+    screen.queryByLabelText("Search bus stop, service or place"),
+  ).toBeNull();
+  expect(screen.queryByText("Where are you getting off?")).toBeNull();
+  expect(
+    (global.fetch as jest.Mock).mock.calls.filter(
+      ([url]) =>
+        typeof url === "string" && url.includes("/api/assistance/request"),
+    ),
+  ).toHaveLength(0);
+});
+
+it("requires confirmation before requesting a ramp for an approaching bus", async () => {
+  mockSuccessfulJourneyApis();
+  const successfulFetch = (global.fetch as jest.Mock).getMockImplementation();
+  (global.fetch as jest.Mock).mockImplementation(
+    (url: string, options?: RequestInit) => {
+      if (url.includes("/api/location/bus-stops/18301/arrivals")) {
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              ...arrivalsResponse,
+              services: arrivalsResponse.services.map((service) => ({
+                ...service,
+                buses: service.buses.map((bus) => ({
+                  ...bus,
+                  etaSeconds: 120,
+                })),
+              })),
+            }),
+        });
+      }
+      return successfulFetch!(url, options);
+    },
+  );
+  (Location.requestForegroundPermissionsAsync as jest.Mock).mockResolvedValue({
+    status: "granted",
+  });
+  (Location.getCurrentPositionAsync as jest.Mock).mockResolvedValue({
+    coords: { latitude: 1.2942, longitude: 103.7711, accuracy: 12 },
+  });
+  render(<App />);
+
+  fireEvent.press(screen.getByLabelText("I'm at a bus stop"));
+  await screen.findByText("BUS APPEARS TO BE ARRIVING");
+  fireEvent.press(
+    screen.getByLabelText("Confirm bus and request ramp for Service 95"),
+  );
+  expect(
+    screen.getByText("Request the ramp before Service 95 arrives?"),
+  ).toBeTruthy();
+  expect(
+    (global.fetch as jest.Mock).mock.calls.filter(
+      ([url]) =>
+        typeof url === "string" && url.includes("/api/assistance/request"),
+    ),
+  ).toHaveLength(0);
+
+  fireEvent.press(screen.getByLabelText("Confirm Service 95"));
+  await screen.findByText("REQUEST RECEIVED");
+  expect(
+    (global.fetch as jest.Mock).mock.calls.filter(
+      ([url]) =>
+        typeof url === "string" && url.includes("/api/assistance/request"),
+    ),
+  ).toHaveLength(1);
 });
 
 it("uses the themed Journey visual safely across standard display themes", () => {
@@ -1325,7 +1444,7 @@ it("keeps Locate focused on map positioning without opening Nearby results", () 
 
   [
     'key: "locate"',
-    'label: followState === "FREE" ? "Locate" : "Following"',
+    'label: followState === "FREE" ? "Locate" : "Follow"',
     'followState === "FOLLOW_USER_HEADING"',
     "onLocateMap();",
     "mapReady && !searchActive",
@@ -2201,7 +2320,7 @@ it("keeps the map mounted, fits routed geometry with safe padding, and cleans up
   expect(mapMock.getJourneyMapMountCount()).toBe(mountCount);
 
   fireEvent.press(screen.getByText("Locate"));
-  expect(await screen.findByText("Following")).toBeTruthy();
+  expect(await screen.findByText("Follow")).toBeTruthy();
   fireEvent.press(screen.getByLabelText("Pan mock map to Clementi"));
   expect(screen.getByText("Locate")).toBeTruthy();
   expect(mapMock.getJourneyMapMountCount()).toBe(mountCount);
@@ -2360,7 +2479,7 @@ it("keeps walking direction map controls fixed independently of the sheet", () =
   const source = fs.readFileSync(path.join(__dirname, "..", "App.tsx"), "utf8");
 
   [
-    "const mapSideControlTopOffset = 190",
+    "const mapSideControlTopOffset = 122",
     "top: mapSideControlTopOffset",
     "right: mapOverlayMargin",
     "width: rightToolbarWidth",
@@ -2479,7 +2598,8 @@ it("makes Leaflet clusters and marker hierarchy accessible without moving the us
     '"Selected bus stop"',
     '"Recommended bus stop"',
     "${stop.description}, ${stop.roadName}, stop ${stop.busStopCode}",
-    "zIndexOffset={selected ? 650 : 500}",
+    "selected || stop.busStopCode === recommendedStopCode",
+    "? 1200",
     "zIndexOffset={1100}",
     "stopMarkerIcon({",
   ].forEach((token) => expect(source).toContain(token));
@@ -2666,7 +2786,7 @@ it("keeps narrow controls, the Nearby sheet, and OSM attribution in safe layers"
   );
 
   [
-    "const mapSideControlTopOffset = 190",
+    "const mapSideControlTopOffset = 122",
     "right: mapOverlayMargin",
     "width: rightToolbarWidth",
     "mapBottomSheetGrabber",
@@ -3490,7 +3610,7 @@ it("uses a shared map overlay layout manager with reserved toolbar space", () =>
   const source = fs.readFileSync(path.join(__dirname, "..", "App.tsx"), "utf8");
 
   [
-    "const rightToolbarWidth = 64",
+    "const rightToolbarWidth = 80",
     "const mapOverlayMargin = 12",
     "const mapTopOverlayMargin = 18",
     "const mapTopControlGap = 8",
@@ -3521,7 +3641,9 @@ it("keeps More as a compact prioritized settings sheet", () => {
   [
     "const contextualMapControl",
     "!showMoreControls",
-    "mapReady && searchThisAreaVisible && !showMoreControls && !searchActive",
+    "searchThisAreaVisible &&",
+    "!selectedStop &&",
+    'guidanceStatus !== "ACTIVE"',
     "ContextualMapControlIcon",
     "Invalid contextual map control",
     "const effectiveBottomSheetState",
@@ -3547,7 +3669,7 @@ it("keeps floating map controls viewport-anchored and limited to core actions", 
   const source = fs.readFileSync(path.join(__dirname, "..", "App.tsx"), "utf8");
 
   [
-    "const mapSideControlTopOffset = 190",
+    "const mapSideControlTopOffset = 122",
     "top: mapSideControlTopOffset",
     "sideControls: 45",
     "morePanel: 46",
@@ -3635,13 +3757,7 @@ it("integrates centralized illustrations across journey and loading states", () 
     "utf8",
   );
   const themedArtworkSource = fs.readFileSync(
-    path.join(
-      __dirname,
-      "..",
-      "src",
-      "components",
-      "ThemedSceneArtwork.tsx",
-    ),
+    path.join(__dirname, "..", "src", "components", "ThemedSceneArtwork.tsx"),
     "utf8",
   );
   const suppliedAssets = [
@@ -3819,9 +3935,8 @@ it("keeps focused assistance available without duplicating Profile settings", as
   fireEvent.press(
     screen.getByLabelText(/Assist, tab, preferences available, 2 of 3/),
   );
-  await screen.findByText("We can't identify your bus stop yet.");
-  expect(screen.getByLabelText("Use my location")).toBeTruthy();
-  expect(screen.getByLabelText("Choose bus stop")).toBeTruthy();
+  await screen.findByText("BUS AT YOUR STOP");
+  expect(screen.getByLabelText("Request ramp for Service 95")).toBeTruthy();
   expect(screen.queryByText("Profile required")).toBeNull();
 });
 
@@ -3831,11 +3946,7 @@ it("keeps display accessibility controls out of Assist for guest journeys", asyn
   fireEvent.press(
     screen.getByLabelText(/Assist, tab, preferences available, 2 of 3/),
   );
-  await waitFor(() =>
-    expect(
-      screen.getByText("We can't identify your bus stop yet."),
-    ).toBeTruthy(),
-  );
+  await screen.findByText("BUS AT YOUR STOP");
   expect(screen.queryByText("Phone Accessibility")).toBeNull();
   expect(screen.queryByText("Appearance")).toBeNull();
   expect(screen.queryByText("Screen-reader optimised")).toBeNull();
@@ -4124,7 +4235,7 @@ it("supports categorized text sizing and visibly enlarges shared controls", asyn
   expect(
     StyleSheet.flatten(screen.getByLabelText("Save needs").props.style)
       ?.minHeight,
-  ).toBe(68);
+  ).toBe(72);
 });
 
 it("keeps the accessibility editor layout fixed while text-size changes are drafted", async () => {
@@ -4484,7 +4595,7 @@ it("returns from Assist to the active Journey without resetting state", async ()
   fireEvent.press(
     screen.getByLabelText(/Assist, tab, preferences available, 2 of 3/),
   );
-  expect(screen.getByText("We can't identify your bus stop yet.")).toBeTruthy();
+  await screen.findByText("BUS AT YOUR STOP");
   fireEvent.press(
     screen.getByLabelText(/Journey, tab, active journey, 1 of 3/),
   );
@@ -4848,9 +4959,14 @@ it("keeps destination-next assistance primary and finishes through safe wheelcha
   expect(screen.getAllByText("Opp Science Drive").length).toBeGreaterThan(0);
   expect(screen.getByLabelText("I've safely alighted")).toBeTruthy();
 
+  mockedOperationalStopCode = "18341";
   fireEvent.press(screen.getByLabelText("Request help to disembark"));
   await screen.findByText("Ramp request received");
-  expect(screen.getByLabelText("I've safely alighted")).toBeTruthy();
+  await waitFor(() => {
+    expect(
+      screen.getByLabelText("I've safely alighted").props.accessibilityState,
+    ).toMatchObject({ disabled: false });
+  });
   await act(async () => {
     fireEvent.press(screen.getByLabelText("I've safely alighted"));
   });
@@ -4878,9 +4994,15 @@ it("uses plain safe completion language for a simplified journey", async () => {
   expect(screen.getByText("Leave the bus when it is safe.")).toBeTruthy();
   expect(screen.queryByLabelText("View remaining stops")).toBeNull();
   expect(screen.queryByLabelText("View full route")).toBeNull();
+  mockedOperationalStopCode = "18341";
   fireEvent.press(screen.getByLabelText("Request help"));
   await screen.findByText("Assistance requested");
   expect(screen.getByLabelText("I've left the bus")).toBeTruthy();
+  await waitFor(() => {
+    expect(
+      screen.getByLabelText("I've left the bus").props.accessibilityState,
+    ).toMatchObject({ disabled: false });
+  });
   await act(async () => {
     fireEvent.press(screen.getByLabelText("I've left the bus"));
   });

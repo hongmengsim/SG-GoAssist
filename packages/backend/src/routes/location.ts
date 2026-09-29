@@ -3,6 +3,7 @@ import { NearbyBusStopsRequest } from "@buspass/shared";
 import { getArrivalsForStop } from "../data/bus-stops.mock";
 import { busStopRepository } from "../bus-stops/repository";
 import { logger } from "../services/logger";
+import { listStopVehiclePresence } from "../services/stopVehiclePresenceService";
 
 export const router = Router();
 
@@ -61,6 +62,24 @@ router.get(
     res.json({
       busStop,
       services: getArrivalsForStop(busStop.busStopCode),
+    });
+  },
+);
+
+router.get(
+  "/bus-stops/:busStopCode/vehicles",
+  (req: Request, res: Response) => {
+    const busStop = busStopRepository.get(req.params.busStopCode);
+    if (!busStop) {
+      return res.status(404).json({
+        error: "Bus stop not found",
+        busStopCode: req.params.busStopCode,
+      });
+    }
+
+    res.json({
+      stopCode: busStop.busStopCode,
+      vehicles: listStopVehiclePresence(busStop.busStopCode),
     });
   },
 );

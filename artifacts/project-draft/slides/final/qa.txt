@@ -1,0 +1,6 @@
+Final QA 25 September 2026.
+Output: output/project-draft/NUS - SmaRHt Buses - Project Presentation Draft.pptx
+17 slides: core 1-8, Q&A appendices 9-17. Core notes timings [15,30,40,40,40,60,40,35] total 300 seconds verified from PPTX notes XML.
+All 17 slides rendered from final PPTX after Artifact Tool import. Changed final cover and progress slide inspected, all appendices inspected individually. Unchanged core slide renders 2,3,4,5,7,8 matched SHA256 against the already-inspected revised renders.
+Finalizer passed package structure, layout requirements, font policy, native table presence, and first-party import. Twelve conservative geometry warnings checked visually; no unintended overlap or clipping remains. 11 editable native tables. Required blank fields intentionally remain.
+Official deadlines and 5-minute talk / up to5-minute separate video / 5-minute Q&A follow supplied 18Aug guideline pp16-18. Video not produced. Native PowerPoint/Google Slides app editing not tested.

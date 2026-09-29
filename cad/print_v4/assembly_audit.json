@@ -1,0 +1,534 @@
+{
+  "static_intersections": [
+    {
+      "a": "18_laser_split_carrier_12p6:1",
+      "b": "19_laser_taper_collar:1",
+      "mm3": 33.5111
+    },
+    {
+      "a": "18_laser_split_carrier_12p6:2",
+      "b": "19_laser_taper_collar:2",
+      "mm3": 33.5111
+    },
+    {
+      "a": "18_laser_split_carrier_12p6:3",
+      "b": "19_laser_taper_collar:3",
+      "mm3": 33.5111
+    }
+  ],
+  "body_count": 83,
+  "tests": [
+    {
+      "part": "04_roof_rear:1",
+      "lift_mm": 5,
+      "forward_mm": 0,
+      "intersections": []
+    },
+    {
+      "part": "04_roof_rear:1",
+      "lift_mm": 10,
+      "forward_mm": 0,
+      "intersections": []
+    },
+    {
+      "part": "04_roof_rear:1",
+      "lift_mm": 20,
+      "forward_mm": 0,
+      "intersections": []
+    },
+    {
+      "part": "04_roof_rear:1",
+      "lift_mm": 30,
+      "forward_mm": 0,
+      "intersections": []
+    },
+    {
+      "part": "04_roof_rear:1",
+      "lift_mm": 60,
+      "forward_mm": 0,
+      "intersections": []
+    },
+    {
+      "part": "04_roof_rear:1",
+      "lift_mm": 100,
+      "forward_mm": 0,
+      "intersections": []
+    },
+    {
+      "part": "04_roof_rear:1",
+      "lift_mm": 100,
+      "forward_mm": 20,
+      "intersections": []
+    },
+    {
+      "part": "04_roof_rear:1",
+      "lift_mm": 100,
+      "forward_mm": 40,
+      "intersections": []
+    },
+    {
+      "part": "04_roof_rear:1",
+      "lift_mm": 100,
+      "forward_mm": 60,
+      "intersections": []
+    },
+    {
+      "part": "04_roof_rear:1",
+      "lift_mm": 100,
+      "forward_mm": 80,
+      "intersections": []
+    },
+    {
+      "part": "05_roof_centre:1",
+      "lift_mm": 5,
+      "forward_mm": 0,
+      "intersections": []
+    },
+    {
+      "part": "05_roof_centre:1",
+      "lift_mm": 10,
+      "forward_mm": 0,
+      "intersections": []
+    },
+    {
+      "part": "05_roof_centre:1",
+      "lift_mm": 20,
+      "forward_mm": 0,
+      "intersections": []
+    },
+    {
+      "part": "05_roof_centre:1",
+      "lift_mm": 30,
+      "forward_mm": 0,
+      "intersections": []
+    },
+    {
+      "part": "05_roof_centre:1",
+      "lift_mm": 60,
+      "forward_mm": 0,
+      "intersections": []
+    },
+    {
+      "part": "05_roof_centre:1",
+      "lift_mm": 100,
+      "forward_mm": 0,
+      "intersections": []
+    },
+    {
+      "part": "05_roof_centre:1",
+      "lift_mm": 100,
+      "forward_mm": 20,
+      "intersections": []
+    },
+    {
+      "part": "05_roof_centre:1",
+      "lift_mm": 100,
+      "forward_mm": 40,
+      "intersections": []
+    },
+    {
+      "part": "05_roof_centre:1",
+      "lift_mm": 100,
+      "forward_mm": 60,
+      "intersections": []
+    },
+    {
+      "part": "05_roof_centre:1",
+      "lift_mm": 100,
+      "forward_mm": 80,
+      "intersections": []
+    },
+    {
+      "part": "06_roof_front:1",
+      "lift_mm": 5,
+      "forward_mm": 0,
+      "intersections": []
+    },
+    {
+      "part": "06_roof_front:1",
+      "lift_mm": 10,
+      "forward_mm": 0,
+      "intersections": []
+    },
+    {
+      "part": "06_roof_front:1",
+      "lift_mm": 20,
+      "forward_mm": 0,
+      "intersections": []
+    },
+    {
+      "part": "06_roof_front:1",
+      "lift_mm": 30,
+      "forward_mm": 0,
+      "intersections": []
+    },
+    {
+      "part": "06_roof_front:1",
+      "lift_mm": 60,
+      "forward_mm": 0,
+      "intersections": []
+    },
+    {
+      "part": "06_roof_front:1",
+      "lift_mm": 100,
+      "forward_mm": 0,
+      "intersections": []
+    },
+    {
+      "part": "06_roof_front:1",
+      "lift_mm": 100,
+      "forward_mm": 20,
+      "intersections": []
+    },
+    {
+      "part": "06_roof_front:1",
+      "lift_mm": 100,
+      "forward_mm": 40,
+      "intersections": []
+    },
+    {
+      "part": "06_roof_front:1",
+      "lift_mm": 100,
+      "forward_mm": 60,
+      "intersections": []
+    },
+    {
+      "part": "06_roof_front:1",
+      "lift_mm": 100,
+      "forward_mm": 80,
+      "intersections": []
+    },
+    {
+      "part": "12_breadboard_tray:1",
+      "lift_mm": 5,
+      "forward_mm": 0,
+      "intersections": []
+    },
+    {
+      "part": "12_breadboard_tray:1",
+      "lift_mm": 30,
+      "forward_mm": 0,
+      "intersections": []
+    },
+    {
+      "part": "12_breadboard_tray:1",
+      "lift_mm": 140,
+      "forward_mm": 0,
+      "intersections": []
+    },
+    {
+      "part": "12_breadboard_tray:1",
+      "lift_mm": 220,
+      "forward_mm": 0,
+      "intersections": []
+    },
+    {
+      "part": "13_electronics_tray:1",
+      "lift_mm": 5,
+      "forward_mm": 0,
+      "intersections": []
+    },
+    {
+      "part": "13_electronics_tray:1",
+      "lift_mm": 30,
+      "forward_mm": 0,
+      "intersections": []
+    },
+    {
+      "part": "13_electronics_tray:1",
+      "lift_mm": 140,
+      "forward_mm": 0,
+      "intersections": []
+    },
+    {
+      "part": "13_electronics_tray:1",
+      "lift_mm": 220,
+      "forward_mm": 0,
+      "intersections": []
+    },
+    {
+      "motion": "L1 tilt 40",
+      "intersections": []
+    },
+    {
+      "motion": "L1 tilt 45",
+      "intersections": []
+    },
+    {
+      "motion": "L1 tilt 50",
+      "intersections": []
+    },
+    {
+      "motion": "L1 tilt 55",
+      "intersections": []
+    },
+    {
+      "motion": "L1 tilt 60",
+      "intersections": []
+    },
+    {
+      "motion": "L1 tilt 65",
+      "intersections": []
+    },
+    {
+      "motion": "L1 tilt 70",
+      "intersections": []
+    },
+    {
+      "motion": "L1 tilt 75",
+      "intersections": []
+    },
+    {
+      "motion": "L1 tilt 80",
+      "intersections": []
+    },
+    {
+      "motion": "L1 tilt 85",
+      "intersections": []
+    },
+    {
+      "motion": "L2 tilt 40",
+      "intersections": []
+    },
+    {
+      "motion": "L2 tilt 45",
+      "intersections": []
+    },
+    {
+      "motion": "L2 tilt 50",
+      "intersections": []
+    },
+    {
+      "motion": "L2 tilt 55",
+      "intersections": []
+    },
+    {
+      "motion": "L2 tilt 60",
+      "intersections": []
+    },
+    {
+      "motion": "L2 tilt 65",
+      "intersections": []
+    },
+    {
+      "motion": "L2 tilt 70",
+      "intersections": []
+    },
+    {
+      "motion": "L2 tilt 75",
+      "intersections": []
+    },
+    {
+      "motion": "L2 tilt 80",
+      "intersections": []
+    },
+    {
+      "motion": "L2 tilt 85",
+      "intersections": []
+    },
+    {
+      "motion": "L3 tilt 40",
+      "intersections": []
+    },
+    {
+      "motion": "L3 tilt 45",
+      "intersections": []
+    },
+    {
+      "motion": "L3 tilt 50",
+      "intersections": []
+    },
+    {
+      "motion": "L3 tilt 55",
+      "intersections": []
+    },
+    {
+      "motion": "L3 tilt 60",
+      "intersections": []
+    },
+    {
+      "motion": "L3 tilt 65",
+      "intersections": []
+    },
+    {
+      "motion": "L3 tilt 70",
+      "intersections": []
+    },
+    {
+      "motion": "L3 tilt 75",
+      "intersections": []
+    },
+    {
+      "motion": "L3 tilt 80",
+      "intersections": []
+    },
+    {
+      "motion": "L3 tilt 85",
+      "intersections": []
+    },
+    {
+      "motion": "ramp outer fold 0",
+      "intersections": []
+    },
+    {
+      "motion": "ramp outer fold 10",
+      "intersections": []
+    },
+    {
+      "motion": "ramp outer fold 20",
+      "intersections": []
+    },
+    {
+      "motion": "ramp outer fold 30",
+      "intersections": []
+    },
+    {
+      "motion": "ramp outer fold 40",
+      "intersections": []
+    },
+    {
+      "motion": "ramp outer fold 50",
+      "intersections": []
+    },
+    {
+      "motion": "ramp outer fold 60",
+      "intersections": []
+    },
+    {
+      "motion": "ramp outer fold 70",
+      "intersections": []
+    },
+    {
+      "motion": "ramp outer fold 80",
+      "intersections": []
+    },
+    {
+      "motion": "ramp outer fold 90",
+      "intersections": []
+    },
+    {
+      "motion": "ramp outer fold 100",
+      "intersections": []
+    },
+    {
+      "motion": "ramp outer fold 110",
+      "intersections": []
+    },
+    {
+      "motion": "ramp outer fold 120",
+      "intersections": []
+    },
+    {
+      "motion": "ramp outer fold 130",
+      "intersections": []
+    },
+    {
+      "motion": "ramp outer fold 140",
+      "intersections": []
+    },
+    {
+      "motion": "ramp outer fold 150",
+      "intersections": []
+    },
+    {
+      "motion": "ramp outer fold 160",
+      "intersections": []
+    },
+    {
+      "motion": "ramp outer fold 170",
+      "intersections": []
+    },
+    {
+      "motion": "ramp outer fold 180",
+      "intersections": []
+    },
+    {
+      "motion": "ramp packet lift 0",
+      "intersections": []
+    },
+    {
+      "motion": "ramp packet lift 10",
+      "intersections": []
+    },
+    {
+      "motion": "ramp packet lift 20",
+      "intersections": []
+    },
+    {
+      "motion": "ramp packet lift 30",
+      "intersections": []
+    },
+    {
+      "motion": "ramp packet lift 40",
+      "intersections": []
+    },
+    {
+      "motion": "ramp packet lift 50",
+      "intersections": []
+    },
+    {
+      "motion": "ramp packet lift 60",
+      "intersections": []
+    },
+    {
+      "motion": "ramp packet lift 70",
+      "intersections": []
+    },
+    {
+      "motion": "ramp packet lift 80",
+      "intersections": []
+    },
+    {
+      "motion": "ramp packet lift 90",
+      "intersections": []
+    },
+    {
+      "motion": "ramp packet lift 100",
+      "intersections": []
+    },
+    {
+      "motion": "ramp packet lift 100.45808341666188",
+      "intersections": []
+    },
+    {
+      "motion": "ramp stowed with latch locked",
+      "intersections": []
+    },
+    {
+      "motion": "camera Y -60",
+      "intersections": []
+    },
+    {
+      "motion": "camera Y -50",
+      "intersections": []
+    },
+    {
+      "motion": "camera Y -40",
+      "intersections": []
+    },
+    {
+      "motion": "camera Y -30",
+      "intersections": []
+    },
+    {
+      "motion": "camera Y -20",
+      "intersections": []
+    },
+    {
+      "motion": "camera Y -10",
+      "intersections": []
+    },
+    {
+      "motion": "camera Y 0",
+      "intersections": []
+    },
+    {
+      "motion": "camera Y 10",
+      "intersections": []
+    },
+    {
+      "motion": "camera Y 20",
+      "intersections": []
+    }
+  ]
+}

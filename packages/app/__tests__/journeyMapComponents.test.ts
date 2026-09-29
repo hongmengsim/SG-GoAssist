@@ -43,7 +43,8 @@ it("makes clusters and map-marker hierarchy accessible", () => {
     "cluster.click()",
     '"Selected bus stop"',
     '"Recommended bus stop"',
-    "zIndexOffset={selected ? 650 : 500}",
+    "selected || stop.busStopCode === recommendedStopCode",
+    "? 1200",
     "zIndexOffset={1100}",
   ].forEach((token) => expect(webMap).toContain(token));
 
@@ -113,19 +114,43 @@ it("opens on the immediate neighbourhood and uses prominent stop markers", () =>
   expect(app).toContain("const focusZoom = DEFAULT_ZOOM");
 
   [
-    "size: selected ? 54 : recommended ? 50 : 44",
+    "sizes.selectedMarker",
+    "sizes.recommendedMarker",
+    "sizes.stopMarker",
+    "const hitSize = Math.max(48, size)",
+    "goassist-recommended-stop-callout",
     'data-marker-state="selected"',
     'data-marker-state="recommended"',
   ].forEach((token) => expect(webMap).toContain(token));
   [
     "recommendedStopMarker",
-    "height: 44",
-    "height: 50",
-    "height: 54",
+    "stopMarkerHitArea",
+    "height: 46",
+    "height: 52",
+    "height: 58",
     "<BusFront",
     "<Star",
     "<Check",
   ].forEach((token) => expect(nativeMap).toContain(token));
+});
+
+it("prioritizes three stops and exposes all stops only through map options", () => {
+  const app = source("App.tsx");
+  const mapTypes = source("src/components/JourneyMap.types.ts");
+  const webMap = source("src/components/JourneyMap.web.tsx");
+  const nativeMap = source("src/components/NativeJourneyMap.native.tsx");
+
+  [
+    'useState<MapStopDensity>("PRIORITIZED")',
+    'testID="recommended-stop-card"',
+    'accessibilityLabel="Show all bus stops"',
+    'accessibilityLabel="Choose this stop"',
+    'accessibilityLabel="Compare nearby bus stops"',
+  ].forEach((token) => expect(app).toContain(token));
+  expect(mapTypes).toContain('stopDensity?: "PRIORITIZED" | "ALL"');
+  expect(webMap).toContain('stopDensity === "ALL"');
+  expect(webMap).toContain('stopDensity === "PRIORITIZED"');
+  expect(nativeMap).toContain('stopDensity === "ALL"');
 });
 
 it("uses provider-native geographic maps on Android and iOS", () => {

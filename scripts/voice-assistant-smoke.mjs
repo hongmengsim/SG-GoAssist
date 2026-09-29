@@ -2,13 +2,14 @@ import { spawn } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { passengerControlAudit } from "./e2e/passenger-control-audit.mjs";
 
 const APP_URL = process.env.GOASSIST_APP_URL ?? "http://localhost:8081";
 const DEBUG_PORT = Number(process.env.GOASSIST_VOICE_CDP_PORT ?? 9339);
 const EDGE_PATH =
   process.env.EDGE_PATH ??
   "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe";
-const WIDTHS = [280, 320, 360, 390, 430];
+const WIDTHS = [280, 320, 360, 390, 430, 441, 526];
 const HEIGHT = 844;
 const profileDir = await mkdtemp(join(tmpdir(), "goassist-voice-smoke-"));
 const browser = spawn(
@@ -455,6 +456,10 @@ try {
       `document.querySelector('[data-testid="voice-assistant-panel"]')?.scrollIntoView({ block: "center" })`,
     );
     await delay(120);
+    const audit = await evaluate(client, passengerControlAudit);
+    if (audit.undersizedIcons.length || audit.undersizedControls.length) {
+      throw new Error(`Assistant control sizing: ${JSON.stringify(audit)}`);
+    }
     responsive.push(
       await evaluate(
         client,

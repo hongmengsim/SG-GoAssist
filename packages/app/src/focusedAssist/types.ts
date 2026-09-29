@@ -1,11 +1,14 @@
 import type {
   ArrivalBus,
+  AssistanceCaseState,
   AssistanceType,
   AssistanceRequestStatus,
   Bus,
   JourneyPhase,
   NearbyBusStop,
+  SafetyTelemetry,
   VehicleStatus,
+  StopVehiclePresence,
 } from "@buspass/shared";
 
 export type FocusedAssistState =
@@ -39,6 +42,8 @@ export type BusAtStop = {
   confidence: BusPresenceConfidence;
   source: BusPresenceSource;
   activeJourneyMatch: boolean;
+  presenceState?: StopVehiclePresence["state"];
+  presenceObservedAt?: string;
 };
 
 export type FocusedAssistStopResolution = {
@@ -64,15 +69,20 @@ export type BusPresenceInput = {
   currentStop: NearbyBusStop;
   arrivals: ArrivalBus[];
   activeJourney: ActiveJourneyBusContext | null;
+  stopVehicles: StopVehiclePresence[];
 };
 
 export type FocusedAssistRequestContext = {
   requestId: string | null;
+  caseId?: string | null;
+  caseState?: AssistanceCaseState | null;
+  escalationReason?: string | null;
   status: AssistanceRequestStatus | null;
   assistanceType: AssistanceType | null;
   submitting: boolean;
   bus: BusAtStop | null;
   stop: NearbyBusStop | null;
+  safetyTelemetry?: SafetyTelemetry | null;
   error: string | null;
 };
 
@@ -94,6 +104,7 @@ export type FocusedAssistContextInput = {
   nearbyStops: NearbyBusStop[];
   manuallySelectedStop: NearbyBusStop | null;
   arrivals: ArrivalBus[];
+  stopVehicles: StopVehiclePresence[];
   activeJourney: ActiveJourneyBusContext | null;
   onboard: boolean;
   destinationName: string | null;

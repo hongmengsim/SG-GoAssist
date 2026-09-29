@@ -1,0 +1,211 @@
+{
+  "source": "output/pdf/APAS_Three_Laser_Physical_Setup.pdf pages 4-5",
+  "coordinate_system": "Door centre at baseboard level; +X front, +Y outward, +Z up. Board coordinates = (X+500,Y+300,Z).",
+  "parameters_mm": {
+    "boardLength": 1000,
+    "boardWidth": 900,
+    "boardThickness": 10,
+    "busLength": 600,
+    "busWidth": 180,
+    "busHeight": 220,
+    "wallThickness": 4,
+    "doorWidth": 160,
+    "doorHeight": 160,
+    "floorHeight": 40,
+    "rampWidth": 140,
+    "rampLength": 220,
+    "rampThickness": 4,
+    "zoneWidth": 220,
+    "zoneDepth": 300,
+    "referenceDistance": 450,
+    "referenceWidth": 300,
+    "referenceHeight": 280,
+    "cameraX": 0,
+    "cameraY": -60,
+    "cameraHeight": 400,
+    "laserSideHeight": 260,
+    "laserFarY": 20,
+    "laserFarHeight": 280,
+    "tofHeight": 140
+  },
+  "optical_centres_mm": {
+    "Reference optical target (0,450,140)": [
+      0,
+      450,
+      140
+    ],
+    "L1 optical centre (-110, 0, 260)": [
+      -110,
+      0,
+      260
+    ],
+    "L2 optical centre (110, 0, 260)": [
+      110,
+      0,
+      260
+    ],
+    "L3 optical centre (0, 20, 280)": [
+      0,
+      20,
+      280
+    ],
+    "Camera optical centre (0, -60, 400)": [
+      0,
+      -60,
+      400
+    ],
+    "ToF optical centre (0, 0, 140)": [
+      0,
+      0,
+      140
+    ]
+  },
+  "measured_body_bbox_mm": {
+    "baseboard": {
+      "min": [
+        -500.0,
+        -300.0,
+        -10.0
+      ],
+      "max": [
+        500.0,
+        600.0,
+        0.0
+      ]
+    },
+    "ramp": {
+      "min": [
+        -70.0,
+        0.0,
+        0.0
+      ],
+      "max": [
+        70.0,
+        216.33307652783935,
+        40.0
+      ]
+    },
+    "reference": {
+      "min": [
+        -150.0,
+        450.0,
+        0.0
+      ],
+      "max": [
+        150.0,
+        454.0,
+        280.0
+      ]
+    }
+  },
+  "ramp_horizontal_reach_mm": 216.33307652783935,
+  "ramp_slope_deg": 10.4756816963899,
+  "tof_nominal_width_at_450_mm": 199.5251963786459,
+  "tof_nominal_vertical_interval_at_450_mm": [
+    40.237401810677056,
+    239.76259818932294
+  ],
+  "camera_60deg_ground_y_mm": 170.94010767585033,
+  "camera_tilt_to_y200_deg": 56.97613244420336,
+  "laser_sides_required_fan_deg": 44.68691142497935,
+  "laser_sides_symmetric_fan_at_60deg_min": 51.202589290008945,
+  "laser_far_required_fan_deg": 31.049729645040877,
+  "invalid_bodies": [],
+  "feature_warnings": [],
+  "solid_count": 44,
+  "limitations": [
+    "Hardware envelopes and mounts are estimated; actual camera lens FoV and laser fan angle are unspecified.",
+    "Removable ToF crossbar occupies doorway; this is a static sensing demonstrator, not a boarding-clearance configuration.",
+    "Optical rays and height marks are sketches; STEP exports do not retain them.",
+    "Nominal envelope revision follows tabletop source, not a uniform scale model of full-size v2.",
+    "Primary rectangular envelopes are native parameter-driven features; rays, mounts and ramp taper are nominal geometry. Regenerate the setup after changing optical parameters."
+  ],
+  "camera_forward_candidate_mm": [
+    0,
+    20,
+    400
+  ],
+  "camera_roof_shadow_on_base_y_mm": [
+    0,
+    73.33333333333333
+  ],
+  "camera_sightline_checks": [
+    {
+      "target": "Ramp hinge",
+      "point_mm": [
+        0,
+        0,
+        40
+      ],
+      "intersected_bus_solids": [
+        "Removable roof - top Z220"
+      ]
+    },
+    {
+      "target": "Zone near corner",
+      "point_mm": [
+        -110,
+        0,
+        0
+      ],
+      "intersected_bus_solids": [
+        "Floor upper surface Z40",
+        "Removable roof - top Z220"
+      ]
+    },
+    {
+      "target": "Ground Y100",
+      "point_mm": [
+        0,
+        100,
+        0
+      ],
+      "intersected_bus_solids": []
+    },
+    {
+      "target": "Ground Y200",
+      "point_mm": [
+        0,
+        200,
+        0
+      ],
+      "intersected_bus_solids": []
+    },
+    {
+      "target": "Far corner",
+      "point_mm": [
+        110,
+        300,
+        0
+      ],
+      "intersected_bus_solids": []
+    }
+  ],
+  "measured_optical_points_mm": {
+    "L1 optical centre (-110, 0, 260)": [
+      -110.0,
+      0.0,
+      260.0
+    ],
+    "L2 optical centre (110, 0, 260)": [
+      110.0,
+      0.0,
+      260.0
+    ],
+    "L3 optical centre (0, 20, 280)": [
+      0.0,
+      20.0,
+      280.0
+    ],
+    "Camera optical centre (0, -60, 400)": [
+      0.0,
+      -60.0,
+      400.0
+    ],
+    "ToF optical centre (0, 0, 140)": [
+      0.0,
+      0.0,
+      140.0
+    ]
+  }
+}

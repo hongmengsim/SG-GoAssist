@@ -1,0 +1,603 @@
+[
+  {
+    "plate": "plate_01_body",
+    "parts": [
+      {
+        "id": "02_body_centre",
+        "copy": 1
+      }
+    ],
+    "bounds_min": [
+      5.0,
+      4.9999999999999645,
+      4.2832689359784126e-05
+    ],
+    "bounds_max": [
+      205.0,
+      197.0,
+      197.0
+    ]
+  },
+  {
+    "plate": "plate_02_body",
+    "parts": [
+      {
+        "id": "01_body_rear",
+        "copy": 1
+      }
+    ],
+    "bounds_min": [
+      5.0,
+      4.9999999999999645,
+      0.0
+    ],
+    "bounds_max": [
+      205.0,
+      185.0,
+      202.0
+    ]
+  },
+  {
+    "plate": "plate_03_body",
+    "parts": [
+      {
+        "id": "03_body_front",
+        "copy": 1
+      }
+    ],
+    "bounds_min": [
+      5.0,
+      4.9999999999999645,
+      0.0
+    ],
+    "bounds_max": [
+      205.0,
+      185.0,
+      202.0
+    ]
+  },
+  {
+    "plate": "plate_04_roof",
+    "parts": [
+      {
+        "id": "04_roof_rear",
+        "copy": 1
+      }
+    ],
+    "bounds_min": [
+      5.0,
+      5.000000000000027,
+      3.552713678800501e-14
+    ],
+    "bounds_max": [
+      204.39999389648438,
+      185.0,
+      18.0
+    ]
+  },
+  {
+    "plate": "plate_05_roof",
+    "parts": [
+      {
+        "id": "05_roof_centre",
+        "copy": 1
+      }
+    ],
+    "bounds_min": [
+      5.0,
+      5.000000000000027,
+      3.552713678800501e-14
+    ],
+    "bounds_max": [
+      204.39999389648438,
+      185.0,
+      18.0
+    ]
+  },
+  {
+    "plate": "plate_06_roof",
+    "parts": [
+      {
+        "id": "06_roof_front",
+        "copy": 1
+      }
+    ],
+    "bounds_min": [
+      5.0,
+      5.000000000000027,
+      3.552713678800501e-14
+    ],
+    "bounds_max": [
+      204.39999389648438,
+      185.0,
+      18.0
+    ]
+  },
+  {
+    "plate": "plate_07_tray",
+    "parts": [
+      {
+        "id": "13_electronics_tray",
+        "copy": 1
+      },
+      {
+        "id": "12_breadboard_tray",
+        "copy": 1
+      }
+    ],
+    "bounds_min": [
+      5.0,
+      5.0,
+      0.0
+    ],
+    "bounds_max": [
+      195.0,
+      188.0,
+      20.0
+    ]
+  },
+  {
+    "plate": "plate_08_ramp",
+    "parts": [
+      {
+        "id": "29_ramp_inner",
+        "copy": 1
+      }
+    ],
+    "bounds_min": [
+      5.0,
+      5.0,
+      0.0
+    ],
+    "bounds_max": [
+      130.9964183641132,
+      145.0,
+      16.996946019586176
+    ]
+  },
+  {
+    "plate": "plate_09_ramp",
+    "parts": [
+      {
+        "id": "30_ramp_outer",
+        "copy": 1
+      }
+    ],
+    "bounds_min": [
+      5.0,
+      5.0,
+      0.0
+    ],
+    "bounds_max": [
+      114.99882507324219,
+      145.0,
+      12.99528814246878
+    ]
+  },
+  {
+    "plate": "plate_10_laser",
+    "parts": [
+      {
+        "id": "17_L3_yoke",
+        "copy": 1
+      },
+      {
+        "id": "15_L1_yoke",
+        "copy": 1
+      },
+      {
+        "id": "16_L2_yoke",
+        "copy": 1
+      },
+      {
+        "id": "18_laser_split_carrier_12p6",
+        "copy": 1
+      },
+      {
+        "id": "18_laser_split_carrier_12p6",
+        "copy": 2
+      },
+      {
+        "id": "18_laser_split_carrier_12p6",
+        "copy": 3
+      }
+    ],
+    "bounds_min": [
+      5.0,
+      5.0,
+      0.0
+    ],
+    "bounds_max": [
+      205.99716186523435,
+      188.9978141784668,
+      42.0
+    ]
+  },
+  {
+    "plate": "plate_11_camera",
+    "parts": [
+      {
+        "id": "22_camera_mast",
+        "copy": 1
+      },
+      {
+        "id": "24_camera_platform",
+        "copy": 1
+      },
+      {
+        "id": "23_camera_forward_rail",
+        "copy": 1
+      }
+    ],
+    "bounds_min": [
+      5.0,
+      5.0,
+      0.0
+    ],
+    "bounds_max": [
+      222.0,
+      135.0,
+      17.99999999999993
+    ]
+  },
+  {
+    "plate": "plate_12_sensor",
+    "parts": [
+      {
+        "id": "27_ToF_removable_bar",
+        "copy": 1
+      }
+    ],
+    "bounds_min": [
+      5.0,
+      5.0,
+      3.108624468950438e-14
+    ],
+    "bounds_max": [
+      161.0,
+      24.0,
+      4.0
+    ]
+  },
+  {
+    "plate": "plate_13_hardware",
+    "parts": [
+      {
+        "id": "10_static_wheel",
+        "copy": 1
+      },
+      {
+        "id": "10_static_wheel",
+        "copy": 2
+      },
+      {
+        "id": "10_static_wheel",
+        "copy": 3
+      },
+      {
+        "id": "10_static_wheel",
+        "copy": 4
+      },
+      {
+        "id": "19_laser_taper_collar",
+        "copy": 1
+      },
+      {
+        "id": "19_laser_taper_collar",
+        "copy": 2
+      },
+      {
+        "id": "19_laser_taper_collar",
+        "copy": 3
+      },
+      {
+        "id": "28_ToF_retaining_cap",
+        "copy": 1
+      },
+      {
+        "id": "25_camera_sliding_jaw",
+        "copy": 1
+      },
+      {
+        "id": "25_camera_sliding_jaw",
+        "copy": 2
+      },
+      {
+        "id": "07_join_key",
+        "copy": 1
+      },
+      {
+        "id": "07_join_key",
+        "copy": 2
+      },
+      {
+        "id": "07_join_key",
+        "copy": 3
+      },
+      {
+        "id": "07_join_key",
+        "copy": 4
+      },
+      {
+        "id": "07_join_key",
+        "copy": 5
+      },
+      {
+        "id": "07_join_key",
+        "copy": 6
+      },
+      {
+        "id": "07_join_key",
+        "copy": 7
+      },
+      {
+        "id": "07_join_key",
+        "copy": 8
+      },
+      {
+        "id": "14_tray_adjustable_retainer",
+        "copy": 1
+      },
+      {
+        "id": "14_tray_adjustable_retainer",
+        "copy": 2
+      },
+      {
+        "id": "14_tray_adjustable_retainer",
+        "copy": 3
+      },
+      {
+        "id": "14_tray_adjustable_retainer",
+        "copy": 4
+      },
+      {
+        "id": "14_tray_adjustable_retainer",
+        "copy": 5
+      },
+      {
+        "id": "14_tray_adjustable_retainer",
+        "copy": 6
+      },
+      {
+        "id": "14_tray_adjustable_retainer",
+        "copy": 7
+      },
+      {
+        "id": "14_tray_adjustable_retainer",
+        "copy": 8
+      },
+      {
+        "id": "20_laser_pivot_pin",
+        "copy": 1
+      },
+      {
+        "id": "20_laser_pivot_pin",
+        "copy": 2
+      },
+      {
+        "id": "20_laser_pivot_pin",
+        "copy": 3
+      },
+      {
+        "id": "11_wheel_axle",
+        "copy": 1
+      },
+      {
+        "id": "11_wheel_axle",
+        "copy": 2
+      },
+      {
+        "id": "11_wheel_axle",
+        "copy": 3
+      },
+      {
+        "id": "11_wheel_axle",
+        "copy": 4
+      },
+      {
+        "id": "32_ramp_fold_pin",
+        "copy": 1
+      }
+    ],
+    "bounds_min": [
+      5.0,
+      5.004564397968352,
+      -5.551115123125783e-16
+    ],
+    "bounds_max": [
+      233.99951333239733,
+      209.9735737972078,
+      28.0
+    ]
+  },
+  {
+    "plate": "plate_14_hardware",
+    "parts": [
+      {
+        "id": "31_ramp_root_pin",
+        "copy": 1
+      },
+      {
+        "id": "21_mount_foot_pin",
+        "copy": 1
+      },
+      {
+        "id": "21_mount_foot_pin",
+        "copy": 2
+      },
+      {
+        "id": "21_mount_foot_pin",
+        "copy": 3
+      },
+      {
+        "id": "21_mount_foot_pin",
+        "copy": 4
+      },
+      {
+        "id": "26_camera_index_pin",
+        "copy": 1
+      },
+      {
+        "id": "08_key_retaining_pin",
+        "copy": 1
+      },
+      {
+        "id": "08_key_retaining_pin",
+        "copy": 2
+      },
+      {
+        "id": "08_key_retaining_pin",
+        "copy": 3
+      },
+      {
+        "id": "08_key_retaining_pin",
+        "copy": 4
+      },
+      {
+        "id": "08_key_retaining_pin",
+        "copy": 5
+      },
+      {
+        "id": "08_key_retaining_pin",
+        "copy": 6
+      },
+      {
+        "id": "08_key_retaining_pin",
+        "copy": 7
+      },
+      {
+        "id": "08_key_retaining_pin",
+        "copy": 8
+      },
+      {
+        "id": "08_key_retaining_pin",
+        "copy": 9
+      },
+      {
+        "id": "08_key_retaining_pin",
+        "copy": 10
+      },
+      {
+        "id": "08_key_retaining_pin",
+        "copy": 11
+      },
+      {
+        "id": "08_key_retaining_pin",
+        "copy": 12
+      },
+      {
+        "id": "08_key_retaining_pin",
+        "copy": 13
+      },
+      {
+        "id": "08_key_retaining_pin",
+        "copy": 14
+      },
+      {
+        "id": "08_key_retaining_pin",
+        "copy": 15
+      },
+      {
+        "id": "08_key_retaining_pin",
+        "copy": 16
+      },
+      {
+        "id": "09_roof_sliding_latch",
+        "copy": 1
+      },
+      {
+        "id": "09_roof_sliding_latch",
+        "copy": 2
+      },
+      {
+        "id": "09_roof_sliding_latch",
+        "copy": 3
+      },
+      {
+        "id": "09_roof_sliding_latch",
+        "copy": 4
+      },
+      {
+        "id": "09_roof_sliding_latch",
+        "copy": 5
+      },
+      {
+        "id": "09_roof_sliding_latch",
+        "copy": 6
+      },
+      {
+        "id": "33_ramp_stow_latch",
+        "copy": 1
+      }
+    ],
+    "bounds_min": [
+      5.0,
+      5.0,
+      0.0
+    ],
+    "bounds_max": [
+      244.99944024448635,
+      52.79106491000857,
+      42.0
+    ]
+  },
+  {
+    "plate": "plate_15_coupon",
+    "parts": [
+      {
+        "id": "C01_joint_0p2",
+        "copy": 1
+      },
+      {
+        "id": "C01_joint_0p3",
+        "copy": 1
+      },
+      {
+        "id": "C01_joint_0p4",
+        "copy": 1
+      },
+      {
+        "id": "C02_laser_bore_12",
+        "copy": 1
+      },
+      {
+        "id": "C02_laser_bore_12p2",
+        "copy": 1
+      },
+      {
+        "id": "C02_laser_bore_12p4",
+        "copy": 1
+      },
+      {
+        "id": "C02_laser_bore_12p6",
+        "copy": 1
+      },
+      {
+        "id": "C02_laser_bore_12p8",
+        "copy": 1
+      },
+      {
+        "id": "C03_roof_latch_channel",
+        "copy": 1
+      },
+      {
+        "id": "C04_hinge_bore_4p6",
+        "copy": 1
+      },
+      {
+        "id": "C05_short_hinge_pin",
+        "copy": 1
+      }
+    ],
+    "bounds_min": [
+      5.0,
+      5.0,
+      0.0
+    ],
+    "bounds_max": [
+      241.0,
+      53.0,
+      17.0
+    ]
+  }
+]

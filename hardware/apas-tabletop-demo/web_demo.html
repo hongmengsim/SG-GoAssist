@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>APAS | Tabletop control</title>
+<style>
+:root{font-family:system-ui,sans-serif;color:#183247;background:#eff4f8}*{box-sizing:border-box}body{max-width:1060px;margin:auto;padding:28px 20px}h1{font-size:32px;margin:8px 0}.eyebrow{font-size:13px;letter-spacing:2px;color:#007d78;font-weight:700}.muted{color:#52677a}header{margin-bottom:24px}.cards{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}.card,.panel{background:white;border:1px solid #d4e0e7;border-radius:16px;padding:20px}.label{font-size:13px;color:#52677a}.value{font-size:28px;font-weight:700;margin-top:6px}.panel{margin-top:16px}svg{width:100%;height:auto;display:block}button{border:0;border-radius:9px;background:#2566aa;color:white;padding:13px 18px;font:600 15px system-ui;cursor:pointer;margin:5px 7px 5px 0}button:disabled{opacity:.45;cursor:not-allowed}.secondary{background:#e4eef6;color:#183247}.off{background:#ad3044}.controls{display:flex;flex-wrap:wrap;align-items:center}.message{min-height:26px;margin-top:12px}#error{color:#a42638;font-weight:600}#status[data-kind="BEAM CLEAR"]{color:#007d78}#status[data-kind="BLOCKED"]{color:#ad3044}#connection{font-weight:600}footer{font-size:14px;line-height:1.6;margin-top:20px}@media(max-width:650px){.cards{grid-template-columns:1fr}.value{font-size:24px}body{padding:20px 12px}h1{font-size:26px}}
+</style>
+<header><div class="eyebrow">APAS / LIVE HARDWARE DEMO</div><h1>Boarding-zone control</h1><p class="muted">Real distance readings and laser outputs. Ramp movement is an on-screen simulation.</p><div id="connection">Connecting to the Pi…</div></header>
+<div class="cards"><div class="card"><div class="label">ToF distance</div><div class="value" id="distance">—</div></div><div class="card"><div class="label">Monitored path</div><div class="value" id="status">UNKNOWN</div></div><div class="card"><div class="label">Laser output acknowledgement</div><div class="value" id="lasers">Unknown</div></div></div>
+<div class="panel"><svg viewBox="0 0 900 245" role="img" aria-label="Top-view bus, U-shaped laser zone and simulated ramp"><rect x="35" y="20" width="260" height="190" rx="15" fill="#dceafa" stroke="#2566aa"/><text x="165" y="72" text-anchor="middle" fill="#183247" font-size="23" font-weight="bold">BUS MODEL</text><text x="165" y="144" text-anchor="middle" fill="#52677a" font-size="18">Centre door</text><rect id="ramp" x="295" y="90" width="5" height="75" fill="#c5b89d"/><path id="markers" d="M335 55H760V195H335" fill="none" stroke="#9aa6af" stroke-width="5"/><path d="M295 127H800" stroke="#007d78" stroke-width="2" stroke-dasharray="8 5"/><rect x="800" y="91" width="12" height="75" fill="white" stroke="#007d78" stroke-width="3"/><text x="540" y="232" text-anchor="middle" fill="#183247" font-size="17" id="ramp-label">SIMULATED RAMP: STOWED</text></svg></div>
+<div class="panel"><div id="reference" class="muted">Reference: not set</div><div class="controls"><button class="secondary" id="reference-button" disabled>Set empty-path reference</button><button id="request-button" disabled>Request ramp (simulation)</button><button class="off" id="cancel-button">Cancel / lasers OFF</button></div><div class="controls"><button class="secondary" id="on-button" disabled>Manual: all lasers ON</button><button class="off" id="off-button">All lasers OFF</button></div><div id="info" class="message" aria-live="polite"></div><div id="error" role="alert"></div></div>
+<footer>Keep lasers aimed at the matte base. Closing this screen or losing its heartbeat requests OFF after about two seconds; the ESP32 has an additional heartbeat timeout.<br><strong>BEAM CLEAR applies only to the sensor's viewing direction.</strong> No physical ramp is connected. Camera preview and object detection are not included in this screen.</footer>
+<script>
+const token=location.hash.slice(1), $=id=>document.getElementById(id);
+let connected=false;
+async function api(path,method='GET'){
+  const response=await fetch('/api/'+path,{method,headers:{'X-Demo-Token':token},cache:'no-store',signal:AbortSignal.timeout(2000)});
+  const data=await response.json();if(!response.ok)throw Error(data.error||'Request failed');return data;
+}
+function render(s){
+  connected=true;$('connection').textContent=s.ready?'ESP32 demo firmware connected':'Pi connected — waiting for ESP32 demo firmware';
+  $('distance').textContent=s.mm===null?'—':s.mm+' mm';$('status').textContent=s.status;$('status').dataset.kind=s.status;
+  $('lasers').textContent=s.lasers?'ON':'OFF / unconfirmed';$('markers').setAttribute('stroke',s.lasers?'#ca3749':'#9aa6af');
+  $('reference').textContent=s.reference===null?'Reference: not set':'Reference: '+s.reference+' mm · demonstration tolerance ±30 mm';
+  $('ramp').setAttribute('width',5+350*s.fraction);
+  let label=s.fraction===0?'STOWED':'PAUSED';if(s.requested)label=s.status!=='BEAM CLEAR'?'PAUSED: '+s.status:s.fraction>=1?'DEPLOYED':'EXTENDING';
+  $('ramp-label').textContent='SIMULATED RAMP: '+label;$('info').textContent=s.info;
+  $('reference-button').disabled=!s.ready||s.requested;$('request-button').disabled=!s.ready||s.reference===null;$('on-button').disabled=!s.ready;
+}
+async function act(action){
+  if(action==='reference'&&!confirm('Is the monitored path empty, with only the fixed matte backstop visible?'))return;
+  try{$('error').textContent='';render(await api(action,'POST'));}catch(e){$('error').textContent=e.message;}
+}
+for(const [id,action]of [['reference-button','reference'],['request-button','request'],['cancel-button','cancel'],['on-button','on'],['off-button','off']])$(id).onclick=()=>act(action);
+async function poll(){
+  try{await api('heartbeat','POST');render(await api('state'));}
+  catch(e){connected=false;$('connection').textContent='Control connection unavailable';$('distance').textContent='—';$('status').textContent='UNKNOWN';$('lasers').textContent='Unconfirmed';$('error').textContent=e.message;for(const id of ['reference-button','request-button','on-button'])$(id).disabled=true;}
+  setTimeout(poll,400);
+}
+if(token)poll();else{$('error').textContent='Open the complete URL printed by the Pi, including the #code.';}
+</script></html>

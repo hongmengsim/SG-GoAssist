@@ -4,19 +4,24 @@ import { StatusUpdateMessage } from "@buspass/shared";
 import { logger } from "./logger";
 import { getRequest, onAssistanceEvent } from "./aviator";
 import { getCase, onOperationsEvent } from "./assistanceCaseService";
+import { listStopVehiclePresence } from "./stopVehiclePresenceService";
 
 interface WebSocketClient {
   ws: WebSocket;
   requestId?: string;
   busId?: string;
   caseId?: string;
+  stopCode?: string;
   operations?: boolean;
 }
 
 const clients: Set<WebSocketClient> = new Set();
 let stateChangeListenerReady = false;
 
-export function initializeWebSocketServer(httpServer: http.Server, port: number) {
+export function initializeWebSocketServer(
+  httpServer: http.Server,
+  port: number,
+) {
   const wss = new WebSocket.Server({ server: httpServer });
 
   wss.on("connection", (ws: WebSocket) => {
@@ -38,7 +43,7 @@ export function initializeWebSocketServer(httpServer: http.Server, port: number)
               type: "SUBSCRIBED",
               requestId: message.requestId,
               busId: client.busId,
-            })
+            }),
           );
 
           if (request) {
@@ -53,28 +58,54 @@ export function initializeWebSocketServer(httpServer: http.Server, port: number)
                 busId: request.busId,
                 busService: request.busService,
                 message: `Current request status: ${request.status}`,
-              })
+              }),
             );
           }
         }
         if (message.type === "SUBSCRIBE_CASE") {
           client.caseId = message.caseId;
           client.busId = message.busId;
-          ws.send(JSON.stringify({ type: "SUBSCRIBED_CASE", caseId: client.caseId }));
+          ws.send(
+            JSON.stringify({ type: "SUBSCRIBED_CASE", caseId: client.caseId }),
+          );
           const caseRecord = getCase(message.caseId);
           if (caseRecord) {
             client.busId = caseRecord.busId ?? client.busId;
-            ws.send(JSON.stringify({
-              type: "CASE_STATUS",
-              caseId: caseRecord.caseId,
-              busId: caseRecord.busId,
-              stopCode: caseRecord.stopCode,
-              state: caseRecord.state,
-              passengerCount: caseRecord.passengerCount,
-              assistanceTypes: caseRecord.assistanceTypes,
-              escalationReason: caseRecord.escalationReason,
-              timestamp: new Date().toISOString(),
-            }));
+            ws.send(
+              JSON.stringify({
+                type: "CASE_STATUS",
+                caseId: caseRecord.caseId,
+                busId: caseRecord.busId,
+                stopCode: caseRecord.stopCode,
+                state: caseRecord.state,
+                passengerCount: caseRecord.passengerCount,
+                assistanceTypes: caseRecord.assistanceTypes,
+                escalationReason: caseRecord.escalationReason,
+                timestamp: new Date().toISOString(),
+              }),
+            );
+          }
+        }
+        if (message.type === "SUBSCRIBE_STOP") {
+          const stopCode =
+            typeof message.stopCode === "string"
+              ? message.stopCode.trim().slice(0, 40)
+              : "";
+          if (!stopCode) {
+            ws.send(JSON.stringify({ type: "INVALID_STOP_SUBSCRIPTION" }));
+          } else {
+            client.stopCode = stopCode;
+            ws.send(JSON.stringify({ type: "SUBSCRIBED_STOP", stopCode }));
+            listStopVehiclePresence(stopCode).forEach((vehicle) => {
+              ws.send(
+                JSON.stringify({
+                  type: "STOP_VEHICLE_PRESENCE",
+                  stopCode,
+                  vehicle,
+                  timestamp: new Date().toISOString(),
+                }),
+              );
+            });
           }
         }
         if (message.type === "SUBSCRIBE_OPERATIONS") {
@@ -132,7 +163,9 @@ export function broadcastStatusUpdate(message: StatusUpdateMessage) {
       client.operations === true ||
       ("caseId" in message && message.caseId === client.caseId) ||
       ("requestId" in message && message.requestId === client.requestId) ||
-      ("busId" in message && message.busId === client.busId);
+      ("busId" in message && message.busId === client.busId) ||
+      (message.type === "STOP_VEHICLE_PRESENCE" &&
+        message.stopCode === client.stopCode);
 
     if (shouldSend) {
       client.ws.send(JSON.stringify(message));

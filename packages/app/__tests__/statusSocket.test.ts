@@ -1,4 +1,7 @@
-import { subscribeToRequestStatus } from "../src/api/statusSocket";
+import {
+  subscribeToRequestStatus,
+  subscribeToStopVehiclePresence,
+} from "../src/api/statusSocket";
 
 type SocketHandler = ((event?: any) => void) | null;
 
@@ -192,6 +195,121 @@ describe("request status socket", () => {
     });
     expect(onUpdate).toHaveBeenCalledTimes(1);
     expect(onUpdate.mock.calls[0][0].state).toBe("READY");
+    stop();
+  });
+
+  it("accepts safety, actuator and escalation updates only for the active bus and case", () => {
+    const onUpdate = jest.fn();
+    const stop = subscribeToRequestStatus("REQ-SAFETY", onUpdate, jest.fn(), {
+      caseId: "CASE-SAFETY",
+    });
+    const socket = MockWebSocket.instances[0];
+    socket.open();
+    socket.message({
+      type: "REQUEST_STATUS",
+      requestId: "REQ-SAFETY",
+      status: "ACKNOWLEDGED",
+      timestamp: "2026-09-01T04:00:00.000Z",
+      assistanceTypes: ["WHEELCHAIR_RAMP"],
+      source: "MOBILE_APP",
+      busId: "AV-095-01",
+      busService: "95",
+    });
+    socket.message({
+      type: "SAFETY_TELEMETRY",
+      busId: "AV-OTHER",
+      fresh: true,
+      timestamp: "2026-09-01T04:00:01.000Z",
+      telemetry: {
+        busId: "AV-OTHER",
+        vehicleStopped: true,
+        parkingBrakeActive: true,
+        doorOpen: true,
+        deploymentPathClear: true,
+        rampPosition: "DEPLOYED",
+        observedAt: "2026-09-01T04:00:01.000Z",
+      },
+    });
+    socket.message({
+      type: "SAFETY_TELEMETRY",
+      busId: "AV-095-01",
+      stopCode: "18301",
+      fresh: true,
+      timestamp: "2026-09-01T04:00:02.000Z",
+      telemetry: {
+        busId: "AV-095-01",
+        stopCode: "18301",
+        vehicleStopped: true,
+        parkingBrakeActive: true,
+        doorOpen: true,
+        deploymentPathClear: true,
+        rampPosition: "DEPLOYED",
+        observedAt: "2026-09-01T04:00:02.000Z",
+      },
+    });
+    socket.message({
+      type: "OPERATOR_ESCALATION",
+      caseId: "CASE-SAFETY",
+      busId: "AV-095-01",
+      stopCode: "18301",
+      reason: "Path needs review",
+      timestamp: "2026-09-01T04:00:03.000Z",
+    });
+    socket.message({
+      type: "ACTUATOR_STATUS",
+      caseId: "CASE-SAFETY",
+      busId: "AV-095-01",
+      timestamp: "2026-09-01T04:00:04.000Z",
+      status: {
+        commandId: "CMD-1",
+        caseId: "CASE-SAFETY",
+        busId: "AV-095-01",
+        state: "IN_PROGRESS",
+        updatedAt: "2026-09-01T04:00:04.000Z",
+      },
+    });
+
+    expect(onUpdate.mock.calls.map(([message]) => message.type)).toEqual([
+      "REQUEST_STATUS",
+      "SAFETY_TELEMETRY",
+      "OPERATOR_ESCALATION",
+      "ACTUATOR_STATUS",
+    ]);
+    stop();
+  });
+
+  it("subscribes to one stop and rejects presence for other stops", () => {
+    const onUpdate = jest.fn();
+    const stop = subscribeToStopVehiclePresence("18301", onUpdate, jest.fn());
+    const socket = MockWebSocket.instances[0];
+    socket.open();
+    expect(JSON.parse(socket.sent[0])).toEqual({
+      type: "SUBSCRIBE_STOP",
+      stopCode: "18301",
+    });
+    const vehicle = {
+      busId: "AV-095-01",
+      busService: "95",
+      stopCode: "18301",
+      state: "PARKED",
+      wheelchairAccessible: true,
+      observedAt: "2026-09-01T01:00:00.000Z",
+      fresh: true,
+    };
+    socket.message({
+      type: "STOP_VEHICLE_PRESENCE",
+      stopCode: "18321",
+      vehicle: { ...vehicle, stopCode: "18321" },
+      timestamp: "2026-09-01T01:00:00.000Z",
+    });
+    socket.message({
+      type: "STOP_VEHICLE_PRESENCE",
+      stopCode: "18301",
+      vehicle,
+      timestamp: "2026-09-01T01:00:01.000Z",
+    });
+    expect(onUpdate).toHaveBeenCalledTimes(1);
+    expect(onUpdate).toHaveBeenCalledWith(vehicle);
     stop();
   });
 });

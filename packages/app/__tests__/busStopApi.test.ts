@@ -4,6 +4,8 @@ import {
   fetchBusStopArrivals,
   fetchBusStopServiceRoutes,
   fetchRegionalBusStops,
+  fetchStopVehiclePresence,
+  fetchVehicleSafetyTelemetry,
   findNearbyBusStops,
   searchBusStops,
 } from "../src/api/assistanceApi";
@@ -96,7 +98,11 @@ it("does not wrap request cancellation as a service failure", async () => {
 it("encodes search, detail and service-route requests", async () => {
   (global.fetch as jest.Mock)
     .mockResolvedValueOnce(
-      response({ stops: [stopWithoutServices], query: "Dover & 196", total: 1 }),
+      response({
+        stops: [stopWithoutServices],
+        query: "Dover & 196",
+        total: 1,
+      }),
     )
     .mockResolvedValueOnce(response({ stop: stopWithoutServices }))
     .mockResolvedValueOnce(
@@ -152,4 +158,48 @@ it("normalizes legacy nearby and arrivals responses", async () => {
 
   expect(nearby.stops[0].services).toEqual([]);
   expect(arrivals.busStop.services).toEqual([]);
+});
+
+it("loads passenger-safe vehicle presence for one encoded stop", async () => {
+  const vehicles = [
+    {
+      busId: "AV-095-01",
+      busService: "95",
+      stopCode: "19/069",
+      state: "PARKED",
+      wheelchairAccessible: true,
+      observedAt: "2026-09-01T01:00:00.000Z",
+      fresh: true,
+    },
+  ];
+  (global.fetch as jest.Mock).mockResolvedValueOnce(
+    response({ stopCode: "19/069", vehicles }),
+  );
+
+  const result = await fetchStopVehiclePresence("19/069");
+  expect((global.fetch as jest.Mock).mock.calls[0][0]).toContain(
+    "/api/location/bus-stops/19%2F069/vehicles",
+  );
+  expect(result.vehicles).toEqual(vehicles);
+});
+
+it("loads the latest safety snapshot for an encoded vehicle", async () => {
+  const telemetry = {
+    busId: "AV/095-01",
+    stopCode: "18301",
+    vehicleStopped: true,
+    parkingBrakeActive: true,
+    doorOpen: true,
+    deploymentPathClear: true,
+    rampPosition: "DEPLOYED",
+    observedAt: "2026-09-01T04:00:03.000Z",
+  };
+  (global.fetch as jest.Mock).mockResolvedValueOnce(response(telemetry));
+
+  await expect(fetchVehicleSafetyTelemetry("AV/095-01")).resolves.toEqual(
+    telemetry,
+  );
+  expect((global.fetch as jest.Mock).mock.calls[0][0]).toContain(
+    "/api/operations/vehicles/AV%2F095-01/telemetry",
+  );
 });

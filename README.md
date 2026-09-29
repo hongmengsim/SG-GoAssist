@@ -77,6 +77,16 @@ The backend serves a normalized, indexed bus-stop snapshot through:
 - `GET /api/bus-stops/search?q=`
 - `GET /api/bus-stops/:code`
 - `GET /api/bus-stops/:code/services/:serviceNo/routes`
+- `GET /api/passenger/context?lat=&lng=&radius=200`
+- `POST /api/journeys/plan`
+
+The passenger-context endpoint returns the three prioritized nearby stops with
+arrivals, amenities, parked-bus presence, advisories, freshness, and explicit
+provenance. Journey planning returns up to three direct or one-transfer options.
+Competition fixtures are always labelled “Prototype verified data”; missing
+regional evidence remains visibly unknown. See
+`docs/feature-readiness-matrix.md` for the release status of every major
+capability.
 
 Local development includes a normalized static LTA DataMall snapshot with 5,204
 geocoded stops, names, roads, stop-to-service memberships, and compact route

@@ -126,6 +126,8 @@ describe("deterministic journey intents", () => {
     ["How many stops are left?", "GET_STOPS_REMAINING"],
     ["Where am I getting off?", "GET_DESTINATION"],
     ["Which route is sheltered?", "GET_SHELTERED_ROUTE"],
+    ["What facilities does this bus stop have?", "GET_STOP_AMENITIES"],
+    ["Are there any service delays?", "GET_SERVICE_ADVISORIES"],
     ["Request the ramp.", "REQUEST_RAMP"],
     ["Request more boarding time.", "REQUEST_EXTRA_TIME"],
     ["Help me get off the bus.", "REQUEST_ALIGHTING_HELP"],
@@ -207,6 +209,54 @@ describe("deterministic journey intents", () => {
       controller.processTranscript("Which route is sheltered?"),
     ).resolves.toMatchObject({
       response: "Fully sheltered: Route A, Service 151.",
+    });
+  });
+
+  it("answers amenity and advisory questions only from verified context", async () => {
+    const provenance = {
+      kind: "VERIFIED_FIXTURE" as const,
+      sourceLabel: "Prototype verified data",
+    };
+    const { controller } = createHarness({
+      context: assistantContext({
+        currentStopAmenities: {
+          stopCode: "16171",
+          shelter: "YES",
+          seating: "YES",
+          lighting: "UNKNOWN",
+          tactilePaving: "UNKNOWN",
+          stepFreeKerb: "YES",
+          audioBeacon: "NO",
+          physicalAssistButton: "YES",
+          provenance,
+        },
+        serviceAdvisories: [
+          {
+            id: "service-151-notice",
+            severity: "INFO",
+            title: "Use the marked central boarding door.",
+            affectedServices: ["151"],
+            affectedStops: ["16171"],
+            startsAt: "2026-09-01T00:00:00.000Z",
+            provenance,
+          },
+        ],
+      }),
+    });
+
+    await expect(
+      controller.processTranscript("What facilities does this bus stop have?"),
+    ).resolves.toMatchObject({
+      intent: { type: "GET_STOP_AMENITIES" },
+      response: expect.stringContaining("shelter, seating, step-free kerb"),
+    });
+    await expect(
+      controller.processTranscript("Are there any service delays?"),
+    ).resolves.toMatchObject({
+      intent: { type: "GET_SERVICE_ADVISORIES" },
+      response: expect.stringContaining(
+        "Use the marked central boarding door.",
+      ),
     });
   });
 
@@ -436,9 +486,9 @@ describe("assistant action safety", () => {
       actionExecuted: false,
     });
     expect(harness.actions.requestRamp).not.toHaveBeenCalled();
-    expect(
-      harness.controller.getHealthSnapshot().confirmationRejections,
-    ).toBe(1);
+    expect(harness.controller.getHealthSnapshot().confirmationRejections).toBe(
+      1,
+    );
   });
 
   it("only requests an operator after an explicit confirmed passenger action", async () => {
@@ -647,11 +697,7 @@ describe("structured AI fallback boundary", () => {
 describe("localized safety confirmations", () => {
   it.each([
     ["zh-SG", "next stop", "下一站是 Information Technology。"],
-    [
-      "ms-SG",
-      "next stop",
-      "Hentian seterusnya ialah Information Technology.",
-    ],
+    ["ms-SG", "next stop", "Hentian seterusnya ialah Information Technology."],
     ["ta-SG", "next stop", "அடுத்த நிறுத்தம் Information Technology."],
   ] as const)(
     "replies in the selected %s locale for mixed-language live questions",
@@ -659,7 +705,9 @@ describe("localized safety confirmations", () => {
       const { controller } = createHarness({
         context: assistantContext({ locale }),
       });
-      await expect(controller.processTranscript(question)).resolves.toMatchObject({
+      await expect(
+        controller.processTranscript(question),
+      ).resolves.toMatchObject({
         response: expected,
         sourceLabel:
           locale === "zh-SG"

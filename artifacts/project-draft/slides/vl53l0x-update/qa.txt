@@ -1,0 +1,8 @@
+VL53L0X update QA complete 25 September 2026.
+Final deliverable: output/project-draft/NUS - SmaRHt Buses - Project Presentation Draft.pptx
+Final SHA256: 29ec08241049da81b7bd74e028742ba5f22ae8087a234d227e798440ddee5c59
+17 slides; 8 core timed slides total300 seconds plus9 Q&A appendices;11 native tables.
+Selected sensor now VL53L0X throughout deck/notes. Core4 range observations, core6 limited field, core8 calibration and controller changes, AppendixD capabilities/limitations, AppendixE camera+single-zone checks, D5 pending firmware adaptation updated.
+ST official product page and DS11555 Rev6 used for I2C,940nm,conditional up-to2m and single-zone capabilities; exact links in notes. No prototype accuracy/full-area coverage claim. Existing27 valid readings30–136mm unchanged. Visible RYS1230 marking lasers remain separate.
+Finalizer package/layout/font/import checks passed. Final reimport rendered every slide. Changed slides4,6,8,9,10,12,13,14 individually inspected with no clipping/overlap. Remaining9 render PNGs identical to previously reviewed final deck. Source/notes scan found no VL53L5CX,8x8,8×8,mismatch,or unresolved sensor-choice wording.
+Old presentation preserved in artifacts/project-draft/slides/superseded. No firmware edits. Native PowerPoint editing was not tested.

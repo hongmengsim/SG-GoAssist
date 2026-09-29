@@ -13,6 +13,7 @@
     "web": "node ../../scripts/dev.mjs --app",
     "build": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
+    "lint": "npm run typecheck",
     "test": "jest --runInBand"
   },
   "dependencies": {

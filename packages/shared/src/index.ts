@@ -176,7 +176,7 @@ export interface PassengerAssistanceRequest {
   busService: string;
   busId: string;
   boardingStop: string;
-  destination: string;
+  destination?: string;
   stopCode?: string;
   assistanceTypes: AssistanceType[];
   source: AssistanceSource;
@@ -195,7 +195,7 @@ export interface CreateAssistanceRequestPayload {
   busService: string;
   busId: string;
   boardingStop: string;
-  destination: string;
+  destination?: string;
   stopCode?: string;
   assistanceTypes: AssistanceType[];
   source?: AssistanceSource;
@@ -267,10 +267,7 @@ export interface SignalObservation {
 }
 
 export type BoardingIntentDecision =
-  | "CONFIRMED"
-  | "LIKELY"
-  | "UNCONFIRMED"
-  | "DECLINED";
+  "CONFIRMED" | "LIKELY" | "UNCONFIRMED" | "DECLINED";
 
 export interface BoardingIntentEvidence {
   signalId: string;
@@ -411,17 +408,14 @@ export interface VehicleCapability {
   visualDisplay: boolean;
   dwellControl: boolean;
   wheelchairSpaceCapacity: number;
-  supportedTelemetry: Array<keyof Omit<SafetyTelemetry, "busId" | "observedAt">>;
+  supportedTelemetry: Array<
+    keyof Omit<SafetyTelemetry, "busId" | "observedAt">
+  >;
   updatedAt: string;
 }
 
 export type RampPosition =
-  | "STOWED"
-  | "DEPLOYING"
-  | "DEPLOYED"
-  | "RETRACTING"
-  | "FAULT"
-  | "UNKNOWN";
+  "STOWED" | "DEPLOYING" | "DEPLOYED" | "RETRACTING" | "FAULT" | "UNKNOWN";
 
 export type RampObstacleClass =
   | "NONE"
@@ -497,10 +491,7 @@ export interface PrecisionDockingAssessment extends PrecisionDockingObservation 
  * Prototype-only route automation. It models the decisions and safety gates of
  * an autonomous shuttle without commanding a real steering or braking system.
  */
-export type AutonomousDriveMode =
-  | "MANUAL"
-  | "AUTONOMOUS"
-  | "REMOTE_ASSIST";
+export type AutonomousDriveMode = "MANUAL" | "AUTONOMOUS" | "REMOTE_ASSIST";
 
 export type AutonomousDriveState =
   | "IDLE"
@@ -632,9 +623,36 @@ export interface VehicleStatusUpdateMessage {
   type: "VEHICLE_STATUS";
   busId: string;
   busService: string;
+  stopCode?: string;
   status: VehicleStatus;
   timestamp: string;
   message?: string;
+}
+
+export type StopVehiclePresenceState = "APPROACHING" | "PARKED" | "DEPARTED";
+
+/** Passenger-safe, anonymous vehicle presence at one bus stop. */
+export interface StopVehiclePresence {
+  busId: string;
+  busService: string;
+  stopCode: string;
+  state: StopVehiclePresenceState;
+  destination?: string;
+  wheelchairAccessible: boolean;
+  observedAt: string;
+  fresh: boolean;
+}
+
+export interface StopVehiclePresenceResponse {
+  stopCode: string;
+  vehicles: StopVehiclePresence[];
+}
+
+export interface StopVehiclePresenceUpdateMessage {
+  type: "STOP_VEHICLE_PRESENCE";
+  stopCode: string;
+  vehicle: StopVehiclePresence;
+  timestamp: string;
 }
 
 export interface ExternalAnnouncementMessage {
@@ -704,6 +722,7 @@ export interface AutonomyStatusUpdateMessage {
 export type StatusUpdateMessage =
   | RequestStatusUpdateMessage
   | VehicleStatusUpdateMessage
+  | StopVehiclePresenceUpdateMessage
   | ExternalAnnouncementMessage
   | AssistanceCaseUpdateMessage
   | SafetyTelemetryUpdateMessage
@@ -810,6 +829,104 @@ export interface BusStopArrivalsResponse {
   services: BusArrivalService[];
 }
 
+export type DataProvenanceKind =
+  "LIVE" | "VERIFIED_FIXTURE" | "CACHED" | "UNAVAILABLE";
+
+export interface DataProvenance {
+  kind: DataProvenanceKind;
+  sourceLabel: string;
+  observedAt?: string;
+  staleAfter?: string;
+}
+
+export type StopAmenityAvailability = "YES" | "NO" | "UNKNOWN";
+
+export interface StopAmenityProfile {
+  stopCode: string;
+  shelter: StopAmenityAvailability;
+  seating: StopAmenityAvailability;
+  lighting: StopAmenityAvailability;
+  tactilePaving: StopAmenityAvailability;
+  stepFreeKerb: StopAmenityAvailability;
+  audioBeacon: StopAmenityAvailability;
+  physicalAssistButton: StopAmenityAvailability;
+  provenance: DataProvenance;
+}
+
+export type ServiceAdvisorySeverity = "INFO" | "DELAY" | "DISRUPTION";
+
+export interface ServiceAdvisory {
+  id: string;
+  severity: ServiceAdvisorySeverity;
+  title: string;
+  affectedServices: string[];
+  affectedStops: string[];
+  startsAt: string;
+  endsAt?: string;
+  provenance: DataProvenance;
+}
+
+export interface PassengerStopContext {
+  stop: NearbyBusStop;
+  distanceMeters: number;
+  walkingMinutes: number;
+  arrivals: BusArrivalService[];
+  amenities: StopAmenityProfile;
+  vehicles: StopVehiclePresence[];
+}
+
+export interface PassengerContextSnapshot {
+  generatedAt: string;
+  radiusMeters: number;
+  nearbyStops: PassengerStopContext[];
+  advisories: ServiceAdvisory[];
+  provenance: DataProvenance;
+}
+
+export type JourneyPlanLegType = "WALK" | "BUS" | "TRANSFER";
+
+export interface JourneyPlanLeg {
+  type: JourneyPlanLegType;
+  summary: string;
+  serviceNo?: string;
+  fromStopCode?: string;
+  toStopCode?: string;
+  stopCount?: number;
+  distanceMeters?: number;
+  durationMinutes: number;
+}
+
+export interface JourneyPlanOption {
+  id: string;
+  title: string;
+  legs: JourneyPlanLeg[];
+  totalMinutes: number;
+  walkingMinutes: number;
+  transferCount: number;
+  accessibilityFit: "VERIFIED" | "PARTIAL" | "UNKNOWN";
+  shelterCoverage: "FULL" | "PARTIAL" | "UNVERIFIED";
+  advisories: ServiceAdvisory[];
+  boardingStop: BusStop;
+  destinationStop: BusStop;
+}
+
+export interface JourneyPlanRequest {
+  origin: { latitude: number; longitude: number; label?: string };
+  destination: { latitude: number; longitude: number; label?: string };
+  preferences?: {
+    wheelchairRouting?: boolean;
+    preferAccessibleStops?: boolean;
+    avoidSteepSlopes?: boolean;
+    preferSmoothSurfaces?: boolean;
+  };
+}
+
+export interface JourneyPlanResponse {
+  generatedAt: string;
+  options: JourneyPlanOption[];
+  provenance: DataProvenance;
+}
+
 export interface RouteStop extends Omit<BusStop, "services"> {
   sequence: number;
   services?: string[];
@@ -886,6 +1003,8 @@ export interface SimulatorCommand {
 export interface VehicleSimulatorCommand {
   busId: string;
   status: VehicleStatus;
+  busService?: string;
+  stopCode?: string;
 }
 
 export interface PhysicalButtonRequestPayload {

@@ -2,12 +2,14 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Modal,
-  Pressable,
   SafeAreaView,
   StyleSheet,
-  Text,
   View,
 } from "react-native";
+import {
+  PassengerPressable as Pressable,
+  PassengerText as Text,
+} from "../accessibility/PassengerControls";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import * as Location from "expo-location";
 import {
@@ -18,7 +20,7 @@ import {
   ShieldCheck,
   Volume2,
   X,
-} from "lucide-react-native";
+} from "./AppIcons";
 import {
   directionFrame,
   smoothHeading,
@@ -134,7 +136,7 @@ export function CameraDirectionGuide({
             )}
           </View>
         )}
-        <View style={styles.scrim} pointerEvents="none" />
+        <View style={[styles.scrim, { pointerEvents: "none" }]} />
         <SafeAreaView style={styles.safeArea}>
           <View style={styles.topRow}>
             <View

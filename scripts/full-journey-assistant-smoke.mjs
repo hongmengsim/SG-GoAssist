@@ -371,7 +371,10 @@ async function selectGoldenJourney() {
     `document.body?.innerText.includes("Your journey")`,
     "journey review",
   );
-  await clickFirstAvailable(["Skip assistance and start", "Start this journey"]);
+  await clickFirstAvailable([
+    "Skip assistance and start",
+    "Start this journey",
+  ]);
 }
 
 async function main() {
@@ -435,7 +438,9 @@ async function main() {
     );
     assert.equal(await visibleTextIncludes("Live journey"), true);
     assert.equal(
-      await visibleTextIncludes("The AI assistant cannot drive or control equipment"),
+      await visibleTextIncludes(
+        "The AI assistant cannot drive or control equipment",
+      ),
       false,
     );
 
@@ -456,12 +461,17 @@ async function main() {
     await talk("Yes", "Your ramp request for Service 95 has been sent.");
     const afterBoardingRequest = await assistanceRequests();
     assert.equal(afterBoardingRequest.count, 1);
-    assert.equal(afterBoardingRequest.requests[0].boardingOrAlighting, "BOARDING");
+    assert.equal(
+      afterBoardingRequest.requests[0].boardingOrAlighting,
+      "BOARDING",
+    );
     assert.deepEqual(afterBoardingRequest.requests[0].assistanceTypes, [
       "WHEELCHAIR_RAMP",
     ]);
     let caseList = await cases();
-    const boardingCase = caseList.cases.find((item) => item.phase === "BOARDING");
+    const boardingCase = caseList.cases.find(
+      (item) => item.phase === "BOARDING",
+    );
     assert.ok(boardingCase);
 
     await browser.clickLabel("Journey, tab", { contains: true });
@@ -504,7 +514,9 @@ async function main() {
       1,
     );
     caseList = await cases();
-    const alightingCase = caseList.cases.find((item) => item.phase === "ALIGHTING");
+    const alightingCase = caseList.cases.find(
+      (item) => item.phase === "ALIGHTING",
+    );
     assert.ok(alightingCase);
 
     await browser.clickLabel("Journey, tab", { contains: true });
@@ -516,9 +528,11 @@ async function main() {
     await observeStage("EXIT");
 
     for (let step = 0; step < 6; step += 1) {
-      if (await browser.evaluate(
-        `Boolean(document.querySelector('[aria-label="I\\'ve safely alighted"]'))`,
-      )) {
+      if (
+        await browser.evaluate(
+          `Boolean(document.querySelector('[aria-label="I\\'ve safely alighted"]'))`,
+        )
+      ) {
         break;
       }
       const nextAvailable = await browser.evaluate(
@@ -560,10 +574,13 @@ async function main() {
     );
     assert.equal(assistantContextCleared, true);
 
-    assert.deepEqual(
-      [...observedStages].sort(),
-      ["BOARD", "EXIT", "RIDE", "WAIT", "WALK"],
-    );
+    assert.deepEqual([...observedStages].sort(), [
+      "BOARD",
+      "EXIT",
+      "RIDE",
+      "WAIT",
+      "WALK",
+    ]);
     const finalState = await browser.evaluate(`({
       activeJourneyPresent: Object.keys(localStorage).some((key) =>
         key.includes("sg-goassist.active-journey.v1")),
@@ -635,7 +652,9 @@ async function main() {
       JSON.stringify({ backend, hostApiCalls }, null, 2),
       "utf8",
     );
-    console.error(`Failure artifacts: ${files.screenshot}, ${files.diagnostics}`);
+    console.error(
+      `Failure artifacts: ${files.screenshot}, ${files.diagnostics}`,
+    );
     throw error;
   } finally {
     await browser?.close();

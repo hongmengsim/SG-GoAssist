@@ -1,0 +1,55 @@
+{
+    "printer_profile": "Prusa CORE One 0.4 nozzle",
+    "print_profiles": [
+        {
+            "name": "0.10mm FAST DETAIL @COREONE 0.4",
+            "filament_profiles": [
+                "Generic PLA Silk @COREONE",
+                "Prusament PLA Blend @COREONE"
+            ]
+        },
+        {
+            "name": "0.15mm BALANCED @COREONE 0.4",
+            "filament_profiles": [
+                "Generic PLA Silk @COREONE",
+                "Prusament PLA Blend @COREONE"
+            ]
+        },
+        {
+            "name": "0.15mm SPEED @COREONE 0.4",
+            "filament_profiles": [
+                "Generic PLA Silk @COREONE",
+                "Prusament PLA Blend @COREONE"
+            ]
+        },
+        {
+            "name": "0.15mm STRUCTURAL @COREONE 0.4",
+            "filament_profiles": [
+                "Generic PLA Silk @COREONE",
+                "Prusament PLA Blend @COREONE"
+            ]
+        },
+        {
+            "name": "0.20mm BALANCED @COREONE 0.4",
+            "filament_profiles": [
+                "Generic PLA Silk @COREONE",
+                "Prusament PLA Blend @COREONE"
+            ]
+        },
+        {
+            "name": "0.20mm SPEED @COREONE 0.4",
+            "filament_profiles": [
+                "Generic PLA Silk @COREONE",
+                "Prusament PLA Blend @COREONE"
+            ]
+        },
+        {
+            "name": "0.20mm STRUCTURAL @COREONE 0.4",
+            "filament_profiles": [
+                "Generic PLA Silk @COREONE",
+                "Prusament PLA Blend @COREONE"
+            ]
+        }
+    ]
+}
+

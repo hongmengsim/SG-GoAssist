@@ -22,6 +22,10 @@ import { getBusById } from "../data/buses.mock";
 import { logger } from "./logger";
 import { getOperationsStore, resetOperationsStore } from "./operationsStore";
 import { fuseRampObstacleAssessment } from "./rampObstacleService";
+import {
+  createDepartedStopVehiclePresence,
+  deriveStopVehiclePresence,
+} from "./stopVehiclePresenceService";
 
 const TERMINAL_STATES: AssistanceCaseState[] = [
   "COMPLETED",
@@ -59,7 +63,9 @@ export function publishOperationsEvent(message: StatusUpdateMessage): void {
   emit(message);
 }
 
-export function submitSignalObservation(input: SignalObservation): AssistanceCase {
+export function submitSignalObservation(
+  input: SignalObservation,
+): AssistanceCase {
   validateObservation(input);
   const observation = sanitizeObservation(input);
   const now = new Date().toISOString();
@@ -82,21 +88,32 @@ export function submitSignalObservation(input: SignalObservation): AssistanceCas
       (candidate) =>
         !TERMINAL_STATES.includes(candidate.state) &&
         candidate.stopCode === observation.stopCode &&
-        (!observation.busCandidate || candidate.busId === observation.busCandidate),
+        (!observation.busCandidate ||
+          candidate.busId === observation.busCandidate),
     );
     if (!completionCase) {
-      throw new OperationsNotFoundError("No active assistance case matches the completion signal");
+      throw new OperationsNotFoundError(
+        "No active assistance case matches the completion signal",
+      );
     }
-    getOperationsStore().update((state) => state.observations.push(observation));
+    getOperationsStore().update((state) =>
+      state.observations.push(observation),
+    );
     completionCase.completionDetectedAt = observation.observedAt;
     completionCase.completionConfidence = observation.confidence;
     completionCase.completionConfirmed = observation.confidence >= 0.9;
     if (observation.confidence < 0.9) {
       completionCase.state = "NEEDS_CONFIRMATION";
-      completionCase.escalationReason = "Boarding completion confidence is too low";
+      completionCase.escalationReason =
+        "Boarding completion confidence is too low";
       return saveAndPublish(completionCase);
     }
-    audit("ASSISTANCE_COMPLETION_DETECTED", observation.source, completionCase.caseId, completionCase.busId);
+    audit(
+      "ASSISTANCE_COMPLETION_DETECTED",
+      observation.source,
+      completionCase.caseId,
+      completionCase.busId,
+    );
     return progressTerminalTransition(completionCase, "COMPLETED", now);
   }
 
@@ -154,14 +171,18 @@ export function submitSignalObservation(input: SignalObservation): AssistanceCas
   target.passengerCount = new Set(
     target.intents.map((candidate) => candidate.anonymousToken),
   ).size;
-  target.confidence = Math.max(...target.intents.map((candidate) => candidate.confidence));
+  target.confidence = Math.max(
+    ...target.intents.map((candidate) => candidate.confidence),
+  );
   target.actionPlan = mergeActionPlan(target);
   target.state = confirmed ? "VALIDATED" : "NEEDS_CONFIRMATION";
   target.updatedAt = now;
 
   getOperationsStore().update((state) => {
     state.observations.push(observation);
-    const index = state.cases.findIndex((candidate) => candidate.caseId === target!.caseId);
+    const index = state.cases.findIndex(
+      (candidate) => candidate.caseId === target!.caseId,
+    );
     if (index >= 0) state.cases[index] = target!;
     else state.cases.push(target!);
   });
@@ -176,14 +197,17 @@ export function submitSignalObservation(input: SignalObservation): AssistanceCas
   return evaluateCase(target.caseId);
 }
 
-export function recordPassengerRequest(request: PassengerAssistanceRequest): AssistanceCase {
+export function recordPassengerRequest(
+  request: PassengerAssistanceRequest,
+): AssistanceCase {
   ensureMockVehicleCapability(request.busId, request.busService);
-  const sourceMap: Record<PassengerAssistanceRequest["source"], SignalSource> = {
-    MOBILE_APP: "APP",
-    PHYSICAL_BUTTON: "PHYSICAL_BUTTON",
-    RFID: "NFC",
-    AUTOMATIC_DETECTION: "CAMERA",
-  };
+  const sourceMap: Record<PassengerAssistanceRequest["source"], SignalSource> =
+    {
+      MOBILE_APP: "APP",
+      PHYSICAL_BUTTON: "PHYSICAL_BUTTON",
+      RFID: "NFC",
+      AUTOMATIC_DETECTION: "CAMERA",
+    };
   const caseRecord = submitSignalObservation({
     signalId: request.requestId,
     idempotencyKey: request.requestId,
@@ -228,7 +252,8 @@ export function synchronizeLegacyCaseStatus(
     item.state = "FAILED";
     const reason = "Passenger request delivery failed";
     item.escalationReason = reason;
-    if (!item.outcome.failures.includes(reason)) item.outcome.failures.push(reason);
+    if (!item.outcome.failures.includes(reason))
+      item.outcome.failures.push(reason);
   } else {
     return item;
   }
@@ -243,8 +268,12 @@ export function registerVehicleCapability(
 ): VehicleCapability {
   if (
     !capability.busId ||
-    [capability.ramp, capability.externalAudio, capability.visualDisplay, capability.dwellControl]
-      .some((value) => typeof value !== "boolean") ||
+    [
+      capability.ramp,
+      capability.externalAudio,
+      capability.visualDisplay,
+      capability.dwellControl,
+    ].some((value) => typeof value !== "boolean") ||
     !Number.isInteger(capability.wheelchairSpaceCapacity) ||
     capability.wheelchairSpaceCapacity < 0 ||
     !Array.isArray(capability.supportedTelemetry)
@@ -253,7 +282,9 @@ export function registerVehicleCapability(
   }
   const normalized = { ...capability, updatedAt: new Date().toISOString() };
   getOperationsStore().update((state) => {
-    const index = state.capabilities.findIndex((item) => item.busId === capability.busId);
+    const index = state.capabilities.findIndex(
+      (item) => item.busId === capability.busId,
+    );
     if (index >= 0) state.capabilities[index] = normalized;
     else state.capabilities.push(normalized);
   });
@@ -267,9 +298,20 @@ export function registerVehicleCapability(
 export function ingestSafetyTelemetry(input: SafetyTelemetry): SafetyTelemetry {
   if (
     !input.busId ||
-    [input.vehicleStopped, input.parkingBrakeActive, input.doorOpen, input.deploymentPathClear]
-      .some((value) => typeof value !== "boolean") ||
-    !["STOWED", "DEPLOYING", "DEPLOYED", "RETRACTING", "FAULT", "UNKNOWN"].includes(input.rampPosition)
+    [
+      input.vehicleStopped,
+      input.parkingBrakeActive,
+      input.doorOpen,
+      input.deploymentPathClear,
+    ].some((value) => typeof value !== "boolean") ||
+    ![
+      "STOWED",
+      "DEPLOYING",
+      "DEPLOYED",
+      "RETRACTING",
+      "FAULT",
+      "UNKNOWN",
+    ].includes(input.rampPosition)
   ) {
     throw new OperationsValidationError("Invalid safety telemetry payload");
   }
@@ -294,11 +336,18 @@ export function ingestSafetyTelemetry(input: SafetyTelemetry): SafetyTelemetry {
   const current = getOperationsStore()
     .snapshot()
     .safetyTelemetry.find((item) => item.busId === input.busId);
-  if (current && new Date(telemetry.observedAt) < new Date(current.observedAt)) {
-    throw new OperationsValidationError("Stale telemetry cannot replace newer telemetry");
+  if (
+    current &&
+    new Date(telemetry.observedAt) < new Date(current.observedAt)
+  ) {
+    throw new OperationsValidationError(
+      "Stale telemetry cannot replace newer telemetry",
+    );
   }
   getOperationsStore().update((state) => {
-    const index = state.safetyTelemetry.findIndex((item) => item.busId === telemetry.busId);
+    const index = state.safetyTelemetry.findIndex(
+      (item) => item.busId === telemetry.busId,
+    );
     if (index >= 0) state.safetyTelemetry[index] = telemetry;
     else state.safetyTelemetry.push(telemetry);
   });
@@ -310,6 +359,26 @@ export function ingestSafetyTelemetry(input: SafetyTelemetry): SafetyTelemetry {
     fresh: isTelemetryFresh(telemetry),
     timestamp: new Date().toISOString(),
   });
+  const presence = deriveStopVehiclePresence(telemetry);
+  if (presence) {
+    emit({
+      type: "STOP_VEHICLE_PRESENCE",
+      stopCode: presence.stopCode,
+      vehicle: presence,
+      timestamp: new Date().toISOString(),
+    });
+  }
+  if (current?.stopCode && current.stopCode !== telemetry.stopCode) {
+    const departed = createDepartedStopVehiclePresence(current);
+    if (departed) {
+      emit({
+        type: "STOP_VEHICLE_PRESENCE",
+        stopCode: departed.stopCode,
+        vehicle: departed,
+        timestamp: new Date().toISOString(),
+      });
+    }
+  }
   audit("SAFETY_TELEMETRY_RECEIVED", "VEHICLE", undefined, telemetry.busId, {
     stopCode: telemetry.stopCode,
     rampPosition: telemetry.rampPosition,
@@ -323,7 +392,15 @@ export function ingestSafetyTelemetry(input: SafetyTelemetry): SafetyTelemetry {
 
 export function updateActuatorStatus(input: ActuatorStatus): AssistanceCase {
   if (
-    !["ISSUED", "ACCEPTED", "IN_PROGRESS", "COMPLETED", "CANCELLED", "BLOCKED", "FAILED"].includes(input.state)
+    ![
+      "ISSUED",
+      "ACCEPTED",
+      "IN_PROGRESS",
+      "COMPLETED",
+      "CANCELLED",
+      "BLOCKED",
+      "FAILED",
+    ].includes(input.state)
   ) {
     throw new OperationsValidationError("Invalid actuator state");
   }
@@ -334,26 +411,39 @@ export function updateActuatorStatus(input: ActuatorStatus): AssistanceCase {
   );
   if (!command) throw new OperationsNotFoundError("Actuator command not found");
   if (command.caseId !== input.caseId || command.busId !== input.busId) {
-    throw new OperationsValidationError("Actuator status does not match its command");
+    throw new OperationsValidationError(
+      "Actuator status does not match its command",
+    );
   }
   const currentStatus = snapshot.actuatorStatuses.find(
     (candidate) => candidate.commandId === input.commandId,
   );
   if (
     currentStatus &&
-    ["COMPLETED", "CANCELLED", "BLOCKED", "FAILED"].includes(currentStatus.state) &&
+    ["COMPLETED", "CANCELLED", "BLOCKED", "FAILED"].includes(
+      currentStatus.state,
+    ) &&
     currentStatus.state !== input.state
   ) {
-    throw new OperationsValidationError("Terminal actuator status cannot be changed");
+    throw new OperationsValidationError(
+      "Terminal actuator status cannot be changed",
+    );
   }
   if (
-    new Date(input.updatedAt).getTime() > new Date(command.expiresAt).getTime() &&
-    (!currentStatus || ["ISSUED", "ACCEPTED", "IN_PROGRESS"].includes(currentStatus.state))
+    new Date(input.updatedAt).getTime() >
+      new Date(command.expiresAt).getTime() &&
+    (!currentStatus ||
+      ["ISSUED", "ACCEPTED", "IN_PROGRESS"].includes(currentStatus.state))
   ) {
     expireActuatorCommands(new Date(input.updatedAt).getTime());
-    throw new OperationsValidationError("Actuator command expired before this status update");
+    throw new OperationsValidationError(
+      "Actuator command expired before this status update",
+    );
   }
-  if (currentStatus && new Date(input.updatedAt) < new Date(currentStatus.updatedAt)) {
+  if (
+    currentStatus &&
+    new Date(input.updatedAt) < new Date(currentStatus.updatedAt)
+  ) {
     throw new OperationsValidationError("Stale actuator status rejected");
   }
   getOperationsStore().update((state) => {
@@ -444,7 +534,9 @@ export function assignCaseVehicle(
 export function recordDeviceHeartbeat(input: DeviceHealth): DeviceHealth {
   validateIsoDate(input.observedAt, "observedAt");
   getOperationsStore().update((state) => {
-    const index = state.devices.findIndex((item) => item.deviceId === input.deviceId);
+    const index = state.devices.findIndex(
+      (item) => item.deviceId === input.deviceId,
+    );
     if (index >= 0) state.devices[index] = input;
     else state.devices.push(input);
   });
@@ -469,20 +561,29 @@ export function recordPassengerFeedback(
   item.outcome.passengerFeedbackScore = score;
   item.updatedAt = new Date().toISOString();
   saveCase(item);
-  audit("PASSENGER_FEEDBACK_RECORDED", "PASSENGER", caseId, item.busId, { score });
+  audit("PASSENGER_FEEDBACK_RECORDED", "PASSENGER", caseId, item.busId, {
+    score,
+  });
   return item;
 }
 
-export function getCase(caseId: string, refresh = true): AssistanceCase | undefined {
+export function getCase(
+  caseId: string,
+  refresh = true,
+): AssistanceCase | undefined {
   if (refresh) refreshStaleCases();
-  return getOperationsStore().snapshot().cases.find((item) => item.caseId === caseId);
+  return getOperationsStore()
+    .snapshot()
+    .cases.find((item) => item.caseId === caseId);
 }
 
-export function listCases(options: {
-  busId?: string;
-  state?: AssistanceCaseState;
-  refresh?: boolean;
-} = {}): AssistanceCase[] {
+export function listCases(
+  options: {
+    busId?: string;
+    state?: AssistanceCaseState;
+    refresh?: boolean;
+  } = {},
+): AssistanceCase[] {
   if (options.refresh !== false) refreshStaleCases();
   return getOperationsStore()
     .snapshot()
@@ -498,7 +599,9 @@ export function listVehicleCapabilities(): VehicleCapability[] {
   return getOperationsStore().snapshot().capabilities;
 }
 
-export function getLatestSafetyTelemetry(busId: string): SafetyTelemetry | undefined {
+export function getLatestSafetyTelemetry(
+  busId: string,
+): SafetyTelemetry | undefined {
   return getOperationsStore()
     .snapshot()
     .safetyTelemetry.find((item) => item.busId === busId);
@@ -513,7 +616,9 @@ export function listPendingActuatorCommands(busId?: string): ActuatorCommand[] {
     const status = state.actuatorStatuses.find(
       (candidate) => candidate.commandId === command.commandId,
     );
-    return !status || ["ISSUED", "ACCEPTED", "IN_PROGRESS"].includes(status.state);
+    return (
+      !status || ["ISSUED", "ACCEPTED", "IN_PROGRESS"].includes(status.state)
+    );
   });
 }
 
@@ -543,9 +648,13 @@ export function getAssistanceMetrics(): AssistanceMetrics {
   );
   return {
     totalCases: state.cases.length,
-    activeCases: state.cases.filter((item) => !TERMINAL_STATES.includes(item.state)).length,
-    completedCases: state.cases.filter((item) => item.state === "COMPLETED").length,
-    escalatedCases: state.cases.filter((item) => item.state === "ESCALATED").length,
+    activeCases: state.cases.filter(
+      (item) => !TERMINAL_STATES.includes(item.state),
+    ).length,
+    completedCases: state.cases.filter((item) => item.state === "COMPLETED")
+      .length,
+    escalatedCases: state.cases.filter((item) => item.state === "ESCALATED")
+      .length,
     failedCases: state.cases.filter((item) => item.state === "FAILED").length,
     explicitRequests: state.observations.filter(
       (item) => !SENSOR_SOURCES.includes(item.source),
@@ -557,7 +666,10 @@ export function getAssistanceMetrics(): AssistanceMetrics {
     medianCompletionMs: percentile(completionTimes, 0.5),
     operatorInterventionRate:
       state.cases.length === 0 ? 0 : interventions / state.cases.length,
-    safetyBlocks: state.cases.reduce((sum, item) => sum + item.outcome.safetyBlocks, 0),
+    safetyBlocks: state.cases.reduce(
+      (sum, item) => sum + item.outcome.safetyBlocks,
+      0,
+    ),
     averagePassengerFeedback:
       feedback.length === 0
         ? undefined
@@ -578,7 +690,8 @@ function evaluateCase(caseId: string): AssistanceCase {
   if (item.completionDetectedAt) {
     if (!item.completionConfirmed) {
       item.state = "NEEDS_CONFIRMATION";
-      item.escalationReason = "Boarding or alighting completion needs confirmation";
+      item.escalationReason =
+        "Boarding or alighting completion needs confirmation";
       return saveAndPublish(item);
     }
     return progressTerminalTransition(item, "COMPLETED");
@@ -591,11 +704,13 @@ function evaluateCase(caseId: string): AssistanceCase {
   );
   const unconfirmedUnsafeIntent = item.intents.some(
     (intent) =>
-      !intent.confirmed && intent.assistanceTypes.some((type) => type !== "EXTENDED_DWELL_TIME"),
+      !intent.confirmed &&
+      intent.assistanceTypes.some((type) => type !== "EXTENDED_DWELL_TIME"),
   );
   if (confirmedTypes.length === 0 && unconfirmedUnsafeIntent) {
     item.state = "NEEDS_CONFIRMATION";
-    item.escalationReason = "Sensor-only assistance requires passenger or operator confirmation";
+    item.escalationReason =
+      "Sensor-only assistance requires passenger or operator confirmation";
     return saveAndPublish(item);
   }
   if (!item.busId) {
@@ -615,22 +730,30 @@ function evaluateCase(caseId: string): AssistanceCase {
   if (unsupported.length) {
     return escalate(item, `Vehicle cannot provide: ${unsupported.join(", ")}`);
   }
-  if (item.assistanceTypes.includes("WHEELCHAIR_RAMP") && capability.wheelchairSpaceCapacity < 1) {
-    return escalate(item, "No wheelchair space is available on the assigned vehicle");
+  if (
+    item.assistanceTypes.includes("WHEELCHAIR_RAMP") &&
+    capability.wheelchairSpaceCapacity < 1
+  ) {
+    return escalate(
+      item,
+      "No wheelchair space is available on the assigned vehicle",
+    );
   }
 
   item.state = "VEHICLE_ASSIGNED";
   item.escalationReason = undefined;
   if (!item.acknowledgedAt) {
     item.acknowledgedAt = now;
-    item.outcome.acknowledgedLatencyMs = Date.now() - new Date(item.createdAt).getTime();
+    item.outcome.acknowledgedLatencyMs =
+      Date.now() - new Date(item.createdAt).getTime();
   }
   issueNonRampCommands(item);
 
   if (item.assistanceTypes.includes("WHEELCHAIR_RAMP")) {
     if (!confirmedTypes.includes("WHEELCHAIR_RAMP")) {
       item.state = "NEEDS_CONFIRMATION";
-      item.escalationReason = "Ramp deployment requires confirmed passenger intent";
+      item.escalationReason =
+        "Ramp deployment requires confirmed passenger intent";
       return saveAndPublish(item);
     }
     const telemetry = getLatestSafetyTelemetry(item.busId);
@@ -656,7 +779,8 @@ function progressTerminalTransition(
 ): AssistanceCase {
   const state = getOperationsStore().snapshot();
   const deployCommand = state.actuatorCommands.find(
-    (command) => command.caseId === item.caseId && command.command === "DEPLOY_RAMP",
+    (command) =>
+      command.caseId === item.caseId && command.command === "DEPLOY_RAMP",
   );
   if (!item.assistanceTypes.includes("WHEELCHAIR_RAMP") || !deployCommand) {
     return finalizeTerminalTransition(item, terminalState, requestedAt);
@@ -665,22 +789,37 @@ function progressTerminalTransition(
   const deployStatus = state.actuatorStatuses.find(
     (status) => status.commandId === deployCommand.commandId,
   );
-  if (terminalState === "CANCELLED" && (!deployStatus || deployStatus.state === "ISSUED")) {
+  if (
+    terminalState === "CANCELLED" &&
+    (!deployStatus || deployStatus.state === "ISSUED")
+  ) {
     cancelUnstartedRampDeployment(item, deployCommand);
   }
-  const telemetry = item.busId ? getLatestSafetyTelemetry(item.busId) : undefined;
+  const telemetry = item.busId
+    ? getLatestSafetyTelemetry(item.busId)
+    : undefined;
   if (!telemetry || !isTelemetryFresh(telemetry)) {
-    return block(item, "Ramp position cannot be verified before closing the assistance case");
+    return block(
+      item,
+      "Ramp position cannot be verified before closing the assistance case",
+    );
   }
   if (telemetry.rampPosition === "STOWED") {
     return finalizeTerminalTransition(item, terminalState, requestedAt);
   }
-  if (telemetry.rampPosition === "FAULT" || telemetry.rampPosition === "UNKNOWN") {
-    return block(item, "Ramp must be inspected because its stowed position is not verified");
+  if (
+    telemetry.rampPosition === "FAULT" ||
+    telemetry.rampPosition === "UNKNOWN"
+  ) {
+    return block(
+      item,
+      "Ramp must be inspected because its stowed position is not verified",
+    );
   }
   if (telemetry.rampPosition === "DEPLOYING") {
     item.state = "ACTUATING";
-    item.escalationReason = "Waiting for ramp deployment to stop before safe retraction";
+    item.escalationReason =
+      "Waiting for ramp deployment to stop before safe retraction";
     return saveAndPublish(item);
   }
 
@@ -710,7 +849,10 @@ function progressTerminalTransition(
     retractStatus?.state === "COMPLETED" &&
     Date.now() - Date.parse(retractStatus.updatedAt) > 2_000
   ) {
-    return block(item, "Ramp controller completed but the stowed limit switch was not verified");
+    return block(
+      item,
+      "Ramp controller completed but the stowed limit switch was not verified",
+    );
   }
   return saveAndPublish(item);
 }
@@ -788,25 +930,30 @@ function rampRetractionSafetyFailure(
     return "Vehicle is at a different stop";
   }
   if (!telemetry.vehicleStopped) return "Vehicle moved before ramp retraction";
-  if (!telemetry.parkingBrakeActive) return "Parking brake released before ramp retraction";
+  if (!telemetry.parkingBrakeActive)
+    return "Parking brake released before ramp retraction";
   if (!telemetry.doorOpen) return "Door closed before ramp retraction";
-  if (!telemetry.deploymentPathClear) return "Passenger or object remains in the ramp path";
-  if (telemetry.rampObstacle?.blocksDeployment) return telemetry.rampObstacle.reason;
+  if (!telemetry.deploymentPathClear)
+    return "Passenger or object remains in the ramp path";
+  if (telemetry.rampObstacle?.blocksDeployment)
+    return telemetry.rampObstacle.reason;
   if (telemetry.networkOnline === false) return "Vehicle controller is offline";
   return undefined;
 }
 
 function finishFromActuatorStatuses(item: AssistanceCase): AssistanceCase {
   const state = getOperationsStore().snapshot();
-  const commands = state.actuatorCommands.filter((command) => command.caseId === item.caseId);
+  const commands = state.actuatorCommands.filter(
+    (command) => command.caseId === item.caseId,
+  );
   const statuses = commands.map((command) => ({
     command,
     status: state.actuatorStatuses.find(
       (candidate) => candidate.commandId === command.commandId,
     ),
   }));
-  const failure = statuses.find(({ status }) =>
-    status && ["BLOCKED", "FAILED"].includes(status.state),
+  const failure = statuses.find(
+    ({ status }) => status && ["BLOCKED", "FAILED"].includes(status.state),
   );
   if (failure?.status) {
     return failure.status.state === "FAILED"
@@ -815,16 +962,30 @@ function finishFromActuatorStatuses(item: AssistanceCase): AssistanceCase {
   }
   if (commands.length === 0) return saveAndPublish(item);
   item.state = "ACTUATING";
-  const allComplete = statuses.every(({ status }) => status?.state === "COMPLETED");
+  const allComplete = statuses.every(
+    ({ status }) => status?.state === "COMPLETED",
+  );
   if (!allComplete) return saveAndPublish(item);
   if (commands.some((command) => command.command === "DEPLOY_RAMP")) {
-    const telemetry = item.busId ? getLatestSafetyTelemetry(item.busId) : undefined;
-    if (!telemetry || !isTelemetryFresh(telemetry) || telemetry.rampPosition !== "DEPLOYED") {
-      return block(item, "Ramp completion was not verified by the deployed limit switch");
+    const telemetry = item.busId
+      ? getLatestSafetyTelemetry(item.busId)
+      : undefined;
+    if (
+      !telemetry ||
+      !isTelemetryFresh(telemetry) ||
+      telemetry.rampPosition !== "DEPLOYED"
+    ) {
+      return block(
+        item,
+        "Ramp completion was not verified by the deployed limit switch",
+      );
     }
   }
   item.state = "READY";
-  item.actionPlan = item.actionPlan.map((plan) => ({ ...plan, status: "READY" }));
+  item.actionPlan = item.actionPlan.map((plan) => ({
+    ...plan,
+    status: "READY",
+  }));
   return saveAndPublish(item);
 }
 
@@ -835,7 +996,9 @@ function expireActuatorCommands(nowMs = Date.now()): void {
     const status = snapshot.actuatorStatuses.find(
       (candidate) => candidate.commandId === command.commandId,
     );
-    return !status || ["ISSUED", "ACCEPTED", "IN_PROGRESS"].includes(status.state);
+    return (
+      !status || ["ISSUED", "ACCEPTED", "IN_PROGRESS"].includes(status.state)
+    );
   });
   if (expired.length === 0) return;
 
@@ -859,11 +1022,17 @@ function expireActuatorCommands(nowMs = Date.now()): void {
   });
 
   for (const command of expired) {
-    audit("ACTUATOR_COMMAND_EXPIRED", "ORCHESTRATOR", command.caseId, command.busId, {
-      commandId: command.commandId,
-      command: command.command,
-      expiresAt: command.expiresAt,
-    });
+    audit(
+      "ACTUATOR_COMMAND_EXPIRED",
+      "ORCHESTRATOR",
+      command.caseId,
+      command.busId,
+      {
+        commandId: command.commandId,
+        command: command.command,
+        expiresAt: command.expiresAt,
+      },
+    );
     evaluateCase(command.caseId);
   }
 }
@@ -890,7 +1059,8 @@ function issueCommand(
 ): ActuatorCommand {
   const state = getOperationsStore().snapshot();
   const existing = state.actuatorCommands.find(
-    (candidate) => candidate.caseId === item.caseId && candidate.command === commandType,
+    (candidate) =>
+      candidate.caseId === item.caseId && candidate.command === commandType,
   );
   if (existing) return existing;
   const issuedAt = new Date().toISOString();
@@ -907,7 +1077,8 @@ function issueCommand(
   };
   getOperationsStore().update((next) => next.actuatorCommands.push(command));
   const plan = item.actionPlan.find(
-    (candidate) => candidate.action === commandType && candidate.status === "PLANNED",
+    (candidate) =>
+      candidate.action === commandType && candidate.status === "PLANNED",
   );
   if (plan) {
     plan.status = "COMMAND_ISSUED";
@@ -920,23 +1091,30 @@ function issueCommand(
   return command;
 }
 
-function rampSafetyFailure(item: AssistanceCase, telemetry: SafetyTelemetry): string | undefined {
-  if (telemetry.stopCode && telemetry.stopCode !== item.stopCode) return "Vehicle is at a different stop";
+function rampSafetyFailure(
+  item: AssistanceCase,
+  telemetry: SafetyTelemetry,
+): string | undefined {
+  if (telemetry.stopCode && telemetry.stopCode !== item.stopCode)
+    return "Vehicle is at a different stop";
   if (!telemetry.vehicleStopped) return "Vehicle is not stopped";
   if (!telemetry.parkingBrakeActive) return "Parking brake is not active";
   if (!telemetry.doorOpen) return "Door is not open";
-  if (!telemetry.deploymentPathClear) return "Ramp deployment path is obstructed";
+  if (!telemetry.deploymentPathClear)
+    return "Ramp deployment path is obstructed";
   if (telemetry.rampObstacle?.blocksDeployment) {
     return telemetry.rampObstacle.reason;
   }
-  if (telemetry.rampPosition === "FAULT") return "Ramp position sensor reports a fault";
+  if (telemetry.rampPosition === "FAULT")
+    return "Ramp position sensor reports a fault";
   if (telemetry.wheelchairSpaceOccupied) return "Wheelchair space is occupied";
   if (telemetry.networkOnline === false) return "Vehicle controller is offline";
   return undefined;
 }
 
 function block(item: AssistanceCase, reason: string): AssistanceCase {
-  const isNewBlock = item.state !== "BLOCKED" || item.escalationReason !== reason;
+  const isNewBlock =
+    item.state !== "BLOCKED" || item.escalationReason !== reason;
   item.state = "BLOCKED";
   item.escalationReason = reason;
   item.actionPlan = item.actionPlan.map((plan) =>
@@ -953,7 +1131,8 @@ function block(item: AssistanceCase, reason: string): AssistanceCase {
 function fail(item: AssistanceCase, reason: string): AssistanceCase {
   item.state = "FAILED";
   item.escalationReason = reason;
-  if (!item.outcome.failures.includes(reason)) item.outcome.failures.push(reason);
+  if (!item.outcome.failures.includes(reason))
+    item.outcome.failures.push(reason);
   const saved = saveAndPublish(item);
   emitEscalation(saved);
   return saved;
@@ -1002,7 +1181,9 @@ function saveAndPublish(item: AssistanceCase): AssistanceCase {
 function saveCase(item: AssistanceCase): void {
   item.boardingIntent = deriveBoardingIntent(item);
   getOperationsStore().update((state) => {
-    const index = state.cases.findIndex((candidate) => candidate.caseId === item.caseId);
+    const index = state.cases.findIndex(
+      (candidate) => candidate.caseId === item.caseId,
+    );
     if (index < 0) state.cases.push(item);
     else state.cases[index] = item;
   });
@@ -1055,7 +1236,9 @@ function deriveBoardingIntent(item: AssistanceCase): BoardingIntentAssessment {
   if (confirmed.length > 0) {
     return {
       decision: "CONFIRMED",
-      confidence: Math.max(...confirmed.map((candidate) => candidate.confidence)),
+      confidence: Math.max(
+        ...confirmed.map((candidate) => candidate.confidence),
+      ),
       targetBusId: item.busId,
       reason: "Passenger or operator explicitly confirmed this vehicle",
       evidence,
@@ -1066,24 +1249,25 @@ function deriveBoardingIntent(item: AssistanceCase): BoardingIntentAssessment {
     (candidate) => candidate.kind === "PASSENGER_IN_BOARDING_ZONE",
   );
   const mobilityIndicator = evidence.find((candidate) =>
-    ["WHEELCHAIR_DETECTED", "WALKING_AID_DETECTED", "STROLLER_DETECTED"].includes(
-      candidate.kind,
-    ),
+    [
+      "WHEELCHAIR_DETECTED",
+      "WALKING_AID_DETECTED",
+      "STROLLER_DETECTED",
+    ].includes(candidate.kind),
   );
-  const telemetry = item.busId ? getLatestSafetyTelemetry(item.busId) : undefined;
+  const telemetry = item.busId
+    ? getLatestSafetyTelemetry(item.busId)
+    : undefined;
   const assignedBusAtStop = Boolean(
     telemetry &&
-      isTelemetryFresh(telemetry) &&
-      telemetry.vehicleStopped &&
-      (!telemetry.stopCode || telemetry.stopCode === item.stopCode),
+    isTelemetryFresh(telemetry) &&
+    telemetry.vehicleStopped &&
+    (!telemetry.stopCode || telemetry.stopCode === item.stopCode),
   );
   if (boardingZone && (mobilityIndicator || assignedBusAtStop)) {
     const confidence = Math.min(
       0.89,
-      Math.max(
-        boardingZone.confidence,
-        mobilityIndicator?.confidence ?? 0,
-      ),
+      Math.max(boardingZone.confidence, mobilityIndicator?.confidence ?? 0),
     );
     return {
       decision: "LIKELY",
@@ -1098,10 +1282,14 @@ function deriveBoardingIntent(item: AssistanceCase): BoardingIntentAssessment {
   return {
     decision: "UNCONFIRMED",
     confidence: evidence.length
-      ? Math.min(0.79, Math.max(...evidence.map((candidate) => candidate.confidence)))
+      ? Math.min(
+          0.79,
+          Math.max(...evidence.map((candidate) => candidate.confidence)),
+        )
       : 0,
     targetBusId: item.busId,
-    reason: "Presence or mobility detection alone does not prove boarding intent",
+    reason:
+      "Presence or mobility detection alone does not prove boarding intent",
     evidence,
     assessedAt,
   };
@@ -1116,7 +1304,9 @@ function refreshStaleCases(): void {
       ["SAFE_TO_ACTUATE", "ACTUATING"].includes(item.state)
     ) {
       const telemetry = item.busId
-        ? state.safetyTelemetry.find((candidate) => candidate.busId === item.busId)
+        ? state.safetyTelemetry.find(
+            (candidate) => candidate.busId === item.busId,
+          )
         : undefined;
       if (telemetry && !isTelemetryFresh(telemetry)) {
         block(item, "Vehicle safety telemetry is stale");
@@ -1126,13 +1316,20 @@ function refreshStaleCases(): void {
 }
 
 function requireCase(caseId: string): AssistanceCase {
-  const item = getOperationsStore().snapshot().cases.find((candidate) => candidate.caseId === caseId);
+  const item = getOperationsStore()
+    .snapshot()
+    .cases.find((candidate) => candidate.caseId === caseId);
   if (!item) throw new OperationsNotFoundError("Assistance case not found");
   return item;
 }
 
 function ensureMockVehicleCapability(busId: string, busService?: string): void {
-  if (getOperationsStore().snapshot().capabilities.some((item) => item.busId === busId)) return;
+  if (
+    getOperationsStore()
+      .snapshot()
+      .capabilities.some((item) => item.busId === busId)
+  )
+    return;
   const bus = getBusById(busId);
   registerVehicleCapability({
     busId,
@@ -1156,7 +1353,10 @@ function ensureMockVehicleCapability(busId: string, busService?: string): void {
   });
 }
 
-function capabilitySupports(capability: VehicleCapability, type: AssistanceType): boolean {
+function capabilitySupports(
+  capability: VehicleCapability,
+  type: AssistanceType,
+): boolean {
   if (type === "WHEELCHAIR_RAMP") return capability.ramp;
   if (type === "BUS_AUDIO_IDENTIFICATION") {
     return capability.externalAudio && capability.visualDisplay;
@@ -1165,33 +1365,62 @@ function capabilitySupports(capability: VehicleCapability, type: AssistanceType)
 }
 
 function mergeActionPlan(item: AssistanceCase): AssistanceCase["actionPlan"] {
-  const desired: Array<Omit<AssistanceActionPlanItem, "status" | "commandId">> = [];
+  const desired: Array<Omit<AssistanceActionPlanItem, "status" | "commandId">> =
+    [];
   item.assistanceTypes.forEach((type) => {
     if (type === "WHEELCHAIR_RAMP") {
-      desired.push({ assistanceType: type, action: "DEPLOY_RAMP", requiresSafetyClearance: true });
+      desired.push({
+        assistanceType: type,
+        action: "DEPLOY_RAMP",
+        requiresSafetyClearance: true,
+      });
       return;
     }
     if (type === "EXTENDED_DWELL_TIME") {
-      desired.push({ assistanceType: type, action: "EXTEND_DWELL", requiresSafetyClearance: false });
+      desired.push({
+        assistanceType: type,
+        action: "EXTEND_DWELL",
+        requiresSafetyClearance: false,
+      });
       return;
     }
     desired.push(
-      { assistanceType: type, action: "PLAY_EXTERNAL_AUDIO" as const, requiresSafetyClearance: false },
-      { assistanceType: type, action: "SHOW_VISUAL_MESSAGE" as const, requiresSafetyClearance: false },
-      { assistanceType: type, action: "VIBRATE_STOP_CONTROL" as const, requiresSafetyClearance: false },
+      {
+        assistanceType: type,
+        action: "PLAY_EXTERNAL_AUDIO" as const,
+        requiresSafetyClearance: false,
+      },
+      {
+        assistanceType: type,
+        action: "SHOW_VISUAL_MESSAGE" as const,
+        requiresSafetyClearance: false,
+      },
+      {
+        assistanceType: type,
+        action: "VIBRATE_STOP_CONTROL" as const,
+        requiresSafetyClearance: false,
+      },
     );
   });
   return desired.map((candidate) => {
-    const existing = item.actionPlan.find((plan) => plan.action === candidate.action);
+    const existing = item.actionPlan.find(
+      (plan) => plan.action === candidate.action,
+    );
     return existing ?? { ...candidate, status: "PLANNED" as const };
   });
 }
 
 function validateObservation(input: SignalObservation): void {
   if (!input.signalId || !input.stopCode || !input.anonymousToken) {
-    throw new OperationsValidationError("signalId, stopCode and anonymousToken are required");
+    throw new OperationsValidationError(
+      "signalId, stopCode and anonymousToken are required",
+    );
   }
-  if (!Number.isFinite(input.confidence) || input.confidence < 0 || input.confidence > 1) {
+  if (
+    !Number.isFinite(input.confidence) ||
+    input.confidence < 0 ||
+    input.confidence > 1
+  ) {
     throw new OperationsValidationError("confidence must be between 0 and 1");
   }
   if (
@@ -1203,16 +1432,26 @@ function validateObservation(input: SignalObservation): void {
       "HUMAN_HELP_REQUESTED",
     ].includes(input.kind)
   ) {
-    throw new OperationsValidationError("At least one assistance candidate is required");
+    throw new OperationsValidationError(
+      "At least one assistance candidate is required",
+    );
   }
   const allowedSources: SignalSource[] = [
-    "APP", "PHYSICAL_BUTTON", "NFC", "CAMERA", "PRESSURE_SENSOR", "DISTANCE_SENSOR", "OPERATOR",
+    "APP",
+    "PHYSICAL_BUTTON",
+    "NFC",
+    "CAMERA",
+    "PRESSURE_SENSOR",
+    "DISTANCE_SENSOR",
+    "OPERATOR",
   ];
   if (!allowedSources.includes(input.source)) {
     throw new OperationsValidationError("Unsupported signal source");
   }
   const allowedTypes: AssistanceType[] = [
-    "WHEELCHAIR_RAMP", "BUS_AUDIO_IDENTIFICATION", "EXTENDED_DWELL_TIME",
+    "WHEELCHAIR_RAMP",
+    "BUS_AUDIO_IDENTIFICATION",
+    "EXTENDED_DWELL_TIME",
   ];
   if (input.assistanceCandidates.some((type) => !allowedTypes.includes(type))) {
     throw new OperationsValidationError("Unsupported assistance candidate");
@@ -1220,7 +1459,8 @@ function validateObservation(input: SignalObservation): void {
   validateIsoDate(input.observedAt, "observedAt");
   if (
     SENSOR_SOURCES.includes(input.source) &&
-    Date.now() - new Date(input.observedAt).getTime() > SENSOR_OBSERVATION_MAX_AGE_MS
+    Date.now() - new Date(input.observedAt).getTime() >
+      SENSOR_OBSERVATION_MAX_AGE_MS
   ) {
     throw new OperationsValidationError("Stale sensor observation rejected");
   }
@@ -1237,12 +1477,17 @@ function sanitizeObservation(input: SignalObservation): SignalObservation {
 
 function validateIsoDate(value: string, field: string): void {
   if (!value || Number.isNaN(new Date(value).getTime())) {
-    throw new OperationsValidationError(`${field} must be a valid ISO timestamp`);
+    throw new OperationsValidationError(
+      `${field} must be a valid ISO timestamp`,
+    );
   }
 }
 
 function isTelemetryFresh(telemetry: SafetyTelemetry): boolean {
-  return Math.abs(Date.now() - new Date(telemetry.observedAt).getTime()) <= TELEMETRY_FRESHNESS_MS;
+  return (
+    Math.abs(Date.now() - new Date(telemetry.observedAt).getTime()) <=
+    TELEMETRY_FRESHNESS_MS
+  );
 }
 
 function audit(
@@ -1272,8 +1517,14 @@ function unique<T>(values: T[]): T[] {
   return [...new Set(values)];
 }
 
-function percentile(values: number[], percentileValue: number): number | undefined {
+function percentile(
+  values: number[],
+  percentileValue: number,
+): number | undefined {
   if (!values.length) return undefined;
-  const index = Math.min(values.length - 1, Math.ceil(values.length * percentileValue) - 1);
+  const index = Math.min(
+    values.length - 1,
+    Math.ceil(values.length * percentileValue) - 1,
+  );
   return values[index];
 }

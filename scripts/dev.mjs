@@ -28,9 +28,9 @@ function delay(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
-function portIsOpen(port) {
+function portIsOpenOnHost(port, host) {
   return new Promise((resolve) => {
-    const socket = net.createConnection({ host: "127.0.0.1", port });
+    const socket = net.createConnection({ host, port });
     const finish = (open) => {
       socket.destroy();
       resolve(open);
@@ -42,9 +42,17 @@ function portIsOpen(port) {
   });
 }
 
-async function fetchWithTimeout(url, responseType) {
+async function portIsOpen(port) {
+  const loopbackResults = await Promise.all([
+    portIsOpenOnHost(port, "127.0.0.1"),
+    portIsOpenOnHost(port, "::1"),
+  ]);
+  return loopbackResults.some(Boolean);
+}
+
+async function fetchWithTimeout(url, responseType, timeoutMs = 5_000) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 1_500);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetch(url, { signal: controller.signal });
     if (!response.ok) return null;
@@ -59,21 +67,36 @@ async function fetchWithTimeout(url, responseType) {
 }
 
 async function classifyFrontend() {
-  const html = await fetchWithTimeout(frontendUrl, "text");
-  if (typeof html === "string" && html.includes("<title>SG GoAssist</title>")) {
-    return "goassist";
+  for (const url of [
+    frontendUrl,
+    `http://127.0.0.1:${frontendPort}`,
+    `http://[::1]:${frontendPort}`,
+  ]) {
+    const html = await fetchWithTimeout(url, "text");
+    if (
+      typeof html === "string" &&
+      html.includes("<title>SG GoAssist</title>")
+    ) {
+      return "goassist";
+    }
   }
   return (await portIsOpen(frontendPort)) ? "occupied" : "available";
 }
 
 async function classifyBackend() {
-  const health = await fetchWithTimeout(`${backendUrl}/health`, "json");
-  if (
-    health?.status === "ok" &&
-    typeof health.connectedWebSocketClients === "number" &&
-    typeof health.activeRequests === "number"
-  ) {
-    return "goassist";
+  for (const url of [
+    `${backendUrl}/health`,
+    `http://127.0.0.1:${backendPort}/health`,
+    `http://[::1]:${backendPort}/health`,
+  ]) {
+    const health = await fetchWithTimeout(url, "json");
+    if (
+      health?.status === "ok" &&
+      typeof health.connectedWebSocketClients === "number" &&
+      typeof health.activeRequests === "number"
+    ) {
+      return "goassist";
+    }
   }
   return (await portIsOpen(backendPort)) ? "occupied" : "available";
 }

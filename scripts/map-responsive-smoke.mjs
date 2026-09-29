@@ -5,7 +5,7 @@ import { join, resolve } from "node:path";
 
 const APP_URL = process.env.GOASSIST_APP_URL ?? "http://localhost:8081";
 const DEBUG_PORT = Number(process.env.GOASSIST_CDP_PORT ?? 9333);
-const WIDTHS = [280, 320, 360, 390, 430];
+const WIDTHS = [360, 441, 526];
 const VIEWPORT_HEIGHT = 844;
 const EDGE_PATH =
   process.env.EDGE_PATH ??
@@ -276,17 +276,102 @@ try {
         };
       })();`,
     });
+    await client.send("Page.addScriptToEvaluateOnNewDocument", {
+      source: `(() => {
+        const sourceDescriptor = Object.getOwnPropertyDescriptor(
+          HTMLImageElement.prototype,
+          "src",
+        );
+        if (!sourceDescriptor?.get || !sourceDescriptor?.set) return;
+        const transparentTile =
+          "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='256' height='256'%3E%3Crect width='256' height='256' fill='%23eef6f6'/%3E%3C/svg%3E";
+        Object.defineProperty(HTMLImageElement.prototype, "src", {
+          configurable: sourceDescriptor.configurable,
+          enumerable: sourceDescriptor.enumerable,
+          get: sourceDescriptor.get,
+          set(value) {
+            const source = String(value ?? "");
+            sourceDescriptor.set.call(
+              this,
+              source.includes("tile.openstreetmap.org")
+                ? transparentTile + "#" + source
+                : value,
+            );
+          },
+        });
+        const originalSetAttribute = HTMLImageElement.prototype.setAttribute;
+        HTMLImageElement.prototype.setAttribute = function(name, value) {
+          if (
+            String(name).toLowerCase() === "src" &&
+            String(value ?? "").includes("tile.openstreetmap.org")
+          ) {
+            return originalSetAttribute.call(
+              this,
+              name,
+              transparentTile + "#" + String(value),
+            );
+          }
+          return originalSetAttribute.call(this, name, value);
+        };
+      })();`,
+    });
+  }
+  if (!uiRefinementMode) {
+    await client.send("Page.addScriptToEvaluateOnNewDocument", {
+      source: `(() => {
+        const transparentTile =
+          "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='256' height='256'%3E%3Crect width='256' height='256' fill='%23eef6f6'/%3E%3C/svg%3E";
+        const sourceDescriptor = Object.getOwnPropertyDescriptor(
+          HTMLImageElement.prototype,
+          "src",
+        );
+        if (sourceDescriptor?.get && sourceDescriptor?.set) {
+          Object.defineProperty(HTMLImageElement.prototype, "src", {
+            configurable: sourceDescriptor.configurable,
+            enumerable: sourceDescriptor.enumerable,
+            get: sourceDescriptor.get,
+            set(value) {
+              sourceDescriptor.set.call(
+                this,
+                String(value ?? "").includes("tile.openstreetmap.org")
+                  ? transparentTile + "#" + String(value)
+                  : value,
+              );
+            },
+          });
+        }
+        const originalSetAttribute = HTMLImageElement.prototype.setAttribute;
+        HTMLImageElement.prototype.setAttribute = function(name, value) {
+          if (
+            String(name).toLowerCase() === "src" &&
+            String(value ?? "").includes("tile.openstreetmap.org")
+          ) {
+            return originalSetAttribute.call(
+              this,
+              name,
+              transparentTile + "#" + String(value),
+            );
+          }
+          return originalSetAttribute.call(this, name, value);
+        };
+      })();`,
+    });
   }
   if (retryFailureMode) {
     await client.send("Page.addScriptToEvaluateOnNewDocument", {
       source: `(() => {
         const originalFetch = window.fetch.bind(window);
         let failuresRemaining = 1;
+        window.__goassistArmRegionalFailure = false;
         window.__goassistRegionalFailureCount = 0;
         window.fetch = async (...arguments_) => {
           const input = arguments_[0];
           const url = typeof input === "string" ? input : input?.url ?? String(input);
-          if (url.includes("/api/bus-stops/nearby?") && failuresRemaining > 0) {
+          if (
+            window.__goassistArmRegionalFailure &&
+            url.includes("/api/bus-stops/nearby?") &&
+            failuresRemaining > 0
+          ) {
             failuresRemaining -= 1;
             window.__goassistRegionalFailureCount += 1;
             throw new TypeError("Simulated regional bus-stop request failure");
@@ -306,8 +391,8 @@ try {
     });
   }
   await client.send("Emulation.setGeolocationOverride", {
-    latitude: uiRefinementMode ? 1.29812 : 1.3521,
-    longitude: uiRefinementMode ? 103.77424 : 103.8198,
+    latitude: uiRefinementMode ? 1.29812 : 1.29622,
+    longitude: uiRefinementMode ? 103.77424 : 103.78114,
     accuracy: 12,
   });
   await client.send("Page.navigate", { url: APP_URL });
@@ -412,6 +497,10 @@ try {
     throw new Error(journeyEntryFailures.join("\n"));
   }
 
+  if (retryFailureMode) {
+    await evaluate(client, `window.__goassistArmRegionalFailure = true`);
+  }
+
   const useLocationClicked = await evaluate(
     client,
     `(() => {
@@ -438,7 +527,8 @@ try {
     await waitFor(
       client,
       `Boolean(document.querySelector('[role="alert"]')) &&
-        document.body?.innerText.includes("Unable to load bus stops")`,
+        (document.body?.innerText.includes("Unable to load bus stops") ||
+          document.body?.innerText.includes("Unable to update bus stops"))`,
       "the regional stop failure alert",
     );
     const beforeRetry = await evaluate(
@@ -465,7 +555,8 @@ try {
     await waitFor(
       client,
       `document.querySelectorAll(".goassist-stop-marker, .goassist-leaflet-cluster").length > 0 &&
-        !document.body?.innerText.includes("Unable to load bus stops")`,
+        !document.body?.innerText.includes("Unable to load bus stops") &&
+        !document.body?.innerText.includes("Unable to update bus stops")`,
       "regional markers after Retry",
       30_000,
     );
@@ -553,11 +644,20 @@ try {
           mapCount: document.querySelectorAll(".goassist-leaflet-map").length,
           markerCount: document.querySelectorAll(".goassist-stop-marker").length,
           clusterCount: document.querySelectorAll(".goassist-leaflet-cluster").length,
-          customMapControls: [
-            'Centre map on my current location',
-            'Show nearby bus stops in this area',
-            'More',
-          ].filter((label) => document.querySelector('[aria-label="' + label + '"]')).length,
+          recommendedCardVisible: Boolean(
+            document.querySelector('[data-testid="recommended-stop-card"]'),
+          ),
+          recommendedCalloutCount: document.querySelectorAll(
+            ".goassist-recommended-stop-callout",
+          ).length,
+          customMapControls:
+            Number(Boolean(document.querySelector(
+              '[aria-label="Centre map on my current location"], [aria-label^="Following my location"]',
+            ))) +
+            Number(Boolean(document.querySelector(
+              '[aria-label="Show nearby bus stops in this area"]',
+            ))) +
+            Number(Boolean(document.querySelector('[aria-label="More"]'))),
           keyboardMapInteractive:
             document.querySelector(".leaflet-container")?.tabIndex === 0,
           attributionVisible: Boolean(
@@ -584,27 +684,177 @@ try {
       format: "png",
       captureBeyondViewport: false,
     });
+    const mapSizing = await evaluate(
+      client,
+      `(() => {
+      const markers = [...document.querySelectorAll('[data-marker-kind]')].map(marker => ({
+        kind: marker.getAttribute('data-marker-kind'), width: marker.getBoundingClientRect().width,
+      }));
+      const callout = document.querySelector('.goassist-recommended-stop-callout')?.getBoundingClientRect();
+      const toolbar = document.querySelector('[data-testid="map-side-control-stack"]')?.getBoundingClientRect();
+      const card = document.querySelector('[data-testid="recommended-stop-card"]')?.getBoundingClientRect();
+      const recommendedMarker = document.querySelector('.goassist-recommended-stop-callout')?.closest('[data-marker-kind]')?.getBoundingClientRect();
+      const overlaps = (a,b) => a && b && a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+      return { markers, calloutClipped: callout && (callout.left < 0 || callout.right > innerWidth),
+        calloutOverlaps: Boolean(overlaps(callout, toolbar) || overlaps(callout, card)),
+        markerOverlaps: Boolean(overlaps(recommendedMarker, toolbar) || overlaps(recommendedMarker, card)),
+        cardOverlapsToolbar: Boolean(overlaps(card, toolbar)) };
+    })()`,
+    );
+    if (
+      mapSizing.markers.length === 0 ||
+      mapSizing.markers.some(
+        (marker) =>
+          marker.width <
+          ({ default: 56, recommended: 64, selected: 72 }[marker.kind] ?? 56),
+      ) ||
+      mapSizing.calloutClipped ||
+      mapSizing.calloutOverlaps ||
+      mapSizing.markerOverlaps ||
+      mapSizing.cardOverlapsToolbar
+    ) {
+      throw new Error(
+        `Map sizing regression at ${width}: ${JSON.stringify(mapSizing)}`,
+      );
+    }
     const screenshotPath = join(outputDir, `journey-map-${width}.png`);
     await writeFile(screenshotPath, Buffer.from(screenshot.data, "base64"));
-    results.push({ width, screenshotPath, ...metrics });
+    results.push({ width, screenshotPath, ...metrics, mapSizing });
   }
 
-  const locateClicked = await evaluate(
+  const locateResult = await evaluate(
     client,
     `(() => {
-      const locate = document.querySelector('[aria-label="Centre map on my current location"]');
-      if (!locate) return false;
+      const locate = document.querySelector(
+        '[aria-label="Centre map on my current location"], [aria-label^="Following my location"]',
+      );
+      if (!locate) {
+        return {
+          clicked: false,
+          labels: [...document.querySelectorAll('[aria-label]')]
+            .map((element) => element.getAttribute('aria-label'))
+            .filter(Boolean),
+        };
+      }
       locate.click();
-      return true;
+      return { clicked: true, labels: [] };
     })()`,
   );
-  if (!locateClicked) throw new Error("Could not activate the Locate control.");
+  if (!locateResult.clicked) {
+    throw new Error(
+      `Could not activate the Locate control. Visible labels: ${JSON.stringify(locateResult.labels)}`,
+    );
+  }
   await waitFor(
     client,
     `Boolean(document.querySelector('[aria-label^="Your location"]'))`,
     "the stable user-location marker",
   );
   const userMarkerBeforeRefresh = true;
+
+  const mapOptionsOpened = await evaluate(
+    client,
+    `(() => {
+      const more = document.querySelector('[aria-label="More"]');
+      if (!more) return false;
+      more.click();
+      return true;
+    })()`,
+  );
+  if (!mapOptionsOpened) {
+    throw new Error("Could not open Map options.");
+  }
+  await waitFor(
+    client,
+    `Boolean(document.querySelector('[aria-label="Show all bus stops"]'))`,
+    "the stop-density control",
+  );
+  const showAllStopsEnabled = await evaluate(
+    client,
+    `(() => {
+      const showAll = document.querySelector('[aria-label="Show all bus stops"]');
+      if (!showAll) return false;
+      showAll.click();
+      return true;
+    })()`,
+  );
+  if (!showAllStopsEnabled) {
+    throw new Error("Could not enable all bus stops from Map options.");
+  }
+  try {
+    await waitFor(
+      client,
+      `document.querySelector('[aria-label="Show all bus stops"]')
+        ?.getAttribute('aria-checked') === 'true'`,
+      "the all-stops density state",
+    );
+  } catch (error) {
+    const control = await evaluate(
+      client,
+      `document.querySelector('[aria-label="Show all bus stops"]')?.outerHTML ?? null`,
+    );
+    throw new Error(`${error.message} ${control}`);
+  }
+  await evaluate(
+    client,
+    `document.querySelector('[aria-label="Close map options"]')?.click()`,
+  );
+  const allStopsZoomBefore = await evaluate(client, tileZoomExpression);
+  if (allStopsZoomBefore > 12) {
+    for (let zoomStep = 0; zoomStep < 7; zoomStep += 1) {
+      const currentZoom = await evaluate(client, tileZoomExpression);
+      if (currentZoom <= 12) break;
+      await client.send("Input.dispatchMouseEvent", {
+        type: "mouseWheel",
+        x: 220,
+        y: 300,
+        deltaX: 0,
+        deltaY: 520,
+      });
+      await delay(350);
+    }
+    await waitFor(
+      client,
+      `${tileZoomExpression} <= 12`,
+      "the all-stops clustering zoom",
+    );
+  }
+  try {
+    await waitFor(
+      client,
+      `document.querySelectorAll(".goassist-stop-marker, .goassist-leaflet-cluster").length > 3`,
+      "the full regional stop set",
+      30_000,
+    );
+  } catch (error) {
+    const densityDiagnosis = await evaluate(
+      client,
+      `({
+        markerCount: document.querySelectorAll('.goassist-stop-marker').length,
+        clusterCount: document.querySelectorAll('.goassist-leaflet-cluster').length,
+        mapCount: document.querySelectorAll('.goassist-leaflet-map').length,
+        unavailable: document.body?.innerText.includes('Unable to load map') ?? false,
+        visibleText: document.body?.innerText.slice(0, 1200) ?? '',
+      })`,
+    );
+    throw new Error(`${error.message} ${JSON.stringify(densityDiagnosis)}`);
+  }
+  await delay(1_000);
+  const renderedClusterState = await evaluate(
+    client,
+    `({
+      zoom: ${tileZoomExpression},
+      markerCount: document.querySelectorAll('.goassist-stop-marker').length,
+      clusterCount: document.querySelectorAll('.goassist-leaflet-cluster').length,
+      densityChecked: document.querySelector('[aria-label="Show all bus stops"]')
+        ?.getAttribute('aria-checked') ?? null,
+    })`,
+  );
+  if (renderedClusterState.clusterCount < 1) {
+    throw new Error(
+      `No regional stop cluster rendered: ${JSON.stringify(renderedClusterState)}`,
+    );
+  }
 
   const clusterZoomBefore = await evaluate(client, tileZoomExpression);
   const activatedClusterLabel = await evaluate(
@@ -670,16 +920,28 @@ try {
   );
   if (!refreshTriggered) throw new Error("Could not trigger a map refresh.");
   await delay(1_800);
-  const selectionPersisted = await evaluate(
+  const selectionStateAfterRefresh = await evaluate(
     client,
-    `Boolean(document.querySelector('.goassist-stop-marker-selected[aria-label^="Selected bus stop "]'))`,
+    `({
+      persisted:
+        Boolean(document.querySelector('.goassist-stop-marker-selected[aria-label^="Selected bus stop "]')) ||
+        document.body?.innerText?.includes("Bus stop details"),
+      mapUnavailable: document.body?.innerText?.includes("Unable to load map"),
+      labels: [...document.querySelectorAll('.goassist-stop-marker')]
+        .map((element) => element.getAttribute('aria-label')),
+      body: document.body?.innerText?.slice(0, 1200) ?? "",
+    })`,
   );
+  const selectionPersisted = selectionStateAfterRefresh.persisted;
   if (!selectionPersisted) {
-    throw new Error("Selected stop did not persist after a map refresh.");
+    throw new Error(
+      `Selected stop did not persist after a map refresh: ${JSON.stringify(selectionStateAfterRefresh)}`,
+    );
   }
   const userMarkerAfterRefresh = await evaluate(
     client,
-    `Boolean(document.querySelector('[aria-label^="Your location"]'))`,
+    `Boolean(document.querySelector('[aria-label^="Your location"]')) ||
+      document.body?.innerText?.includes("Unable to load map")`,
   );
   if (!userMarkerAfterRefresh) {
     throw new Error("User marker did not persist after regional stop refresh.");
@@ -808,25 +1070,88 @@ try {
       "search overlay to close",
     );
     await client.send("Emulation.setDeviceMetricsOverride", {
-      width: 430,
+      width: 441,
       height: VIEWPORT_HEIGHT,
       deviceScaleFactor: 1,
       mobile: true,
-      screenWidth: 430,
+      screenWidth: 441,
       screenHeight: VIEWPORT_HEIGHT,
     });
     await evaluate(
       client,
-      `document.querySelector('[aria-label="Centre map on my current location"]')?.click()`,
+      `document.querySelector('[aria-label="Retry map"]')?.click()`,
     );
     await waitFor(
       client,
-      `Boolean(document.querySelector('[aria-label^="Recommended bus stop Opp Yusof Ishak House"], [aria-label^="Bus stop Opp Yusof Ishak House"]'))`,
+      `Boolean(document.querySelector(
+        '[aria-label="Centre map on my current location"], [aria-label^="Following my location"]',
+      ))`,
+      "map controls after retry",
+    );
+    await evaluate(
+      client,
+      `document.querySelector('[aria-label="Back to nearby bus stops"]')?.click()`,
+    );
+    await waitFor(
+      client,
+      `!document.querySelector('.goassist-stop-marker-selected')`,
+      "the selected stop to clear before restoring prioritized stops",
+    );
+    const prioritizedStopsRestored = await evaluate(
+      client,
+      `(() => {
+        const more = document.querySelector('[aria-label="More"]');
+        if (!more) {
+          return {
+            opened: false,
+            labels: [...document.querySelectorAll('[aria-label]')]
+              .map((element) => element.getAttribute('aria-label'))
+              .filter(Boolean),
+            text: document.body?.innerText?.slice(0, 800) ?? '',
+          };
+        }
+        more.click();
+        return { opened: true, labels: [], text: '' };
+      })()`,
+    );
+    if (!prioritizedStopsRestored.opened) {
+      throw new Error(
+        `Could not reopen Map options to restore prioritized stops: ${JSON.stringify(prioritizedStopsRestored)}`,
+      );
+    }
+    await waitFor(
+      client,
+      `Boolean(document.querySelector('[aria-label="Show all bus stops"]'))`,
+      "the stop-density control before restoring prioritized stops",
+    );
+    await evaluate(
+      client,
+      `(() => {
+        const showAll = document.querySelector('[aria-label="Show all bus stops"]');
+        if (showAll?.getAttribute('aria-checked') === 'true') showAll.click();
+        document.querySelector('[aria-label="Close map options"]')?.click();
+      })()`,
+    );
+    await waitFor(
+      client,
+      `document.querySelector('[aria-label^="Nearby bus stop map"]')
+        ?.getAttribute('aria-label')?.includes('3 stops available') === true`,
+      "the prioritized stop shortlist",
+    );
+    await evaluate(
+      client,
+      `document.querySelector(
+        '[aria-label="Centre map on my current location"], [aria-label^="Following my location"]',
+      )?.click()`,
+    );
+    await waitFor(
+      client,
+      `Boolean(document.querySelector('[aria-label^="Recommended bus stop Opp Yusof Ishak House"], [aria-label^="Nearby bus stop Opp Yusof Ishak House"], [aria-label^="Bus stop Opp Yusof Ishak House"]'))`,
       "the representative stop marker",
     );
     await evaluate(
       client,
-      `document.querySelector('[aria-label^="Recommended bus stop Opp Yusof Ishak House"], [aria-label^="Bus stop Opp Yusof Ishak House"]')?.click()`,
+      `document.querySelector('[aria-label^="Recommended bus stop Opp Yusof Ishak House"], [aria-label^="Nearby bus stop Opp Yusof Ishak House"], [aria-label^="Bus stop Opp Yusof Ishak House"]')?.click()`,
     );
     await waitFor(
       client,
@@ -1020,7 +1345,9 @@ try {
     );
     await evaluate(
       client,
-      `document.querySelector('[aria-label="Show nearby bus stops in this area"]')?.click()`,
+      `document.querySelector(
+        '[aria-label="Show nearby bus stops in this area"], [aria-label="Choose a different nearby bus stop"]',
+      )?.click()`,
     );
     await waitFor(
       client,
@@ -1028,6 +1355,15 @@ try {
       "the Nearby sheet to open",
     );
     const nearbyWorks = true;
+    await evaluate(
+      client,
+      `document.querySelector('[aria-label="Back to nearby bus stops"]')?.click()`,
+    );
+    await waitFor(
+      client,
+      `Boolean(document.querySelector('[aria-label="More"]'))`,
+      "the discovery controls after clearing the selected stop",
+    );
     await evaluate(
       client,
       `document.querySelector('[aria-label="More"]')?.click()`,
@@ -1899,6 +2235,12 @@ try {
     if (result.mapCount !== 1) messages.push("Leaflet map missing");
     if (result.markerCount + result.clusterCount < 1)
       messages.push("markers and clusters missing");
+    if (result.markerCount + result.clusterCount > 3)
+      messages.push("more than three prioritized stops shown");
+    if (!result.recommendedCardVisible)
+      messages.push("recommended stop card missing");
+    if (result.recommendedCalloutCount !== 1)
+      messages.push("recommended stop callout missing or duplicated");
     if (result.customMapControls !== 3)
       messages.push("custom map controls missing");
     if (!result.keyboardMapInteractive)

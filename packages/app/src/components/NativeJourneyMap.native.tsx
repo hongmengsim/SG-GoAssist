@@ -1,6 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { StyleSheet, Text, View } from "react-native";
-import { BusFront, Check, Star } from "lucide-react-native";
+import {
+  BusFront,
+  Check,
+  Star,
+  MapPin,
+  TriangleAlert,
+} from "lucide-react-native";
 import MapView, {
   Circle,
   Marker,
@@ -9,6 +15,7 @@ import MapView, {
   type MapStyleElement,
   type Region,
 } from "react-native-maps";
+import { resolvePresentationSizes } from "../accessibility/presentationSizes";
 import type { NearbyBusStop } from "@buspass/shared";
 import type {
   NativeJourneyMapProps,
@@ -128,14 +135,18 @@ function nativeMapStyle(
 }
 
 export function NativeJourneyMap({
+  presentationSizes: sizes = resolvePresentationSizes(),
   stops,
+  stopDensity = "ALL",
   recommendedStopCode,
+  recommendedStopCallout,
   selectedStop,
   currentLocation,
   viewport,
   layers,
   routeStops,
   routeMobilityMode,
+  routeWarnings = [],
   destination,
   activeVehicle,
   palette,
@@ -171,18 +182,36 @@ export function NativeJourneyMap({
   );
   const clusters = useMemo(
     () =>
-      clusterStops(
-        stops,
-        selectedStop?.busStopCode,
-        recommendedStopCode,
-        viewport.zoom,
-      ),
-    [recommendedStopCode, selectedStop?.busStopCode, stops, viewport.zoom],
+      stopDensity === "ALL"
+        ? clusterStops(
+            stops,
+            selectedStop?.busStopCode,
+            recommendedStopCode,
+            viewport.zoom,
+          )
+        : stops
+            .filter(
+              (stop) =>
+                stop.busStopCode !== selectedStop?.busStopCode &&
+                stop.busStopCode !== recommendedStopCode,
+            )
+            .map((stop) => ({
+              key: stop.busStopCode,
+              center: stop,
+              stops: [stop],
+            })),
+    [
+      recommendedStopCode,
+      selectedStop?.busStopCode,
+      stopDensity,
+      stops,
+      viewport.zoom,
+    ],
   );
 
   useEffect(() => {
-    onProviderAvailabilityChange(providerReady && !providerTimedOut);
-  }, [onProviderAvailabilityChange, providerReady, providerTimedOut]);
+    onProviderAvailabilityChange(!providerTimedOut);
+  }, [onProviderAvailabilityChange, providerTimedOut]);
 
   useEffect(() => {
     setProviderReady(false);
@@ -334,7 +363,8 @@ export function NativeJourneyMap({
               if (cluster.stops.length > 1) {
                 return (
                   <Marker
-                    key={`cluster-${cluster.key}`}
+                    key={`cluster-${cluster.key}-${sizes.stopMarker}`}
+                    anchor={{ x: 0.5, y: 0.5 }}
                     coordinate={cluster.center}
                     accessibilityLabel={`Cluster of ${cluster.stops.length} nearby bus stops`}
                     onPress={() => onFocusCluster(cluster.center)}
@@ -344,6 +374,11 @@ export function NativeJourneyMap({
                     <View
                       style={[
                         styles.clusterMarker,
+                        {
+                          width: sizes.stopMarker,
+                          height: sizes.stopMarker,
+                          borderRadius: sizes.stopMarker / 2,
+                        },
                         {
                           backgroundColor: palette.stopSelected,
                           borderColor: palette.routeOutline,
@@ -367,7 +402,8 @@ export function NativeJourneyMap({
               const stop = cluster.stops[0];
               return (
                 <Marker
-                  key={stop.busStopCode}
+                  key={`${stop.busStopCode}-${sizes.stopMarker}`}
+                  anchor={{ x: 0.5, y: 0.5 }}
                   coordinate={stop}
                   accessibilityLabel={`${stop.description}, bus stop ${stop.busStopCode}`}
                   onPress={() => onSelectStop(stop)}
@@ -376,19 +412,31 @@ export function NativeJourneyMap({
                 >
                   <View
                     style={[
-                      styles.stopMarker,
-                      {
-                        backgroundColor: palette.stopDefault,
-                        borderColor: palette.stopOutline,
-                      },
-                      highContrast && styles.highContrastMarker,
+                      styles.stopMarkerHitArea,
+                      { width: sizes.stopMarker, height: sizes.stopMarker },
                     ]}
                   >
-                    <BusFront
-                      color={palette.textOnMarker}
-                      size={26}
-                      strokeWidth={3}
-                    />
+                    <View
+                      style={[
+                        styles.stopMarker,
+                        {
+                          width: sizes.stopMarker,
+                          height: sizes.stopMarker,
+                          borderRadius: sizes.stopMarker / 2,
+                        },
+                        {
+                          backgroundColor: palette.stopDefault,
+                          borderColor: palette.stopOutline,
+                        },
+                        highContrast && styles.highContrastMarker,
+                      ]}
+                    >
+                      <BusFront
+                        color={palette.textOnMarker}
+                        size={sizes.featureIcon}
+                        strokeWidth={3}
+                      />
+                    </View>
                   </View>
                 </Marker>
               );
@@ -397,6 +445,13 @@ export function NativeJourneyMap({
 
         {layers.busStops && recommendedStop ? (
           <Marker
+            key={`recommended-${sizes.recommendedMarker}`}
+            anchor={{
+              x: 0.5,
+              y:
+                (70 + sizes.recommendedMarker / 2) /
+                (70 + sizes.recommendedMarker),
+            }}
             coordinate={recommendedStop}
             accessibilityLabel={`Recommended bus stop. ${recommendedStop.description}, bus stop ${recommendedStop.busStopCode}`}
             onPress={() => onSelectStop(recommendedStop)}
@@ -404,27 +459,102 @@ export function NativeJourneyMap({
             zIndex={700}
           >
             <View
-              style={[
-                styles.recommendedStopMarker,
-                {
-                  backgroundColor: palette.stopRecommended,
-                  borderColor: palette.stopOutline,
-                },
-                highContrast && styles.highContrastMarker,
-              ]}
+              style={{
+                width: 230,
+                height: sizes.recommendedMarker + 70,
+                alignItems: "center",
+                justifyContent: "flex-end",
+              }}
             >
-              <BusFront
-                color={palette.textOnMarker}
-                size={29}
-                strokeWidth={3}
-              />
               <View
                 style={[
-                  styles.stopStateBadge,
-                  { backgroundColor: palette.stopOutline },
+                  styles.recommendedStopMarker,
+                  {
+                    width: sizes.recommendedMarker,
+                    height: sizes.recommendedMarker,
+                    borderRadius: sizes.recommendedMarker / 2,
+                  },
+                  {
+                    backgroundColor: palette.stopRecommended,
+                    borderColor: palette.stopOutline,
+                  },
+                  highContrast && styles.highContrastMarker,
                 ]}
               >
-                <Star color="#FFFFFF" fill="#FFFFFF" size={11} />
+                <BusFront
+                  color={palette.textOnMarker}
+                  size={sizes.featureIcon + 4}
+                  strokeWidth={3}
+                />
+                <View
+                  style={[
+                    styles.stopStateBadge,
+                    {
+                      width: sizes.markerBadge,
+                      height: sizes.markerBadge,
+                      borderRadius: sizes.markerBadge / 2,
+                    },
+                    {
+                      backgroundColor: palette.textOnMarker,
+                      borderColor: palette.stopRecommended,
+                    },
+                  ]}
+                >
+                  <Star
+                    color={palette.stopRecommended}
+                    fill={palette.stopRecommended}
+                    size={sizes.statusIcon}
+                  />
+                </View>
+                {recommendedStopCallout ? (
+                  <View
+                    style={[
+                      styles.recommendedStopCallout,
+                      {
+                        bottom: sizes.recommendedMarker + 12,
+                        left: (sizes.recommendedMarker - 230) / 2,
+                      },
+                      {
+                        backgroundColor: lightMode ? "#F7FFFE" : "#082226",
+                        borderColor: lightMode ? "#0B6670" : "#86C5DA",
+                      },
+                    ]}
+                    accessibilityElementsHidden
+                    importantForAccessibility="no"
+                  >
+                    <Text
+                      style={[
+                        styles.recommendedStopCalloutSymbol,
+                        { color: lightMode ? "#0B6670" : "#B8F2F6" },
+                      ]}
+                    >
+                      {recommendedStopCallout.accessibilitySymbol ===
+                      "ACCESSIBLE"
+                        ? "♿"
+                        : recommendedStopCallout.accessibilitySymbol ===
+                            "PROVISIONAL"
+                          ? "?"
+                          : "★"}
+                    </Text>
+                    <Text
+                      numberOfLines={1}
+                      style={[
+                        styles.recommendedStopCalloutText,
+                        { color: lightMode ? "#12363B" : "#F4FFFF" },
+                      ]}
+                    >
+                      {recommendedStopCallout.label}
+                    </Text>
+                    <Text
+                      style={[
+                        styles.recommendedStopCalloutDistance,
+                        { color: lightMode ? "#52676B" : "#B8F2F6" },
+                      ]}
+                    >
+                      {recommendedStopCallout.distanceLabel}
+                    </Text>
+                  </View>
+                ) : null}
               </View>
             </View>
           </Marker>
@@ -432,6 +562,8 @@ export function NativeJourneyMap({
 
         {selectedStop ? (
           <Marker
+            key={`selected-${sizes.selectedMarker}`}
+            anchor={{ x: 0.5, y: 0.5 }}
             coordinate={selectedStop}
             accessibilityLabel={`Selected bus stop. ${selectedStop.description}, bus stop ${selectedStop.busStopCode}`}
             onPress={() => onSelectStop(selectedStop)}
@@ -442,6 +574,11 @@ export function NativeJourneyMap({
               style={[
                 styles.selectedStopMarker,
                 {
+                  width: sizes.selectedMarker,
+                  height: sizes.selectedMarker,
+                  borderRadius: sizes.selectedMarker / 2,
+                },
+                {
                   backgroundColor: palette.stopSelected,
                   borderColor: palette.stopOutline,
                 },
@@ -450,16 +587,28 @@ export function NativeJourneyMap({
             >
               <BusFront
                 color={palette.textOnMarker}
-                size={31}
+                size={sizes.featureIcon + 8}
                 strokeWidth={3}
               />
               <View
                 style={[
                   styles.stopStateBadge,
-                  { backgroundColor: palette.stopOutline },
+                  {
+                    width: sizes.markerBadge,
+                    height: sizes.markerBadge,
+                    borderRadius: sizes.markerBadge / 2,
+                  },
+                  {
+                    backgroundColor: palette.textOnMarker,
+                    borderColor: palette.stopSelected,
+                  },
                 ]}
               >
-                <Check color="#FFFFFF" size={12} strokeWidth={4} />
+                <Check
+                  color={palette.stopSelected}
+                  size={sizes.statusIcon}
+                  strokeWidth={4}
+                />
               </View>
             </View>
           </Marker>
@@ -477,20 +626,23 @@ export function NativeJourneyMap({
             />
             <Marker
               coordinate={currentLocation}
+              anchor={{ x: 0.5, y: 0.5 }}
               accessibilityLabel="Your current location"
               tracksViewChanges={false}
               zIndex={900}
             >
-              <View
-                style={[
-                  styles.userMarker,
-                  {
-                    backgroundColor: palette.currentLocation,
-                    borderColor: palette.currentLocationOutline,
-                  },
-                  highContrast && styles.highContrastMarker,
-                ]}
-              />
+              <View style={styles.userMarkerHitArea}>
+                <View
+                  style={[
+                    styles.userMarker,
+                    {
+                      backgroundColor: palette.currentLocation,
+                      borderColor: palette.currentLocationOutline,
+                    },
+                    highContrast && styles.highContrastMarker,
+                  ]}
+                />
+              </View>
             </Marker>
           </>
         ) : null}
@@ -499,15 +651,66 @@ export function NativeJourneyMap({
           <Marker
             coordinate={destination}
             accessibilityLabel="Selected journey destination"
-            pinColor={palette.stopSelected}
+            key={`destination-${sizes.stopMarker}`}
             tracksViewChanges={false}
+            anchor={{ x: 0.5, y: 0.5 }}
             zIndex={750}
-          />
+          >
+            <View
+              style={{
+                width: sizes.stopMarker,
+                height: sizes.stopMarker,
+                borderRadius: 16,
+                backgroundColor: palette.stopSelected,
+                borderWidth: 3,
+                borderColor: palette.stopOutline,
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <MapPin
+                size={sizes.featureIcon}
+                color={palette.textOnMarker}
+                strokeWidth={3}
+              />
+            </View>
+          </Marker>
         ) : null}
+
+        {layers.walkingRoute
+          ? routeWarnings.map((warning, index) => (
+              <Marker
+                key={`${warning.label}-${index}-${sizes.controlHeight}`}
+                coordinate={warning.coordinate}
+                accessibilityLabel={`Accessibility warning: ${warning.label}`}
+                tracksViewChanges={false}
+                anchor={{ x: 0.5, y: 0.5 }}
+                zIndex={780}
+              >
+                <View
+                  style={{
+                    width: sizes.controlHeight,
+                    height: sizes.controlHeight,
+                    borderRadius: 16,
+                    backgroundColor: palette.routeOutline,
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  <TriangleAlert
+                    size={sizes.actionIcon}
+                    color={palette.textOnMarker}
+                    strokeWidth={3}
+                  />
+                </View>
+              </Marker>
+            ))
+          : null}
 
         {activeVehicle ? (
           <Marker
             coordinate={activeVehicle.coordinate}
+            anchor={{ x: 0.5, y: 0.5 }}
             accessibilityLabel={`Service ${activeVehicle.serviceNo}, current vehicle position`}
             tracksViewChanges={false}
             zIndex={950}
@@ -518,6 +721,8 @@ export function NativeJourneyMap({
                 {
                   backgroundColor: palette.routePrimary,
                   borderColor: palette.routeOutline,
+                  minWidth: sizes.recommendedMarker,
+                  minHeight: sizes.stopMarker,
                 },
                 highContrast && styles.highContrastMarker,
               ]}
@@ -525,7 +730,7 @@ export function NativeJourneyMap({
               <Text
                 style={[
                   styles.vehicleMarkerText,
-                  { color: palette.textOnMarker },
+                  { color: palette.textOnMarker, fontSize: sizes.buttonText },
                 ]}
               >
                 {activeVehicle.serviceNo}
@@ -546,29 +751,35 @@ const styles = StyleSheet.create({
   },
   stopMarker: {
     alignItems: "center",
-    borderRadius: 22,
+    borderRadius: 23,
     borderWidth: 3,
-    height: 44,
+    height: 46,
     justifyContent: "center",
-    width: 44,
+    width: 46,
+  },
+  stopMarkerHitArea: {
+    alignItems: "center",
+    height: 48,
+    justifyContent: "center",
+    width: 48,
   },
   recommendedStopMarker: {
     alignItems: "center",
-    borderRadius: 25,
+    borderRadius: 26,
     borderWidth: 3,
-    height: 50,
+    height: 52,
     justifyContent: "center",
     position: "relative",
-    width: 50,
+    width: 52,
   },
   selectedStopMarker: {
     alignItems: "center",
-    borderRadius: 27,
+    borderRadius: 29,
     borderWidth: 3,
-    height: 54,
+    height: 58,
     justifyContent: "center",
     position: "relative",
-    width: 54,
+    width: 58,
   },
   stopStateBadge: {
     alignItems: "center",
@@ -583,10 +794,45 @@ const styles = StyleSheet.create({
     width: 18,
   },
   userMarker: {
-    borderRadius: 11,
+    borderRadius: 20,
     borderWidth: 3,
-    height: 22,
-    width: 22,
+    height: 40,
+    width: 40,
+  },
+  userMarkerHitArea: {
+    alignItems: "center",
+    height: 52,
+    justifyContent: "center",
+    width: 52,
+  },
+  recommendedStopCallout: {
+    alignItems: "center",
+    borderRadius: 10,
+    borderWidth: 2,
+    bottom: 60,
+    elevation: 5,
+    flexDirection: "row",
+    gap: 5,
+    left: -69,
+    minHeight: 36,
+    paddingHorizontal: 9,
+    paddingVertical: 6,
+    position: "absolute",
+    width: 230,
+  },
+  recommendedStopCalloutSymbol: {
+    fontSize: 24,
+    fontWeight: "900",
+  },
+  recommendedStopCalloutText: {
+    flex: 1,
+    fontSize: 16,
+    fontWeight: "800",
+    lineHeight: 22,
+  },
+  recommendedStopCalloutDistance: {
+    fontSize: 16,
+    fontWeight: "800",
   },
   clusterMarker: {
     alignItems: "center",
@@ -607,15 +853,15 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     borderWidth: 2,
     justifyContent: "center",
-    minHeight: 32,
-    minWidth: 42,
+    minHeight: 56,
+    minWidth: 64,
     paddingHorizontal: 7,
     paddingVertical: 4,
   },
   vehicleMarkerText: {
-    fontSize: 14,
+    fontSize: 20,
     fontWeight: "900",
-    lineHeight: 17,
+    lineHeight: 26,
   },
   highContrastMarker: {
     borderWidth: 4,

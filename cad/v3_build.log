@@ -1,0 +1,10 @@
+Traceback (most recent call last):
+  File "C:\Users\simho\Downloads\BusTech\GoAssist\cad\RobobusPhysical\RobobusPhysical.py", line 15, in run
+    root=d.rootComponent;d.unitsManager.defaultLengthUnits='mm'
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: property '_get_defaultLengthUnits' of 'FusionUnitsManager' object has no setter
+
+SUCCESS: physical setup exported; 44 valid solids
+FINAL: sightlines checked, labelled heights, valid timeline, files refreshed
+FINAL: sightlines checked, labelled heights, valid timeline, files refreshed
+FINAL: sightlines checked, labelled heights, valid timeline, files refreshed

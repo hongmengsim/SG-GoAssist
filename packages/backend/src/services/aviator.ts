@@ -29,7 +29,7 @@ export function onAssistanceEvent(callback: EventListener) {
 export function waitForRequestStatus(
   requestId: string,
   status: AssistanceRequestStatus,
-  timeoutMs: number
+  timeoutMs: number,
 ): Promise<PassengerAssistanceRequest | undefined> {
   const existing = getRequest(requestId);
   if (existing?.status === status) {
@@ -61,14 +61,20 @@ function emit(message: StatusUpdateMessage) {
     try {
       callback(message);
     } catch (error) {
-      logger.error("Error notifying listener", "requestId" in message ? message.requestId : undefined, {
-        error: String(error),
-      });
+      logger.error(
+        "Error notifying listener",
+        "requestId" in message ? message.requestId : undefined,
+        {
+          error: String(error),
+        },
+      );
     }
   });
 }
 
-function requestStatusMessage(request: PassengerAssistanceRequest): StatusUpdateMessage {
+function requestStatusMessage(
+  request: PassengerAssistanceRequest,
+): StatusUpdateMessage {
   return {
     type: "REQUEST_STATUS",
     requestId: request.requestId,
@@ -82,19 +88,25 @@ function requestStatusMessage(request: PassengerAssistanceRequest): StatusUpdate
   };
 }
 
-export function createRequest(request: PassengerAssistanceRequest): PassengerAssistanceRequest {
+export function createRequest(
+  request: PassengerAssistanceRequest,
+): PassengerAssistanceRequest {
   const duplicate = findDuplicateActiveRequest(
     request.busId,
     request.assistanceTypes,
-    request.boardingOrAlighting
+    request.boardingOrAlighting,
   );
 
   if (duplicate) {
-    logger.warn("Duplicate active assistance request prevented", duplicate.requestId, {
-      busId: request.busId,
-      assistanceTypes: request.assistanceTypes,
-      source: request.source,
-    });
+    logger.warn(
+      "Duplicate active assistance request prevented",
+      duplicate.requestId,
+      {
+        busId: request.busId,
+        assistanceTypes: request.assistanceTypes,
+        source: request.source,
+      },
+    );
     return duplicate;
   }
 
@@ -116,7 +128,7 @@ export function createRequest(request: PassengerAssistanceRequest): PassengerAss
 export function findDuplicateActiveRequest(
   busId: string,
   assistanceTypes: AssistanceType[],
-  phase?: PassengerAssistanceRequest["boardingOrAlighting"]
+  phase?: PassengerAssistanceRequest["boardingOrAlighting"],
 ): PassengerAssistanceRequest | undefined {
   return Array.from(activeRequests.values()).find(
     (request) =>
@@ -124,11 +136,13 @@ export function findDuplicateActiveRequest(
       (!phase || request.boardingOrAlighting === phase) &&
       request.status !== AssistanceRequestStatus.CANCELLED &&
       request.status !== AssistanceRequestStatus.FAILED &&
-      assistanceTypes.every((type) => request.assistanceTypes.includes(type))
+      assistanceTypes.every((type) => request.assistanceTypes.includes(type)),
   );
 }
 
-export function getRequest(requestId: string): PassengerAssistanceRequest | undefined {
+export function getRequest(
+  requestId: string,
+): PassengerAssistanceRequest | undefined {
   return activeRequests.get(requestId);
 }
 
@@ -142,7 +156,7 @@ export function getAnnouncementEvents(): ExternalAnnouncementMessage[] {
 
 function updateRequestStatus(
   requestId: string,
-  newStatus: AssistanceRequestStatus
+  newStatus: AssistanceRequestStatus,
 ): PassengerAssistanceRequest | null {
   const request = activeRequests.get(requestId);
   if (!request) {
@@ -157,7 +171,7 @@ function updateRequestStatus(
   if (!canTransitionAssistanceRequestStatus(request.status, newStatus)) {
     logger.warn(
       `Ignored invalid request status transition: ${request.status} -> ${newStatus}`,
-      requestId
+      requestId,
     );
     return request;
   }
@@ -187,7 +201,10 @@ function updateRequestStatus(
   ) {
     synchronizeLegacyCaseStatus(request.caseId, newStatus);
   }
-  logger.info(`Request status transition: ${oldStatus} -> ${newStatus}`, requestId);
+  logger.info(
+    `Request status transition: ${oldStatus} -> ${newStatus}`,
+    requestId,
+  );
   emit(requestStatusMessage(request));
   return request;
 }
@@ -197,7 +214,10 @@ export function processSimulatorCommand(command: SimulatorCommand): {
   message: string;
   request?: PassengerAssistanceRequest;
 } {
-  const commandToStatus: Record<SimulatorCommand["command"], AssistanceRequestStatus> = {
+  const commandToStatus: Record<
+    SimulatorCommand["command"],
+    AssistanceRequestStatus
+  > = {
     ACKNOWLEDGE: AssistanceRequestStatus.ACKNOWLEDGED,
     FAIL: AssistanceRequestStatus.FAILED,
     CANCEL: AssistanceRequestStatus.CANCELLED,
@@ -220,7 +240,9 @@ export function processSimulatorCommand(command: SimulatorCommand): {
     };
   }
 
-  if (!canTransitionAssistanceRequestStatus(currentRequest.status, nextStatus)) {
+  if (
+    !canTransitionAssistanceRequestStatus(currentRequest.status, nextStatus)
+  ) {
     logger.warn(
       `Ignored invalid request status transition: ${currentRequest.status} -> ${nextStatus}`,
       command.requestId,
@@ -260,10 +282,13 @@ export function processVehicleCommand(command: VehicleSimulatorCommand): {
         type: "VEHICLE_STATUS",
         busId: command.busId,
         busService:
+          command.busService ??
           Array.from(activeRequests.values()).find(
             (request) => request.busId === command.busId,
-          )?.busService ?? "UNKNOWN",
+          )?.busService ??
+          "UNKNOWN",
         status: previousStatus,
+        stopCode: command.stopCode,
         timestamp: new Date().toISOString(),
         message: `Vehicle status remains ${previousStatus}`,
       },
@@ -284,10 +309,13 @@ export function processVehicleCommand(command: VehicleSimulatorCommand): {
         type: "VEHICLE_STATUS",
         busId: command.busId,
         busService:
+          command.busService ??
           Array.from(activeRequests.values()).find(
             (request) => request.busId === command.busId,
-          )?.busService ?? "UNKNOWN",
+          )?.busService ??
+          "UNKNOWN",
         status: previousStatus,
+        stopCode: command.stopCode,
         timestamp: new Date().toISOString(),
         message: `Vehicle status remains ${previousStatus}`,
       },
@@ -297,20 +325,23 @@ export function processVehicleCommand(command: VehicleSimulatorCommand): {
   vehicleStatuses.set(command.busId, command.status);
 
   const busRequest = Array.from(activeRequests.values()).find(
-    (request) => request.busId === command.busId
+    (request) => request.busId === command.busId,
   );
-  const busService = busRequest?.busService ?? "UNKNOWN";
+  const busService = command.busService ?? busRequest?.busService ?? "UNKNOWN";
 
   const vehicleEvent: VehicleStatusUpdateMessage = {
     type: "VEHICLE_STATUS",
     busId: command.busId,
     busService,
+    stopCode: command.stopCode,
     status: command.status,
     timestamp: new Date().toISOString(),
     message: `Vehicle status: ${command.status}`,
   };
 
-  logger.info(`Vehicle status: ${command.status}`, command.busId, { busService });
+  logger.info(`Vehicle status: ${command.status}`, command.busId, {
+    busService,
+  });
   emit(vehicleEvent);
 
   const announcement =
@@ -326,12 +357,14 @@ export function processVehicleCommand(command: VehicleSimulatorCommand): {
   };
 }
 
-function triggerAudioIdentificationIfNeeded(busId: string): ExternalAnnouncementMessage | undefined {
+function triggerAudioIdentificationIfNeeded(
+  busId: string,
+): ExternalAnnouncementMessage | undefined {
   const request = Array.from(activeRequests.values()).find(
     (candidate) =>
       candidate.busId === busId &&
       candidate.status === AssistanceRequestStatus.ACKNOWLEDGED &&
-      candidate.assistanceTypes.includes("BUS_AUDIO_IDENTIFICATION")
+      candidate.assistanceTypes.includes("BUS_AUDIO_IDENTIFICATION"),
   );
 
   if (!request) {

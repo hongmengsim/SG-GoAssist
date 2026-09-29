@@ -1,0 +1,800 @@
+[
+  {
+    "file": "01_body_rear.stl",
+    "triangles": 2840,
+    "size_mm": [
+      150.0,
+      111.0,
+      105.5999984741211
+    ],
+    "min_mm": [
+      0.0,
+      0.0,
+      2.220446049250313e-15
+    ],
+    "volume_mm3": 84740.35601622857,
+    "boundary_or_nonmanifold_edges": 0,
+    "inconsistent_edges": 0,
+    "degenerate_triangles": 0,
+    "connected_components": 1,
+    "fits_reserved_envelope": true,
+    "pass": true
+  },
+  {
+    "file": "02_body_front.stl",
+    "triangles": 1464,
+    "size_mm": [
+      150.0,
+      111.0,
+      105.5999984741211
+    ],
+    "min_mm": [
+      0.0,
+      0.0,
+      2.220446049250313e-15
+    ],
+    "volume_mm3": 86153.55736670719,
+    "boundary_or_nonmanifold_edges": 0,
+    "inconsistent_edges": 0,
+    "degenerate_triangles": 0,
+    "connected_components": 1,
+    "fits_reserved_envelope": true,
+    "pass": true
+  },
+  {
+    "file": "03_roof_rear.stl",
+    "triangles": 100,
+    "size_mm": [
+      149.39999389648438,
+      109.99999999999999,
+      4.699999809265119
+    ],
+    "min_mm": [
+      0.0,
+      1.530808425441628e-14,
+      1.7763568394002505e-14
+    ],
+    "volume_mm3": 17754.99850333561,
+    "boundary_or_nonmanifold_edges": 0,
+    "inconsistent_edges": 0,
+    "degenerate_triangles": 0,
+    "connected_components": 1,
+    "fits_reserved_envelope": true,
+    "pass": true
+  },
+  {
+    "file": "04_roof_front.stl",
+    "triangles": 132,
+    "size_mm": [
+      149.39999389648438,
+      109.99999999999999,
+      4.699999809265119
+    ],
+    "min_mm": [
+      0.0,
+      1.530808425441628e-14,
+      1.7763568394002505e-14
+    ],
+    "volume_mm3": 17567.396350833213,
+    "boundary_or_nonmanifold_edges": 0,
+    "inconsistent_edges": 0,
+    "degenerate_triangles": 0,
+    "connected_components": 1,
+    "fits_reserved_envelope": true,
+    "pass": true
+  },
+  {
+    "file": "05_join_key.stl",
+    "triangles": 1188,
+    "size_mm": [
+      15.398332246462815,
+      5.3999323109055695,
+      3.4000000953674316
+    ],
+    "min_mm": [
+      0.0008338607149198651,
+      3.392902362975292e-05,
+      0.0
+    ],
+    "volume_mm3": 213.2740380883155,
+    "boundary_or_nonmanifold_edges": 0,
+    "inconsistent_edges": 0,
+    "degenerate_triangles": 0,
+    "connected_components": 1,
+    "fits_reserved_envelope": true,
+    "pass": true
+  },
+  {
+    "file": "06_roof_clip.stl",
+    "triangles": 36,
+    "size_mm": [
+      8.699999809265137,
+      7.099999904632568,
+      4.999999999999974
+    ],
+    "min_mm": [
+      0.0,
+      0.0,
+      2.609024107869118e-14
+    ],
+    "volume_mm3": 120.89998886585188,
+    "boundary_or_nonmanifold_edges": 0,
+    "inconsistent_edges": 0,
+    "degenerate_triangles": 0,
+    "connected_components": 1,
+    "fits_reserved_envelope": true,
+    "pass": true
+  },
+  {
+    "file": "07_fixed_sensor_header.stl",
+    "triangles": 388,
+    "size_mm": [
+      96.0,
+      22.799999237060547,
+      7.999999999999972
+    ],
+    "min_mm": [
+      0.0,
+      0.0,
+      2.842170943040401e-14
+    ],
+    "volume_mm3": 2978.1029404889086,
+    "boundary_or_nonmanifold_edges": 0,
+    "inconsistent_edges": 0,
+    "degenerate_triangles": 0,
+    "connected_components": 1,
+    "fits_reserved_envelope": true,
+    "pass": true
+  },
+  {
+    "file": "08_static_wheel.stl",
+    "triangles": 964,
+    "size_mm": [
+      43.99689544760622,
+      43.99844946467783,
+      2.4000000953674316
+    ],
+    "min_mm": [
+      0.0031045523937791586,
+      0.0007761517772451043,
+      0.0
+    ],
+    "volume_mm3": 3624.213652567452,
+    "boundary_or_nonmanifold_edges": 0,
+    "inconsistent_edges": 0,
+    "degenerate_triangles": 0,
+    "connected_components": 1,
+    "fits_reserved_envelope": true,
+    "pass": true
+  },
+  {
+    "file": "09_wheel_pin.stl",
+    "triangles": 2148,
+    "size_mm": [
+      5.999399411201011,
+      5.999699645341025,
+      8.5
+    ],
+    "min_mm": [
+      0.0006005887989886105,
+      0.00015015095414128155,
+      0.0
+    ],
+    "volume_mm3": 76.72489102240151,
+    "boundary_or_nonmanifold_edges": 0,
+    "inconsistent_edges": 0,
+    "degenerate_triangles": 0,
+    "connected_components": 1,
+    "fits_reserved_envelope": true,
+    "pass": true
+  },
+  {
+    "file": "10_breadboard_tray.stl",
+    "triangles": 580,
+    "size_mm": [
+      175.0,
+      65.0,
+      3.0
+    ],
+    "min_mm": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "volume_mm3": 7737.59993739129,
+    "boundary_or_nonmanifold_edges": 0,
+    "inconsistent_edges": 0,
+    "degenerate_triangles": 0,
+    "connected_components": 1,
+    "fits_reserved_envelope": true,
+    "pass": true
+  },
+  {
+    "file": "11_controller_tray.stl",
+    "triangles": 388,
+    "size_mm": [
+      110.0,
+      90.0,
+      3.0
+    ],
+    "min_mm": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "volume_mm3": 6777.599756908428,
+    "boundary_or_nonmanifold_edges": 0,
+    "inconsistent_edges": 0,
+    "degenerate_triangles": 0,
+    "connected_components": 1,
+    "fits_reserved_envelope": true,
+    "pass": true
+  },
+  {
+    "file": "12_tray_retainer.stl",
+    "triangles": 36,
+    "size_mm": [
+      8.0,
+      10.0,
+      5.400000095367432
+    ],
+    "min_mm": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "volume_mm3": 184.0719983730315,
+    "boundary_or_nonmanifold_edges": 0,
+    "inconsistent_edges": 0,
+    "degenerate_triangles": 0,
+    "connected_components": 1,
+    "fits_reserved_envelope": true,
+    "pass": true
+  },
+  {
+    "file": "13_laser_pivot_adapter.stl",
+    "triangles": 932,
+    "size_mm": [
+      29.998200672329403,
+      19.99985921271582,
+      4.800000190734868
+    ],
+    "min_mm": [
+      0.00179932767059654,
+      7.021538476692513e-05,
+      -4.440892098500626e-15
+    ],
+    "volume_mm3": 880.7923162715755,
+    "boundary_or_nonmanifold_edges": 0,
+    "inconsistent_edges": 0,
+    "degenerate_triangles": 0,
+    "connected_components": 1,
+    "fits_reserved_envelope": true,
+    "pass": true
+  },
+  {
+    "file": "15_L1_yoke.stl",
+    "triangles": 956,
+    "size_mm": [
+      48.99893951416017,
+      19.997376933315536,
+      2.9999999999999734
+    ],
+    "min_mm": [
+      -1.7763568394002505e-14,
+      0.0002789352147374302,
+      2.6645352591003757e-14
+    ],
+    "volume_mm3": 1258.6897495688697,
+    "boundary_or_nonmanifold_edges": 0,
+    "inconsistent_edges": 0,
+    "degenerate_triangles": 0,
+    "connected_components": 1,
+    "fits_reserved_envelope": true,
+    "pass": true
+  },
+  {
+    "file": "16_L2_yoke.stl",
+    "triangles": 956,
+    "size_mm": [
+      48.99893951416014,
+      19.997376933315536,
+      2.9999999999999645
+    ],
+    "min_mm": [
+      1.7763568394002505e-14,
+      0.0002789352147374302,
+      3.552713678800501e-14
+    ],
+    "volume_mm3": 1258.6897495688643,
+    "boundary_or_nonmanifold_edges": 0,
+    "inconsistent_edges": 0,
+    "degenerate_triangles": 0,
+    "connected_components": 1,
+    "fits_reserved_envelope": true,
+    "pass": true
+  },
+  {
+    "file": "17_L3_yoke.stl",
+    "triangles": 824,
+    "size_mm": [
+      54.999935150146484,
+      25.999738693237305,
+      2.9999999999999623
+    ],
+    "min_mm": [
+      0.0,
+      0.0,
+      3.774758283725532e-14
+    ],
+    "volume_mm3": 1623.6341579068119,
+    "boundary_or_nonmanifold_edges": 0,
+    "inconsistent_edges": 0,
+    "degenerate_triangles": 0,
+    "connected_components": 1,
+    "fits_reserved_envelope": true,
+    "pass": true
+  },
+  {
+    "file": "18_laser_carrier.stl",
+    "triangles": 3154,
+    "size_mm": [
+      18.899999618530273,
+      16.399999618530273,
+      30.0
+    ],
+    "min_mm": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "volume_mm3": 2690.5622603873144,
+    "boundary_or_nonmanifold_edges": 0,
+    "inconsistent_edges": 0,
+    "degenerate_triangles": 0,
+    "connected_components": 1,
+    "fits_reserved_envelope": true,
+    "pass": true
+  },
+  {
+    "file": "19_laser_collar.stl",
+    "triangles": 1738,
+    "size_mm": [
+      20.0,
+      20.0,
+      8.0
+    ],
+    "min_mm": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "volume_mm3": 822.5064253587658,
+    "boundary_or_nonmanifold_edges": 0,
+    "inconsistent_edges": 0,
+    "degenerate_triangles": 0,
+    "connected_components": 1,
+    "fits_reserved_envelope": true,
+    "pass": true
+  },
+  {
+    "file": "20_pivot_pin.stl",
+    "triangles": 2040,
+    "size_mm": [
+      7.199999809265137,
+      7.199999809265137,
+      11.5
+    ],
+    "min_mm": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "volume_mm3": 177.33785585174124,
+    "boundary_or_nonmanifold_edges": 0,
+    "inconsistent_edges": 0,
+    "degenerate_triangles": 0,
+    "connected_components": 1,
+    "fits_reserved_envelope": true,
+    "pass": true
+  },
+  {
+    "file": "21_pivot_wedge.stl",
+    "triangles": 12,
+    "size_mm": [
+      16.0,
+      1.9666666984558105,
+      1.2000000476837163
+    ],
+    "min_mm": [
+      0.0,
+      0.0,
+      -3.469446951953614e-16
+    ],
+    "volume_mm3": 24.960001220703134,
+    "boundary_or_nonmanifold_edges": 0,
+    "inconsistent_edges": 0,
+    "degenerate_triangles": 0,
+    "connected_components": 1,
+    "fits_reserved_envelope": true,
+    "pass": true
+  },
+  {
+    "file": "22_mount_pin.stl",
+    "triangles": 2024,
+    "size_mm": [
+      5.399026820086874,
+      5.399513578624465,
+      18.0
+    ],
+    "min_mm": [
+      0.0009732752805575728,
+      0.0002433297922834754,
+      0.0
+    ],
+    "volume_mm3": 105.35376583288729,
+    "boundary_or_nonmanifold_edges": 0,
+    "inconsistent_edges": 0,
+    "degenerate_triangles": 0,
+    "connected_components": 1,
+    "fits_reserved_envelope": true,
+    "pass": true
+  },
+  {
+    "file": "23_camera_mast_rail.stl",
+    "triangles": 1340,
+    "size_mm": [
+      100.0,
+      133.0,
+      7.999999999999954
+    ],
+    "min_mm": [
+      0.0,
+      0.0,
+      4.6074255521943996e-14
+    ],
+    "volume_mm3": 14062.427995572565,
+    "boundary_or_nonmanifold_edges": 0,
+    "inconsistent_edges": 0,
+    "degenerate_triangles": 0,
+    "connected_components": 1,
+    "fits_reserved_envelope": true,
+    "pass": true
+  },
+  {
+    "file": "24_camera_platform.stl",
+    "triangles": 520,
+    "size_mm": [
+      44.0,
+      12.600000381469727,
+      27.999999999999957
+    ],
+    "min_mm": [
+      0.0,
+      0.0,
+      4.440892098500626e-14
+    ],
+    "volume_mm3": 3784.592090965998,
+    "boundary_or_nonmanifold_edges": 0,
+    "inconsistent_edges": 0,
+    "degenerate_triangles": 0,
+    "connected_components": 1,
+    "fits_reserved_envelope": true,
+    "pass": true
+  },
+  {
+    "file": "25_camera_jaw.stl",
+    "triangles": 36,
+    "size_mm": [
+      7.400000095367432,
+      12.0,
+      8.0
+    ],
+    "min_mm": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "volume_mm3": 240.00001525878906,
+    "boundary_or_nonmanifold_edges": 0,
+    "inconsistent_edges": 0,
+    "degenerate_triangles": 0,
+    "connected_components": 1,
+    "fits_reserved_envelope": true,
+    "pass": true
+  },
+  {
+    "file": "26_camera_index_pin.stl",
+    "triangles": 1992,
+    "size_mm": [
+      5.400000095367432,
+      5.397949724458158,
+      19.0
+    ],
+    "min_mm": [
+      0.0,
+      0.0010251710191369057,
+      0.0
+    ],
+    "volume_mm3": 109.86640562791824,
+    "boundary_or_nonmanifold_edges": 0,
+    "inconsistent_edges": 0,
+    "degenerate_triangles": 0,
+    "connected_components": 1,
+    "fits_reserved_envelope": true,
+    "pass": true
+  },
+  {
+    "file": "27_ToF_bar.stl",
+    "triangles": 48,
+    "size_mm": [
+      79.4000015258789,
+      15.000000000000009,
+      2.9999999999999822
+    ],
+    "min_mm": [
+      0.0,
+      -8.881784197001252e-15,
+      1.7763568394002505e-14
+    ],
+    "volume_mm3": 1122.6000137329054,
+    "boundary_or_nonmanifold_edges": 0,
+    "inconsistent_edges": 0,
+    "degenerate_triangles": 0,
+    "connected_components": 1,
+    "fits_reserved_envelope": true,
+    "pass": true
+  },
+  {
+    "file": "28_ToF_cap.stl",
+    "triangles": 56,
+    "size_mm": [
+      22.600000381469727,
+      15.0,
+      4.8000001907348455
+    ],
+    "min_mm": [
+      0.0,
+      0.0,
+      1.7763568394002505e-14
+    ],
+    "volume_mm3": 470.8800365638697,
+    "boundary_or_nonmanifold_edges": 0,
+    "inconsistent_edges": 0,
+    "degenerate_triangles": 0,
+    "connected_components": 1,
+    "fits_reserved_envelope": true,
+    "pass": true
+  },
+  {
+    "file": "29_ToF_jamb_clip.stl",
+    "triangles": 48,
+    "size_mm": [
+      8.500000000000018,
+      6.0,
+      7.499999999999987
+    ],
+    "min_mm": [
+      -1.7763568394002505e-14,
+      0.0,
+      1.3322676295501878e-14
+    ],
+    "volume_mm3": 174.16799194478975,
+    "boundary_or_nonmanifold_edges": 0,
+    "inconsistent_edges": 0,
+    "degenerate_triangles": 0,
+    "connected_components": 1,
+    "fits_reserved_envelope": true,
+    "pass": true
+  },
+  {
+    "file": "C01_key_0p2.stl",
+    "triangles": 1068,
+    "size_mm": [
+      20.0,
+      9.0,
+      5.0
+    ],
+    "min_mm": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "volume_mm3": 618.0705352289993,
+    "boundary_or_nonmanifold_edges": 0,
+    "inconsistent_edges": 0,
+    "degenerate_triangles": 0,
+    "connected_components": 1,
+    "fits_reserved_envelope": true,
+    "pass": true
+  },
+  {
+    "file": "C01_key_0p3.stl",
+    "triangles": 1072,
+    "size_mm": [
+      20.0,
+      9.0,
+      5.0
+    ],
+    "min_mm": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "volume_mm3": 602.2097580017813,
+    "boundary_or_nonmanifold_edges": 0,
+    "inconsistent_edges": 0,
+    "degenerate_triangles": 0,
+    "connected_components": 1,
+    "fits_reserved_envelope": true,
+    "pass": true
+  },
+  {
+    "file": "C01_key_0p4.stl",
+    "triangles": 1084,
+    "size_mm": [
+      20.0,
+      9.0,
+      5.0
+    ],
+    "min_mm": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "volume_mm3": 586.0912357798877,
+    "boundary_or_nonmanifold_edges": 0,
+    "inconsistent_edges": 0,
+    "degenerate_triangles": 0,
+    "connected_components": 1,
+    "fits_reserved_envelope": true,
+    "pass": true
+  },
+  {
+    "file": "C02_bore_12.stl",
+    "triangles": 1416,
+    "size_mm": [
+      14.800000190734863,
+      14.797888956265524,
+      3.0
+    ],
+    "min_mm": [
+      0.0,
+      0.0010555170010775328,
+      0.0
+    ],
+    "volume_mm3": 176.78978200878086,
+    "boundary_or_nonmanifold_edges": 0,
+    "inconsistent_edges": 0,
+    "degenerate_triangles": 0,
+    "connected_components": 1,
+    "fits_reserved_envelope": true,
+    "pass": true
+  },
+  {
+    "file": "C02_bore_12p2.stl",
+    "triangles": 1416,
+    "size_mm": [
+      15.0,
+      14.997860196628608,
+      3.0
+    ],
+    "min_mm": [
+      0.0,
+      0.001069780788384378,
+      0.0
+    ],
+    "volume_mm3": 179.42869464428904,
+    "boundary_or_nonmanifold_edges": 0,
+    "inconsistent_edges": 0,
+    "degenerate_triangles": 0,
+    "connected_components": 1,
+    "fits_reserved_envelope": true,
+    "pass": true
+  },
+  {
+    "file": "C02_bore_12p4.stl",
+    "triangles": 1416,
+    "size_mm": [
+      15.199999809265137,
+      15.197831436991692,
+      3.0
+    ],
+    "min_mm": [
+      0.0,
+      0.0010840445756912231,
+      0.0
+    ],
+    "volume_mm3": 182.0676326797823,
+    "boundary_or_nonmanifold_edges": 0,
+    "inconsistent_edges": 0,
+    "degenerate_triangles": 0,
+    "connected_components": 1,
+    "fits_reserved_envelope": true,
+    "pass": true
+  },
+  {
+    "file": "C02_bore_12p6.stl",
+    "triangles": 1416,
+    "size_mm": [
+      15.399999618530273,
+      15.397803631145507,
+      3.0
+    ],
+    "min_mm": [
+      0.0,
+      0.0010983082465827465,
+      0.0
+    ],
+    "volume_mm3": 184.70657470056253,
+    "boundary_or_nonmanifold_edges": 0,
+    "inconsistent_edges": 0,
+    "degenerate_triangles": 0,
+    "connected_components": 1,
+    "fits_reserved_envelope": true,
+    "pass": true
+  },
+  {
+    "file": "C02_bore_12p8.stl",
+    "triangles": 1420,
+    "size_mm": [
+      15.600000381469727,
+      15.59777487150859,
+      3.0
+    ],
+    "min_mm": [
+      0.0,
+      0.0011125720338895917,
+      0.0
+    ],
+    "volume_mm3": 187.34446933038237,
+    "boundary_or_nonmanifold_edges": 0,
+    "inconsistent_edges": 0,
+    "degenerate_triangles": 0,
+    "connected_components": 1,
+    "fits_reserved_envelope": true,
+    "pass": true
+  },
+  {
+    "file": "C03_pivot_fit.stl",
+    "triangles": 1496,
+    "size_mm": [
+      9.999279081996065,
+      9.999639522808138,
+      3.0
+    ],
+    "min_mm": [
+      0.0007209180039353669,
+      0.00018023274606093764,
+      0.0
+    ],
+    "volume_mm3": 185.73773258730216,
+    "boundary_or_nonmanifold_edges": 0,
+    "inconsistent_edges": 0,
+    "degenerate_triangles": 0,
+    "connected_components": 1,
+    "fits_reserved_envelope": true,
+    "pass": true
+  },
+  {
+    "file": "C04_angle_gauge.stl",
+    "triangles": 642,
+    "size_mm": [
+      23.0,
+      23.0,
+      1.2000000476837158
+    ],
+    "min_mm": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "volume_mm3": 266.260439311555,
+    "boundary_or_nonmanifold_edges": 0,
+    "inconsistent_edges": 0,
+    "degenerate_triangles": 0,
+    "connected_components": 1,
+    "fits_reserved_envelope": true,
+    "pass": true
+  }
+]

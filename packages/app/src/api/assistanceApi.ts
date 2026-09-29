@@ -8,6 +8,8 @@ import type {
   BusStopArrivalsResponse,
   CreateAssistanceRequestPayload,
   NearbyBusStopsResponse,
+  SafetyTelemetry,
+  StopVehiclePresenceResponse,
 } from "@buspass/shared";
 import { API_BASE_URL } from "../config";
 
@@ -65,11 +67,14 @@ export async function requestPassengerOperatorHelp(payload: {
   idempotencyKey: string;
   reason: string;
 }): Promise<{ case: { caseId: string; state: "ESCALATED" } }> {
-  const response = await fetch(`${API_BASE_URL}/api/operations/passenger-help`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
+  const response = await fetch(
+    `${API_BASE_URL}/api/operations/passenger-help`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
   if (!response.ok) throw new Error("Unable to alert a remote operator.");
   return (await response.json()) as {
     case: { caseId: string; state: "ESCALATED" };
@@ -240,6 +245,34 @@ export async function fetchBusStopArrivals(
 
   const body = (await response.json()) as BusStopArrivalsResponse;
   return { ...body, busStop: normalizeBusStopServices(body.busStop) };
+}
+
+export async function fetchStopVehiclePresence(
+  busStopCode: string,
+  signal?: AbortSignal,
+): Promise<StopVehiclePresenceResponse> {
+  const response = await fetch(
+    `${API_BASE_URL}/api/location/bus-stops/${encodeURIComponent(busStopCode)}/vehicles`,
+    { signal },
+  );
+  if (!response.ok) {
+    throw new Error("Unable to load live vehicles for this stop.");
+  }
+  return (await response.json()) as StopVehiclePresenceResponse;
+}
+
+export async function fetchVehicleSafetyTelemetry(
+  busId: string,
+  signal?: AbortSignal,
+): Promise<SafetyTelemetry> {
+  const response = await fetch(
+    `${API_BASE_URL}/api/operations/vehicles/${encodeURIComponent(busId)}/telemetry`,
+    { signal },
+  );
+  if (!response.ok) {
+    throw new Error("Unable to load live vehicle safety status.");
+  }
+  return (await response.json()) as SafetyTelemetry;
 }
 
 function normalizeBusStopServices<T extends BusStop>(stop: T): T {

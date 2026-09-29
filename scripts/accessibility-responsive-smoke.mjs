@@ -2,13 +2,14 @@ import { spawn } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { passengerControlAudit } from "./e2e/passenger-control-audit.mjs";
 
 const appUrl = process.env.GOASSIST_APP_URL ?? "http://localhost:8081";
 const debugPort = Number(process.env.GOASSIST_ACCESSIBILITY_CDP_PORT ?? 9334);
 const edgePath =
   process.env.EDGE_PATH ??
   "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe";
-const widths = [280, 320, 360, 390, 430];
+const widths = [280, 320, 360, 390, 430, 441, 526];
 const textSizes = [
   { label: "Standard", value: "STANDARD" },
   { label: "Large", value: "LARGE" },
@@ -118,6 +119,11 @@ async function clickLabel(client, label, prefix = false) {
   await delay(200);
 }
 
+async function selectCategory(client, label) {
+  await clickLabel(client, "Settings category.", true);
+  await clickLabel(client, `${label} accessibility settings`);
+}
+
 async function removeProfileDirectory() {
   for (let attempt = 0; attempt < 6; attempt += 1) {
     try {
@@ -154,12 +160,11 @@ try {
     "profile",
   );
   await clickLabel(client, "Edit accessibility preferences");
-  await clickLabel(client, "Vision accessibility settings");
+  await selectCategory(client, "Vision");
 
   const results = [];
   for (const textSize of textSizes) {
     await clickLabel(client, `${textSize.label} text`);
-    await clickLabel(client, "Back to accessibility");
     for (const width of widths) {
       await client.send("Emulation.setDeviceMetricsOverride", {
         width,
@@ -173,11 +178,11 @@ try {
       const metrics = await evaluate(
         client,
         `(() => {
-          const targets = [...document.querySelectorAll('[aria-label^="Apply "], [aria-label$="accessibility settings"]')];
+          const targets = [...document.querySelectorAll('[aria-label^="Turn on "], [aria-label^="Turn off "], [aria-label^="Settings category."]')];
           const rectangles = targets.map((target) => target.getBoundingClientRect());
           return {
-            categoryCount: document.querySelectorAll('[aria-label$="accessibility settings"]').length,
-            presetCount: document.querySelectorAll('[aria-label^="Apply "]').length,
+            categoryCount: document.querySelectorAll('[aria-label^="Settings category."]').length,
+            presetCount: document.querySelectorAll('[aria-label^="Turn on "], [aria-label^="Turn off "]').length,
             documentWidth: document.documentElement.scrollWidth,
             viewportWidth: window.innerWidth,
             horizontalOverflow: document.documentElement.scrollWidth > window.innerWidth + 1,
@@ -186,13 +191,28 @@ try {
           };
         })()`,
       );
-      const result = { textSize: textSize.value, width, ...metrics };
+      const audit = await evaluate(client, passengerControlAudit);
+      if (
+        !audit.iconCount ||
+        audit.undersizedIcons.length ||
+        audit.undersizedControls.length
+      ) {
+        throw new Error(`Control sizing regression: ${JSON.stringify(audit)}`);
+      }
+      const result = {
+        textSize: textSize.value,
+        width,
+        ...metrics,
+        iconCount: audit.iconCount,
+      };
       results.push(result);
       if (
         result.horizontalOverflow ||
         result.offscreenTargets > 0 ||
         result.minimumTargetHeight < 44 ||
-        result.categoryCount !== 5 ||
+        // The current editor exposes one stable category dropdown rather than
+        // rendering five accordion headers into the document at once.
+        result.categoryCount !== 1 ||
         result.presetCount !== 4
       ) {
         throw new Error(
@@ -200,16 +220,12 @@ try {
         );
       }
     }
-    if (textSize !== textSizes.at(-1)) {
-      await clickLabel(client, "Vision accessibility settings");
-    }
   }
-  await clickLabel(client, "Apply Wheelchair preset");
-  await clickLabel(client, "Apply Simplified journey preset");
-  await clickLabel(client, "Interaction accessibility settings");
+  await clickLabel(client, "Turn on Mobility support group");
+  await clickLabel(client, "Turn on Simpler journeys group");
+  await selectCategory(client, "Interaction");
   await clickLabel(client, "Larger controls");
   await clickLabel(client, "Reduced motion");
-  await clickLabel(client, "Back to accessibility");
   for (const width of widths) {
     await client.send("Emulation.setDeviceMetricsOverride", {
       width,
@@ -223,11 +239,11 @@ try {
     const metrics = await evaluate(
       client,
       `(() => {
-        const targets = [...document.querySelectorAll('[aria-label^="Apply "], [aria-label$="accessibility settings"]')];
+        const targets = [...document.querySelectorAll('[aria-label^="Turn on "], [aria-label^="Turn off "], [aria-label^="Settings category."]')];
         const rectangles = targets.map((target) => target.getBoundingClientRect());
         return {
-          categoryCount: document.querySelectorAll('[aria-label$="accessibility settings"]').length,
-          presetCount: document.querySelectorAll('[aria-label^="Apply "]').length,
+          categoryCount: document.querySelectorAll('[aria-label^="Settings category."]').length,
+          presetCount: document.querySelectorAll('[aria-label^="Turn on "], [aria-label^="Turn off "]').length,
           documentWidth: document.documentElement.scrollWidth,
           viewportWidth: window.innerWidth,
           horizontalOverflow: document.documentElement.scrollWidth > window.innerWidth + 1,
@@ -242,7 +258,7 @@ try {
       result.horizontalOverflow ||
       result.offscreenTargets > 0 ||
       result.minimumTargetHeight < 60 ||
-      result.categoryCount !== 5 ||
+      result.categoryCount !== 1 ||
       result.presetCount !== 4
     ) {
       throw new Error(

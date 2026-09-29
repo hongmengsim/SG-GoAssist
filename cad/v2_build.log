@@ -1,0 +1,61 @@
+START
+Entrance cut
+Assembly built; validating
+Travel exported
+Boarding exported
+COMPLETE
+VALIDATED 73 poses; hits 438
+REPAIRED packaging
+VALIDATED 73 poses; hits 460
+REPAIRED actuator and deck dimensions
+VALIDATED 73 poses; hits 0
+VALIDATED 73 poses; hits 0
+FINAL EXPORTS COMPLETE
+VALIDATED 73 poses; hits 0
+DELIVERY READY
+Traceback (most recent call last):
+  File "C:/Users/simho/Downloads/BusTech/GoAssist/cad/RobobusV2/RobobusV2.py", line 351, in run
+    finish_details();return
+    ~~~~~~~~~~~~~~^^
+  File "C:/Users/simho/Downloads/BusTech/GoAssist/cad/RobobusV2/RobobusV2.py", line 309, in finish_details
+    feat.profile=sk.profiles.item(0)
+    ^^^^^^^^^^^^
+  File "C:\Users/simho/AppData/Local/Autodesk/webdeploy/production/f0877c667ada77b44502b5b3316b697a2ba18ad4/Api/Python/packages\adsk\fusion.py", line 106661, in _set_profile
+    return _fusion.ExtrudeFeature__set_profile(self, value)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+RuntimeError: 3 : Didn't roll editing feature back.
+
+VALIDATED 73 poses; hits 0
+DELIVERY READY
+Traceback (most recent call last):
+  File "C:/Users/simho/Downloads/BusTech/GoAssist/cad/RobobusV2/RobobusV2.py", line 405, in run
+    fix_entrance_panel();return
+    ~~~~~~~~~~~~~~~~~~^^
+  File "C:/Users/simho/Downloads/BusTech/GoAssist/cad/RobobusV2/RobobusV2.py", line 384, in fix_entrance_panel
+    if hits or report['feature_warnings'] or report['invalid_bodies']:raise RuntimeError('Entrance validation failed: '+json.dumps(report['entrance_passage_check']))
+                                                                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: Entrance validation failed: {"state": "Boarding Ready", "probe_mm": {"x": [2450.1, 3549.9], "y": [1000, 1024], "z": [350.1, 2349.9]}, "intersections": [{"body": "05 Ramp lift carriage - PROPOSED:1/Lift bearing block", "volume_mm3": 5721.600000000075}, {"body": "05 Ramp lift carriage - PROPOSED:1/Lift bearing block (1)", "volume_mm3": 5721.600000000075}, {"body": "05 Ramp lift carriage - PROPOSED:1/Coaxial ramp hinge shaft stub", "volume_mm3": 915.2089862124043}, {"body": "05 Ramp lift carriage - PROPOSED:1/Coaxial ramp hinge shaft stub (1)", "volume_mm3": 915.2089862146496}, {"body": "05 Ramp lift carriage - PROPOSED:1/PROPOSED ramp angle encoder - inboard", "volume_mm3": 3671.447260503698}], "corrected_bodies": ["Right silver lower skirt (1) (1)"]}
+
+Traceback (most recent call last):
+  File "C:/Users/simho/Downloads/BusTech/GoAssist/cad/RobobusV2/RobobusV2.py", line 408, in run
+    fix_entrance_panel();return
+    ~~~~~~~~~~~~~~~~~~^^
+  File "C:/Users/simho/Downloads/BusTech/GoAssist/cad/RobobusV2/RobobusV2.py", line 387, in fix_entrance_panel
+    if hits or report['feature_warnings'] or report['invalid_bodies']:raise RuntimeError('Entrance validation failed: '+json.dumps(report['entrance_passage_check']))
+                                                                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: Entrance validation failed: {"state": "Boarding Ready", "upper_probe_mm": {"x": [2450.1, 3549.9], "y": [1000, 1024], "z": [400.1, 2349.9]}, "lower_walking_strip_mm": {"x": [2565.1, 3434.9], "y": [1000, 1024], "z": [350.1, 400.1]}, "note": "Ramp hinge and lift-bearing hardware occupies the lower side margins, outside the 870 mm ramp walking strip.", "intersections": [], "corrected_bodies": ["Right silver lower skirt (1) (1)", "Right silver lower skirt (1) (1) (1)"]}
+
+Remove failed duplicate cut: Full clear doorway through lower skirt (2) No target body!Compute FailedFull clear doorway through lower skirt (2)
+Remove failed duplicate cut: Full clear doorway through lower skirt (1) No target body!Compute FailedFull clear doorway through lower skirt (1)
+Traceback (most recent call last):
+  File "C:/Users/simho/Downloads/BusTech/GoAssist/cad/RobobusV2/RobobusV2.py", line 412, in run
+    fix_entrance_panel();return
+    ~~~~~~~~~~~~~~~~~~^^
+  File "C:/Users/simho/Downloads/BusTech/GoAssist/cad/RobobusV2/RobobusV2.py", line 391, in fix_entrance_panel
+    if hits or report['feature_warnings'] or report['invalid_bodies']:raise RuntimeError('Entrance validation failed: '+json.dumps(report))
+                                                                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: Entrance validation failed: {"invalid_bodies": [], "feature_warnings": [{"name": "Full clear doorway through lower skirt (1)", "message": "No target body!Compute FailedFull clear doorway through lower skirt (1)"}, {"name": "Full clear doorway through lower skirt (2)", "message": "No target body!Compute FailedFull clear doorway through lower skirt (2)"}], "named_positions": {"Travel": {"Door front plug": 0, "Door rear plug": 0, "Door front slide": 0, "Door rear slide": 0, "Ramp slide": 0, "Ramp lift": 0, "Ramp hinge": 0, "Bridge hinge": 1.3962634015954636}, "Doors Open": {"Door front plug": 70.0, "Door rear plug": 70.0, "Door front slide": -570.0, "Door rear slide": 570.0, "Ramp slide": 0, "Ramp lift": 0, "Ramp hinge": 0, "Bridge hinge": 1.3962634015954636}, "Ramp Extended": {"Door front plug": 70.0, "Door rear plug": 70.0, "Door front slide": -570.0, "Door rear slide": 570.0, "Ramp slide": 1825.0, "Ramp lift": 0, "Ramp hinge": 0, "Bridge hinge": 1.3962634015954636}, "Boarding Ready": {"Door front plug": 70.0, "Door rear plug": 70.0, "Door front slide": -570.0, "Door rear slide": 570.0, "Ramp slide": 1825.0, "Ramp lift": 75.0, "Ramp hinge": -0.11134101434096388, "Bridge hinge": 0}}, "dimensions_mm": {"ramp_body_bbox": [900.0, 1800.0, 35.0], "ramp_root_top": [3000.0, 1024.9999999999998, 350.0], "ramp_tip_top": [3000.0, 2813.854382727434, 150.00000650787658], "curb_leading_y": 2813.8543819998317, "actual_tip_vertex": [3450.0, 2813.8543827274325, 150.00000650787666]}, "parameter_checks": [{"name": "rampWidth", "tested_mm": 901, "value_mm": 901.0000000000001, "measured_width_mm": 901.0000000000002}, {"name": "doorWidth", "tested_mm": 1101, "value_mm": 1101.0, "measured_sketch_dimension_mm": 1101.0}, {"name": "doorHeight", "tested_mm": 2001, "value_mm": 2001.0000000000002, "measured_sketch_dimension_mm": 2001.0000000000002}, {"name": "curbHeight", "tested_mm": 151, "value_mm": 151.0, "measured_height_mm": 151.0}], "solid_count": 188, "timeline_features": 837, "joint_count": 8, "actual_hinge_degrees": -6.37937, "entrance_passage_check": {"state": "Boarding Ready", "upper_probe_mm": {"x": [2450.1, 3549.9], "y": [1000, 1024], "z": [400.1, 2349.9]}, "lower_walking_strip_mm": {"x": [2565.1, 3434.9], "y": [1000, 1024], "z": [350.1, 400.1]}, "note": "Ramp hinge and lift-bearing hardware occupies the lower side margins, outside the 870 mm ramp walking strip.", "intersections": [], "corrected_bodies": ["Right silver lower skirt (1) (1)", "Right silver lower skirt (1) (1) (1)"]}}
+
+Remove failed duplicate cut: Full clear doorway through lower skirt (2) No target body!Compute FailedFull clear doorway through lower skirt (2)
+Remove failed duplicate cut: Full clear doorway through lower skirt (1) No target body!Compute FailedFull clear doorway through lower skirt (1)
+ENTRANCE CORRECTED; clear passage; healthy solids and features

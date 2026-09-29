@@ -79,6 +79,32 @@ export class RealBusPresenceProvider implements BusPresenceProvider {
         };
       });
 
+    (input.stopVehicles ?? [])
+      .filter(
+        (vehicle) =>
+          vehicle.stopCode === input.currentStop.busStopCode &&
+          vehicle.fresh &&
+          vehicle.state !== "DEPARTED",
+      )
+      .forEach((vehicle) => {
+        candidates.push({
+          id: vehicle.busId,
+          serviceNo: vehicle.busService,
+          vehicleId: vehicle.busId,
+          destination: vehicle.destination,
+          wheelchairAccessible: vehicle.wheelchairAccessible,
+          confidence: vehicle.state === "PARKED" ? "HIGH" : "MEDIUM",
+          source: "VEHICLE_TELEMETRY",
+          activeJourneyMatch: Boolean(
+            activeJourneyAtStop &&
+            (vehicle.busId === input.activeJourney?.bus.busId ||
+              vehicle.busService === input.activeJourney?.bus.busService),
+          ),
+          presenceState: vehicle.state,
+          presenceObservedAt: vehicle.observedAt,
+        });
+      });
+
     if (activeJourneyAtStop && input.activeJourney) {
       const { bus, arrival, vehicleStatus } = input.activeJourney;
       const existing = candidates.find(
@@ -109,6 +135,7 @@ export class RealBusPresenceProvider implements BusPresenceProvider {
           source:
             confidence === "HIGH" ? "VEHICLE_TELEMETRY" : "ACTIVE_JOURNEY",
           activeJourneyMatch: true,
+          presenceState: confidence === "HIGH" ? "PARKED" : "APPROACHING",
         });
       }
     }
@@ -160,7 +187,21 @@ function normalizeCandidates(candidates: BusAtStop[]) {
     const key = candidate.vehicleId ?? `service-${candidate.serviceNo}`;
     const existing = byId.get(key);
     if (!existing || confidenceRank(candidate) > confidenceRank(existing)) {
-      byId.set(key, candidate);
+      byId.set(key, {
+        ...existing,
+        ...candidate,
+        destination: candidate.destination ?? existing?.destination,
+        wheelchairAccessible:
+          candidate.wheelchairAccessible ?? existing?.wheelchairAccessible,
+      });
+    } else if (existing) {
+      byId.set(key, {
+        ...candidate,
+        ...existing,
+        destination: existing.destination ?? candidate.destination,
+        wheelchairAccessible:
+          existing.wheelchairAccessible ?? candidate.wheelchairAccessible,
+      });
     }
   });
   return [...byId.values()].sort((left, right) => {

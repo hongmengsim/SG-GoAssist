@@ -1,0 +1,16 @@
+Traceback (most recent call last):
+  File "C:\Users\simho\Downloads\BusTech\GoAssist\cad\RobobusLite\RobobusLite.py", line 342, in run
+    for n,v in [('bodyLength',300),('bodyWidth',110),('bodyHeight',125),('wall',1.4),('floor',1.8),('roof',1.2),('clearance',.3),('doorWidth',80),('doorHeight',100)]:design.userParameters.add(n,adsk.core.ValueInput.createByReal(v/10),'mm','Benchmark for native editable base-feature assembly; rebuild via RobobusLite.py')
+                                                                                                                                                                      ~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users/simho/appdata/local/autodesk/webdeploy/production/c657666a51cec7a9bbd042e10872bcd9532508a8/Api/Python/packages\adsk\fusion.py", line 80956, in add
+    return _fusion.UserParameters_add(self, name, value, units, comment)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: 3 : param name is not valid
+
+PART 01_body_rear
+PART 03_roof_rear
+PART 02_body_front
+PART 04_roof_front
+PART 15_L1_yoke
+PART 18_laser_carrier
+EXPORT COMPLETE 6 unique parts

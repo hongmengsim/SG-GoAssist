@@ -52,25 +52,20 @@
   cursor: default;
 }
 
-.goassist-user-location-marker {
-  height: 44px !important;
-  width: 44px !important;
-}
-
 .goassist-user-puck {
   display: block;
-  height: 44px;
+  height: 52px;
   position: relative;
-  width: 44px;
+  width: 52px;
 }
 
 .goassist-user-heading {
-  height: 44px;
+  height: 100%;
   left: 0;
   position: absolute;
   top: 0;
-  transform-origin: 22px 22px;
-  width: 44px;
+  transform-origin: center;
+  width: 100%;
   z-index: 1;
 }
 
@@ -78,11 +73,11 @@
   background: rgba(4, 30, 34, 0.38);
   border-radius: 50%;
   filter: blur(3px);
-  height: 27px;
-  left: 9px;
+  height: 30px;
+  left: 11px;
   position: absolute;
   top: 11px;
-  width: 27px;
+  width: 30px;
   z-index: 2;
 }
 
@@ -91,12 +86,12 @@
   border-radius: 50%;
   box-sizing: border-box;
   display: flex;
-  height: 28px;
+  height: 40px;
   justify-content: center;
-  left: 8px;
+  left: calc(50% - 20px);
   position: absolute;
-  top: 8px;
-  width: 28px;
+  top: calc(50% - 20px);
+  width: 40px;
   z-index: 3;
 }
 
@@ -105,39 +100,34 @@
   background: #fff;
   border-radius: 50%;
   display: flex;
-  height: 21px;
+  height: 24px;
   justify-content: center;
-  width: 21px;
+  width: 24px;
 }
 
 .goassist-user-puck-core {
   border-radius: 50%;
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.34);
-  height: 13px;
-  width: 13px;
+  height: 15px;
+  width: 15px;
 }
 
 .goassist-user-puck-pulse {
   border: 2px solid;
   border-radius: 50%;
   box-sizing: border-box;
-  height: 28px;
-  left: 8px;
+  height: 40px;
+  left: calc(50% - 20px);
   opacity: 0;
   pointer-events: none;
   position: absolute;
-  top: 8px;
-  width: 28px;
+  top: calc(50% - 20px);
+  width: 40px;
   z-index: 0;
 }
 
 .goassist-user-puck-pulsed .goassist-user-puck-pulse {
   animation: goassist-location-pulse 700ms ease-out 1;
-}
-
-.goassist-destination-marker {
-  height: 36px !important;
-  width: 36px !important;
 }
 
 .goassist-destination-pin {
@@ -156,9 +146,9 @@
 }
 
 .goassist-destination-pin svg {
-  height: 23px;
+  height: 36px;
   transform: rotate(45deg);
-  width: 23px;
+  width: 36px;
 }
 
 @keyframes goassist-location-pulse {
@@ -175,6 +165,12 @@
 .goassist-stop-marker,
 .goassist-leaflet-cluster {
   cursor: pointer;
+}
+
+.goassist-stop-marker {
+  align-items: center;
+  display: flex !important;
+  justify-content: center;
 }
 
 .goassist-stop-marker > span,
@@ -200,6 +196,61 @@
   box-shadow:
     0 0 0 2px rgba(255, 255, 255, 0.82),
     0 2px 8px rgba(6, 37, 41, 0.42) !important;
+}
+
+.goassist-recommended-stop-callout {
+  align-items: center;
+  background: rgba(247, 255, 254, 0.98);
+  border: 2px solid #0b6670;
+  border-radius: 10px;
+  bottom: calc(100% + 8px);
+  box-shadow: 0 3px 10px rgba(6, 37, 41, 0.3);
+  box-sizing: border-box;
+  color: #12363b;
+  display: flex;
+  font:
+    800 16px/1.3 system-ui,
+    sans-serif;
+  gap: 5px;
+  left: 50%;
+  width: 230px;
+  max-width: 230px;
+  min-height: 48px;
+  padding: 6px 9px;
+  position: absolute;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  z-index: 2;
+}
+
+.goassist-recommended-stop-symbol {
+  color: #0b6670;
+  font-size: var(--map-symbol, 24px);
+  flex-shrink: 0;
+}
+
+.goassist-recommended-stop-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.goassist-recommended-stop-distance {
+  color: #52676b;
+  font-size: inherit;
+  flex-shrink: 0;
+}
+
+.goassist-leaflet-dark .goassist-recommended-stop-callout {
+  background: rgba(8, 34, 38, 0.98);
+  border-color: #86c5da;
+  color: #f4ffff;
+}
+
+.goassist-leaflet-dark .goassist-recommended-stop-symbol,
+.goassist-leaflet-dark .goassist-recommended-stop-distance {
+  color: #b8f2f6;
 }
 
 .goassist-accessibility-warning-icon span {

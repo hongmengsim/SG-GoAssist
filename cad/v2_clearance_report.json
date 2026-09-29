@@ -1,0 +1,498 @@
+{
+  "samples": [
+    {
+      "index": 0,
+      "collisions": 0
+    },
+    {
+      "index": 1,
+      "collisions": 0
+    },
+    {
+      "index": 2,
+      "collisions": 0
+    },
+    {
+      "index": 3,
+      "collisions": 0
+    },
+    {
+      "index": 4,
+      "collisions": 0
+    },
+    {
+      "index": 5,
+      "collisions": 0
+    },
+    {
+      "index": 6,
+      "collisions": 0
+    },
+    {
+      "index": 7,
+      "collisions": 0
+    },
+    {
+      "index": 8,
+      "collisions": 0
+    },
+    {
+      "index": 9,
+      "collisions": 0
+    },
+    {
+      "index": 10,
+      "collisions": 0
+    },
+    {
+      "index": 11,
+      "collisions": 0
+    },
+    {
+      "index": 12,
+      "collisions": 0
+    },
+    {
+      "index": 13,
+      "collisions": 0
+    },
+    {
+      "index": 14,
+      "collisions": 0
+    },
+    {
+      "index": 15,
+      "collisions": 0
+    },
+    {
+      "index": 16,
+      "collisions": 0
+    },
+    {
+      "index": 17,
+      "collisions": 0
+    },
+    {
+      "index": 18,
+      "collisions": 0
+    },
+    {
+      "index": 19,
+      "collisions": 0
+    },
+    {
+      "index": 20,
+      "collisions": 0
+    },
+    {
+      "index": 21,
+      "collisions": 0
+    },
+    {
+      "index": 22,
+      "collisions": 0
+    },
+    {
+      "index": 23,
+      "collisions": 0
+    },
+    {
+      "index": 24,
+      "collisions": 0
+    },
+    {
+      "index": 25,
+      "collisions": 0
+    },
+    {
+      "index": 26,
+      "collisions": 0
+    },
+    {
+      "index": 27,
+      "collisions": 0
+    },
+    {
+      "index": 28,
+      "collisions": 0
+    },
+    {
+      "index": 29,
+      "collisions": 0
+    },
+    {
+      "index": 30,
+      "collisions": 0
+    },
+    {
+      "index": 31,
+      "collisions": 0
+    },
+    {
+      "index": 32,
+      "collisions": 0
+    },
+    {
+      "index": 33,
+      "collisions": 0
+    },
+    {
+      "index": 34,
+      "collisions": 0
+    },
+    {
+      "index": 35,
+      "collisions": 0
+    },
+    {
+      "index": 36,
+      "collisions": 0
+    },
+    {
+      "index": 37,
+      "collisions": 0
+    },
+    {
+      "index": 38,
+      "collisions": 0
+    },
+    {
+      "index": 39,
+      "collisions": 0
+    },
+    {
+      "index": 40,
+      "collisions": 0
+    },
+    {
+      "index": 41,
+      "collisions": 0
+    },
+    {
+      "index": 42,
+      "collisions": 0
+    },
+    {
+      "index": 43,
+      "collisions": 0
+    },
+    {
+      "index": 44,
+      "collisions": 0
+    },
+    {
+      "index": 45,
+      "collisions": 0
+    },
+    {
+      "index": 46,
+      "collisions": 0
+    },
+    {
+      "index": 47,
+      "collisions": 0
+    },
+    {
+      "index": 48,
+      "collisions": 0
+    },
+    {
+      "index": 49,
+      "collisions": 0
+    },
+    {
+      "index": 50,
+      "collisions": 0
+    },
+    {
+      "index": 51,
+      "collisions": 0
+    },
+    {
+      "index": 52,
+      "collisions": 0
+    },
+    {
+      "index": 53,
+      "collisions": 0
+    },
+    {
+      "index": 54,
+      "collisions": 0
+    },
+    {
+      "index": 55,
+      "collisions": 0
+    },
+    {
+      "index": 56,
+      "collisions": 0
+    },
+    {
+      "index": 57,
+      "collisions": 0
+    },
+    {
+      "index": 58,
+      "collisions": 0
+    },
+    {
+      "index": 59,
+      "collisions": 0
+    },
+    {
+      "index": 60,
+      "collisions": 0
+    },
+    {
+      "index": 61,
+      "collisions": 0
+    },
+    {
+      "index": 62,
+      "collisions": 0
+    },
+    {
+      "index": 63,
+      "collisions": 0
+    },
+    {
+      "index": 64,
+      "collisions": 0
+    },
+    {
+      "index": 65,
+      "collisions": 0
+    },
+    {
+      "index": 66,
+      "collisions": 0
+    },
+    {
+      "index": 67,
+      "collisions": 0
+    },
+    {
+      "index": 68,
+      "collisions": 0
+    },
+    {
+      "index": 69,
+      "collisions": 0
+    },
+    {
+      "index": 70,
+      "collisions": 0
+    },
+    {
+      "index": 71,
+      "collisions": 0
+    },
+    {
+      "index": 72,
+      "collisions": 0
+    }
+  ],
+  "interferences": [],
+  "errors": [],
+  "final_transforms": {
+    "01 VEHICLE - grounded structure:1": [
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ],
+    "02 Door front plug carriage - PROPOSED:1": [
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      0.0,
+      7.0,
+      0.0,
+      0.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ],
+    "03 Door front glazed leaf - PROPOSED:1": [
+      1.0,
+      0.0,
+      0.0,
+      -57.0,
+      0.0,
+      1.0,
+      0.0,
+      7.0,
+      0.0,
+      0.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ],
+    "02 Door rear plug carriage - PROPOSED:1": [
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      0.0,
+      7.0,
+      0.0,
+      0.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ],
+    "03 Door rear glazed leaf - PROPOSED:1": [
+      1.0,
+      0.0,
+      0.0,
+      57.0,
+      0.0,
+      1.0,
+      0.0,
+      7.0,
+      0.0,
+      0.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ],
+    "04 Ramp extension carriage - PROPOSED:1": [
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      0.0,
+      182.5,
+      0.0,
+      0.0,
+      1.0,
+      -9.466330862652142e-30,
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ],
+    "05 Ramp lift carriage - PROPOSED:1": [
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      0.0,
+      182.5,
+      0.0,
+      0.0,
+      1.0,
+      7.500000000000002,
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ],
+    "06 Ramp hinged deck - PROPOSED:1": [
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.9938079904041294,
+      0.11111110749562403,
+      178.94908377620067,
+      0.0,
+      -0.11111110749562403,
+      0.9938079904041294,
+      -1.2186083357634887,
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ],
+    "07 Threshold bridge plate - PROPOSED:1": [
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.9999999999999954,
+      5.551115123125783e-17,
+      4.405364961712621e-13,
+      0.0,
+      -5.551115123125783e-17,
+      0.9999999999999954,
+      1.5631940186722204e-13,
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ],
+    "90 CONTEXT - hideable 150 mm curb:1": [
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ],
+    "08 ACCESS sensors - proposed concept:1": [
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ]
+  }
+}

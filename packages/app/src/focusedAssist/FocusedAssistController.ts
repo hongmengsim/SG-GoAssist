@@ -9,6 +9,7 @@ import type {
   FocusedAssistContext,
   FocusedAssistContextInput,
 } from "./types";
+import { isOperationalTelemetryFresh } from "../operationalGuidance/operationalGuidance";
 
 export interface FocusedAssistController {
   getContext(): FocusedAssistContext;
@@ -133,6 +134,7 @@ export function deriveFocusedAssistContext(
   const buses = getBusesAtCurrentStop(provider, {
     currentStop: stopResolution.stop,
     arrivals: input.arrivals,
+    stopVehicles: input.stopVehicles,
     activeJourney: input.activeJourney,
   });
   const requestedBus = input.request.bus;
@@ -150,7 +152,7 @@ export function deriveFocusedAssistContext(
       : buses.length === 1
         ? buses[0]
         : null);
-  const requestState = stateForRequest(input.request.status);
+  const requestState = stateForOperationalRequest(input.request);
   if (input.request.submitting || requestState) {
     return {
       state: input.request.submitting ? "REQUESTING" : requestState!,
@@ -235,4 +237,36 @@ function stateForRequest(status: AssistanceRequestStatus | null) {
   if (status === AssistanceRequestStatus.ACKNOWLEDGED)
     return "ACKNOWLEDGED" as const;
   return null;
+}
+
+function stateForOperationalRequest(
+  request: FocusedAssistContextInput["request"],
+): FocusedAssistContext["state"] | null {
+  if (
+    request.caseState === "FAILED" ||
+    request.caseState === "BLOCKED" ||
+    request.caseState === "ESCALATED"
+  ) {
+    return "ERROR";
+  }
+  if (
+    request.caseState === "READY" &&
+    request.safetyTelemetry &&
+    isOperationalTelemetryFresh(request.safetyTelemetry) &&
+    request.safetyTelemetry.vehicleStopped &&
+    request.safetyTelemetry.parkingBrakeActive &&
+    request.safetyTelemetry.doorOpen &&
+    request.safetyTelemetry.deploymentPathClear &&
+    !request.safetyTelemetry.rampObstacle?.blocksDeployment &&
+    request.safetyTelemetry.rampPosition === "DEPLOYED"
+  ) {
+    return "RAMP_READY";
+  }
+  if (
+    request.caseState === "SAFE_TO_ACTUATE" ||
+    request.caseState === "ACTUATING"
+  ) {
+    return "PREPARING_RAMP";
+  }
+  return stateForRequest(request.status);
 }

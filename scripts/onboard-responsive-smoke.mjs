@@ -8,7 +8,7 @@ const DEBUG_PORT = Number(process.env.GOASSIST_ONBOARD_CDP_PORT ?? 9335);
 const EDGE_PATH =
   process.env.EDGE_PATH ??
   "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe";
-const WIDTHS = [280, 320, 360, 390, 430];
+const WIDTHS = [280, 320, 360, 390, 430, 441, 526];
 const HEIGHT = 844;
 const profileDir = await mkdtemp(join(tmpdir(), "goassist-onboard-smoke-"));
 const browser = spawn(
@@ -195,9 +195,11 @@ async function startJourneyFromIdle(client, destinationLabel) {
   );
   const startAction = await evaluate(
     client,
-    `document.querySelector('[aria-label="Request assistance"]')
-      ? "Request assistance"
-      : "Start this journey"`,
+    `document.querySelector('[aria-label="Skip assistance and start"]')
+      ? "Skip assistance and start"
+      : document.querySelector('[aria-label="Start this journey"]')
+        ? "Start this journey"
+        : "Request assistance"`,
   );
   await clickLabel(client, startAction);
   await waitFor(
@@ -224,11 +226,32 @@ async function captureState(client, state, destinationName = "Science Drive") {
       screenWidth: width,
       screenHeight: HEIGHT,
     });
+    // Let the responsive React layout settle before asking the scroll view to
+    // reveal its primary action. Scrolling during the resize can be undone by
+    // the subsequent text reflow, producing a false overlap result.
+    await delay(180);
     await evaluate(
       client,
       `(() => {
         const target = document.querySelector('[aria-label="Request help to disembark"], [aria-label="Request help"], [data-testid="alighting-assistance-card"]');
         target?.scrollIntoView({ block: "center" });
+        let scrollParent = target?.parentElement;
+        while (scrollParent) {
+          const overflowY = getComputedStyle(scrollParent).overflowY;
+          if (
+            (overflowY === "auto" || overflowY === "scroll") &&
+            scrollParent.scrollHeight > scrollParent.clientHeight
+          ) {
+            const targetRect = target.getBoundingClientRect();
+            const parentRect = scrollParent.getBoundingClientRect();
+            const navigationTop = document.querySelector('[aria-label^="Journey, tab"]')
+              ?.parentElement?.getBoundingClientRect().top ?? parentRect.bottom;
+            scrollParent.scrollTop +=
+              targetRect.bottom - Math.min(parentRect.bottom, navigationTop) + 16;
+            break;
+          }
+          scrollParent = scrollParent.parentElement;
+        }
       })()`,
     );
     await delay(180);
@@ -260,10 +283,16 @@ async function captureState(client, state, destinationName = "Science Drive") {
             document.querySelectorAll('[aria-label*=" tab,"]').length === 3,
           actionPresent: Boolean(action),
           actionClearOfNavigation:
-            !actionRect || !navigationRect || actionRect.bottom <= navigationRect.top - 1,
+            !actionRect || !navigationRect || actionRect.bottom <= navigationRect.top,
+          actionBottom: actionRect?.bottom ?? null,
+          navigationTop: navigationRect?.top ?? null,
           destinationOccurrences,
-          hasTwoStops: bodyText.includes("2 stops to " + destinationName),
-          hasOneStop: bodyText.includes("1 stop to " + destinationName),
+          hasTwoStops:
+            bodyText.includes("2 stops to " + destinationName) ||
+            bodyText.includes("2 stops left"),
+          hasOneStop:
+            bodyText.includes("1 stop to " + destinationName) ||
+            bodyText.includes("1 stop left"),
           hasDestinationNext:
             bodyText.includes("YOUR STOP IS NEXT") &&
             bodyText.includes("Prepare to alight."),
@@ -452,7 +481,7 @@ try {
     "profile",
   );
   await clickLabel(client, "Edit accessibility preferences");
-  await clickLabel(client, "Apply Wheelchair preset");
+  await clickLabel(client, "Turn on Mobility support group");
   await clickLabel(client, "Save needs");
   await clickLabel(client, "Journey, tab", true);
   await startJourneyFromIdle(client, "Science Drive.");
@@ -462,16 +491,11 @@ try {
   await clickLabel(client, "Simulate next stop");
   await waitFor(
     client,
-    `document.body?.innerText.includes("1 stop to Science Drive")`,
+    `document.body?.innerText.includes("YOUR STOP IS NEXT") &&
+      document.body?.innerText.includes("1 stop left")`,
     "one stop",
   );
   results.push(...(await captureState(client, "1_STOP")));
-  await clickLabel(client, "Simulate next stop");
-  await waitFor(
-    client,
-    `document.body?.innerText.includes("YOUR STOP IS NEXT")`,
-    "destination next",
-  );
   results.push(
     ...(await captureState(client, "DESTINATION_NEXT_NOT_REQUESTED")),
   );
@@ -483,7 +507,7 @@ try {
     "profile",
   );
   await clickLabel(client, "Edit accessibility preferences");
-  await clickLabel(client, "Apply Simplified journey preset");
+  await clickLabel(client, "Turn on Simpler journeys group");
   await clickLabel(client, "Save needs");
   await clickLabel(client, "Journey, tab", true);
   await waitFor(
@@ -500,9 +524,9 @@ try {
     "profile",
   );
   await clickLabel(client, "Edit accessibility preferences");
+  await clickLabel(client, "Settings category.", true);
   await clickLabel(client, "Journey support accessibility settings");
   await clickLabel(client, "Simplified journey");
-  await clickLabel(client, "Back to accessibility");
   await clickLabel(client, "Save needs");
   await clickLabel(client, "Journey, tab", true);
   await waitFor(
@@ -621,6 +645,16 @@ try {
     `window.__goassistOnboardSmokeCancellationCount ?? 0`,
   );
 
+  // The second journey deliberately exercises a clean discovery flow. Keep
+  // accessibility preferences, but remove the new convenience-only context
+  // cache so the smoke does not depend on whichever stop was last cached.
+  await evaluate(
+    client,
+    `Object.keys(localStorage)
+      .filter((key) => key.includes("goassist.passenger-context.v1"))
+      .forEach((key) => localStorage.removeItem(key))`,
+  );
+
   await client.send("Page.reload", { ignoreCache: true });
   await waitFor(
     client,
@@ -631,6 +665,9 @@ try {
   lifecycle.refreshStayedIdle = true;
 
   await startJourneyFromIdle(client, "Kent Ridge Terminal.");
+  for (let stop = 0; stop < 3; stop += 1) {
+    await clickLabel(client, "Simulate next stop");
+  }
   await waitFor(
     client,
     `document.body?.innerText.includes("YOUR STOP IS NEXT") &&
@@ -639,9 +676,12 @@ try {
   );
   lifecycle.secondJourneyClean = await evaluate(
     client,
-    `document.body?.innerText.includes("YOUR STOP IS NEXT") &&
-      document.body?.innerText.includes("Kent Ridge Terminal") &&
-      !document.body?.innerText.includes("Science Drive")`,
+    `(() => {
+      const hero = document.querySelector('[aria-label^="Your stop is next."]');
+      const label = hero?.getAttribute("aria-label") ?? "";
+      return label.includes("Kent Ridge Terminal") &&
+        !label.includes("Your stop is next. Science Drive");
+    })()`,
   );
   lifecycle.destinationNextKeptAssistancePrimary = await evaluate(
     client,
@@ -682,7 +722,9 @@ try {
     if (!result.bottomNavigationVisible)
       messages.push("three-tab bottom navigation missing");
     if (!result.actionClearOfNavigation)
-      messages.push("alighting CTA obscured by bottom navigation");
+      messages.push(
+        `alighting CTA obscured by bottom navigation (${result.actionBottom} > ${result.navigationTop})`,
+      );
     if (result.hasBoardingTimeWording)
       messages.push("boarding-time wording shown while disembarking");
     if (result.hasMiniatureJourneyArtwork)

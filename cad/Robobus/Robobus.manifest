@@ -1,0 +1,9 @@
+{
+  "autodeskProduct": "Fusion360",
+  "type": "script",
+  "author": "GoAssist",
+  "description": {"": "Build the Punggol WeRide Robobus exterior reference model with native editable Fusion features."},
+  "version": "1.0.0",
+  "runOnStartup": false,
+  "supportedOS": "windows|mac"
+}

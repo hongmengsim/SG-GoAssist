@@ -3,9 +3,12 @@ import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
-const packageName = process.env.GOASSIST_ANDROID_PACKAGE ?? "sg.goassist.passenger";
+const packageName =
+  process.env.GOASSIST_ANDROID_PACKAGE ?? "sg.goassist.passenger";
 const prefix = "GOASSIST_ASSISTANT_E2E_RESULT:";
-const timeoutMs = Number(process.env.GOASSIST_ANDROID_SMOKE_TIMEOUT_MS ?? 120_000);
+const timeoutMs = Number(
+  process.env.GOASSIST_ANDROID_SMOKE_TIMEOUT_MS ?? 120_000,
+);
 const adb = resolveAdb();
 
 function resolveAdb() {
@@ -46,14 +49,23 @@ if (state.status !== 0 || !state.stdout.includes("device")) {
     "No connected Android device is available. Connect an ARM64 GoAssist development device and retry.",
   );
 }
-const architecture = run(["shell", "getprop", "ro.product.cpu.abi"]).stdout.trim();
-assert.match(architecture, /arm64-v8a/i, `Expected ARM64, received ${architecture}`);
-const installed = run(
-  ["shell", "pm", "path", packageName],
-  { allowFailure: true },
+const architecture = run([
+  "shell",
+  "getprop",
+  "ro.product.cpu.abi",
+]).stdout.trim();
+assert.match(
+  architecture,
+  /arm64-v8a/i,
+  `Expected ARM64, received ${architecture}`,
 );
+const installed = run(["shell", "pm", "path", packageName], {
+  allowFailure: true,
+});
 if (installed.status !== 0 || !installed.stdout.includes("package:")) {
-  throw new Error(`The GoAssist development build (${packageName}) is not installed.`);
+  throw new Error(
+    `The GoAssist development build (${packageName}) is not installed.`,
+  );
 }
 
 run(["logcat", "-c"], { allowFailure: true });
@@ -89,8 +101,13 @@ while (Date.now() < deadline) {
   }
   await delay(1_500);
 }
-if (!payload) throw new Error("Timed out waiting for the Android assistant result.");
-assert.equal(payload.ok, true, payload.error ?? "Android assistant smoke failed");
+if (!payload)
+  throw new Error("Timed out waiting for the Android assistant result.");
+assert.equal(
+  payload.ok,
+  true,
+  payload.error ?? "Android assistant smoke failed",
+);
 assert.equal(payload.runtime, "AI_READY");
 assert.equal(payload.checksumVerified, true);
 assert.equal(payload.resolutionKind, "ANSWER");

@@ -1,0 +1,132 @@
+{
+  "slicer": "PrusaSlicer 2.9.6",
+  "printer": "Prusa CORE One 0.4 nozzle",
+  "PLA_density_g_cm3": 1.24,
+  "layer_mm": 0.24,
+  "perimeters": 3,
+  "infill_percent": 10,
+  "support_material": false,
+  "brim_mm": 3,
+  "plates": [
+    {
+      "plate": "plate_01_body",
+      "grams": 209.97,
+      "seconds": 26872,
+      "normal_mode": "7h 27m 52s",
+      "xy_min_mm": [
+        2.586,
+        2.586
+      ],
+      "xy_max_mm": [
+        236.414,
+        157.414
+      ]
+    },
+    {
+      "plate": "plate_02_roof",
+      "grams": 43.24,
+      "seconds": 4002,
+      "normal_mode": "1h 06m 42s",
+      "xy_min_mm": [
+        2.586,
+        2.586
+      ],
+      "xy_max_mm": [
+        235.414,
+        156.814
+      ]
+    },
+    {
+      "plate": "plate_03_tray",
+      "grams": 18.32,
+      "seconds": 2235,
+      "normal_mode": "0h 37m 15s",
+      "xy_min_mm": [
+        2.586,
+        2.586
+      ],
+      "xy_max_mm": [
+        182.414,
+        170.414
+      ]
+    },
+    {
+      "plate": "plate_04_laser",
+      "grams": 18.06,
+      "seconds": 2662,
+      "normal_mode": "0h 44m 22s",
+      "xy_min_mm": [
+        2.586,
+        2.587
+      ],
+      "xy_max_mm": [
+        233.407,
+        61.41
+      ]
+    },
+    {
+      "plate": "plate_05_camera",
+      "grams": 15.65,
+      "seconds": 2701,
+      "normal_mode": "0h 45m 01s",
+      "xy_min_mm": [
+        2.586,
+        2.59
+      ],
+      "xy_max_mm": [
+        192.41,
+        107.414
+      ]
+    },
+    {
+      "plate": "plate_06_sensor",
+      "grams": 5.39,
+      "seconds": 920,
+      "normal_mode": "0h 15m 20s",
+      "xy_min_mm": [
+        2.595,
+        2.586
+      ],
+      "xy_max_mm": [
+        221.414,
+        30.214
+      ]
+    },
+    {
+      "plate": "plate_07_hardware",
+      "grams": 26.75,
+      "seconds": 3956,
+      "normal_mode": "1h 05m 56s",
+      "xy_min_mm": [
+        2.593,
+        2.586
+      ],
+      "xy_max_mm": [
+        239.406,
+        108.009
+      ]
+    },
+    {
+      "plate": "plate_08_coupon",
+      "grams": 4.53,
+      "seconds": 896,
+      "normal_mode": "0h 14m 56s",
+      "xy_min_mm": [
+        2.586,
+        2.586
+      ],
+      "xy_max_mm": [
+        238.413,
+        47.414
+      ]
+    }
+  ],
+  "total_grams": 341.91,
+  "total_seconds": 44244,
+  "total_normal_mode": "12h 17m 24s",
+  "hard_limit_pass": true,
+  "target_pass": true,
+  "printed_quantity": 72,
+  "unique_STLs": 38,
+  "note": "Slicer estimates, including all quantities, coupons and generated brims. No supports generated. Setup, cooling, assembly, failed prints and extra calibration repeats are not included."
+}

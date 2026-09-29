@@ -1,0 +1,32 @@
+START
+Traceback (most recent call last):
+  File "C:/Users/simho/Downloads/BusTech/GoAssist/cad/Robobus/Robobus.py", line 150, in run
+    root.name = 'Punggol Ai.R - WeRide Robobus - Exterior Study'
+    ^^^^^^^^^
+  File "C:\Users/simho/AppData/Local/Autodesk/webdeploy/production/f0877c667ada77b44502b5b3316b697a2ba18ad4/Api/Python/packages\adsk\fusion.py", line 14827, in _set_name
+    return _fusion.BaseComponent__set_name(self, value)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+RuntimeError: 3 : root component name cannot be changed
+
+START
+Traceback (most recent call last):
+  File "C:/Users/simho/Downloads/BusTech/GoAssist/cad/Robobus/Robobus.py", line 159, in run
+    purple = appearance('Ai.R violet body',(111,44,188),['Paint - Enamel Glossy (Yellow)','Paint - Enamel Glossy (White)','Plastic - Glossy (Blue)'])
+  File "C:/Users/simho/Downloads/BusTech/GoAssist/cad/Robobus/Robobus.py", line 110, in appearance
+    candidate = lib.appearances.itemByName(wanted)
+  File "C:\Users/simho/AppData/Local/Autodesk/webdeploy/production/f0877c667ada77b44502b5b3316b697a2ba18ad4/Api/Python/packages\adsk\core.py", line 4807, in itemByName
+    return _core.Appearances_itemByName(self, name)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^
+RuntimeError: 3 : invalid name
+
+START
+Body built
+Glazing and body details built
+Wheels built; wheelbase 3800 mm
+Sensors built
+COMPLETE: {"nominal_dimensions_mm": {"length": 5500, "width": 2050, "height": 2650, "wheelbase": 3800}, "body_count": 104, "timeline_features": 334, "detail_basis": "Photographic exterior approximation. Opaque glazing; no engineered interior. Sensors and trim may exceed nominal envelope.", "warnings": [], "invalid_bodies": [], "feature_warnings": [{"name": "Rear skirt wheel arch", "message": "No target body!Compute FailedRear skirt wheel arch"}, {"name": "Rear skirt wheel arch (1)", "message": "No target body!Compute FailedRear skirt wheel arch (1)"}]}
+START
+REFINEMENT START
+REFINEMENT COMPLETE: {"nominal_dimensions_mm": {"length": 5500, "width": 2050, "height": 2650, "wheelbase": 3800}, "body_count": 112, "timeline_features": 344, "detail_basis": "Photographic exterior approximation. Opaque glazing; no engineered interior. Sensors and trim may exceed nominal envelope.", "warnings": [], "invalid_bodies": [], "feature_warnings": [], "rear_skirt_segments_repaired": 2}
+START
+Badge orientation corrected: (False, True)

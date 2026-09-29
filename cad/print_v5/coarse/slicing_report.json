@@ -1,0 +1,74 @@
+[
+  {
+    "plate": "plate_01_body",
+    "exit_code": 0,
+    "estimates": [
+      "; filament used [mm] = 68775.23",
+      "; filament used [cm3] = 165.42",
+      "; filament used [g] = 205.13",
+      "; total filament used [g] = 205.13",
+      "; total filament cost = 5.21",
+      "; total filament used for wipe tower [g] = 0.00",
+      "; estimated printing time (normal mode) = 6h 51m 49s",
+      "; estimated printing time (silent mode) = 7h 23m 54s"
+    ],
+    "extrusion_xy_min": [
+      2.586,
+      2.586
+    ],
+    "extrusion_xy_max": [
+      235.414,
+      157.414
+    ],
+    "extrusions_inside_bed": true,
+    "project_exit_code": 0
+  },
+  {
+    "plate": "plate_02_roof",
+    "exit_code": 0,
+    "estimates": [
+      "; filament used [mm] = 16106.51",
+      "; filament used [cm3] = 38.74",
+      "; filament used [g] = 48.04",
+      "; total filament used [g] = 48.04",
+      "; total filament cost = 1.22",
+      "; total filament used for wipe tower [g] = 0.00",
+      "; estimated printing time (normal mode) = 1h 6m 46s",
+      "; estimated printing time (silent mode) = 1h 9m 35s"
+    ],
+    "extrusion_xy_min": [
+      2.586,
+      2.586
+    ],
+    "extrusion_xy_max": [
+      235.414,
+      156.814
+    ],
+    "extrusions_inside_bed": true,
+    "project_exit_code": 0
+  },
+  {
+    "plate": "plate_03_laser",
+    "exit_code": 0,
+    "estimates": [
+      "; filament used [mm] = 5198.15",
+      "; filament used [cm3] = 12.50",
+      "; filament used [g] = 15.50",
+      "; total filament used [g] = 15.50",
+      "; total filament cost = 0.39",
+      "; total filament used for wipe tower [g] = 0.00",
+      "; estimated printing time (normal mode) = 43m 16s",
+      "; estimated printing time (silent mode) = 50m 18s"
+    ],
+    "extrusion_xy_min": [
+      2.586,
+      2.594
+    ],
+    "extrusion_xy_max": [
+      200.413,
+      55.409
+    ],
+    "extrusions_inside_bed": true,
+    "project_exit_code": 0
+  }
+]

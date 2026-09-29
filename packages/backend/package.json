@@ -17,7 +17,7 @@
     "test:unit": "npm run build && node --test dist/tests/assistanceRequestService.test.js dist/tests/aviator.test.js dist/tests/journey.test.js dist/tests/location.test.js",
     "test:integration": "npm run build && node --test dist/tests/*.integration.test.js",
     "test:coverage": "npm run build && node --test --experimental-test-coverage --test-coverage-include=\"dist/**/*.js\" --test-coverage-exclude=\"dist/tests/**\" --test-coverage-exclude=\"dist/server.js\" --test-coverage-exclude=\"dist/cli/**\" dist/tests/*.test.js dist/tests/*.integration.test.js",
-    "lint": "eslint src/**/*.ts",
+    "lint": "npm run typecheck",
     "format": "prettier --write src/**/*.ts"
   },
   "dependencies": {

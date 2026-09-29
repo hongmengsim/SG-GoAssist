@@ -1,0 +1,39 @@
+﻿Part,Quantity,Plate,Print X mm,Print Y mm,Print Z mm,Notes
+01_body_rear,1,plate_01_body,150.0,111.0,105.6,"Floor directly on bed; no supports. Nominal 1.4 mm walls, 1.8 mm floor."
+02_body_front,1,plate_01_body,150.0,111.0,105.6,"Floor directly on bed; no supports. Nominal 1.4 mm walls, 1.8 mm floor."
+03_roof_rear,1,plate_02_roof,149.4,110.0,4.7,Exterior face flat on bed; skirts grow upward; no supports.
+04_roof_front,1,plate_02_roof,149.4,110.0,4.7,Exterior face flat on bed; skirts grow upward; no supports.
+05_join_key,3,plate_07_hardware,15.4,5.4,3.4,"Three removable floor keys, 0.3 mm clearance per mating face."
+06_roof_clip,4,plate_07_hardware,8.7,7.1,5.0,"Flex outside leg outward to release hook, then lift. Print on side, without supports."
+07_fixed_sensor_header,1,plate_06_sensor,96.0,22.8,8.0,Fixed header defines doorway top Z120; two feet seat in body jamb sockets.
+08_static_wheel,4,plate_07_hardware,44.0,44.0,2.4,
+09_wheel_pin,4,plate_07_hardware,6.0,6.0,8.5,
+10_breadboard_tray,1,plate_03_tray,175.0,65.0,3.0,"Flat lattice tray. Floor top Z25.2, at least 60 mm clear above it."
+11_controller_tray,1,plate_03_tray,110.0,90.0,3.0,"Flat lattice tray. Floor top Z25.2, at least 60 mm clear above it."
+12_tray_retainer,8,plate_07_hardware,8.0,10.0,5.4,
+13_laser_pivot_adapter,3,plate_04_laser,30.0,20.0,4.8,Flat disc face on bed. Sleeve T-rail slides into channel; pivot pin fixes axial seating.
+15_L1_yoke,1,plate_04_laser,49.0,20.0,3.0,Flat-printing side plate; support attaches to fixed structure.
+16_L2_yoke,1,plate_04_laser,49.0,20.0,3.0,Flat-printing side plate; support attaches to fixed structure.
+17_L3_yoke,1,plate_04_laser,55.0,26.0,3.0,Flat-printing side plate; support attaches to fixed structure.
+18_laser_carrier,3,plate_04_laser,18.9,16.4,30.0,Print aperture down. 12.6 mm split bore for nominal 12 x 30 barrel. Front aperture is pivot datum.
+19_laser_collar,3,plate_07_hardware,20.0,20.0,8.0,Tapered compression collar; intentional elastic overlap with split sleeve.
+20_pivot_pin,3,plate_07_hardware,7.2,7.2,11.5,"Insert from outer yoke face, then fit radial locking wedge behind carrier disc."
+21_pivot_wedge,3,plate_07_hardware,16.0,1.967,1.2,Shown loose. Seat gently to take up axial clearance and clamp pivot friction; remove before adjusting angle.
+22_mount_pin,4,plate_07_hardware,5.4,5.4,18.0,
+23_camera_mast_rail,1,plate_05_camera,100.0,133.0,8.0,Flat L section. Socket crosses body seam; camera benchmark Z220.
+24_camera_platform,1,plate_05_camera,44.0,12.6,28.0,Platform top Z214.3; adjust real lens 5.7 mm above it for Z220. Prints on rail-channel end.
+25_camera_jaw,2,plate_07_hardware,7.4,12.0,8.0,
+26_camera_index_pin,1,plate_07_hardware,5.4,5.4,19.0,
+27_ToF_bar,1,plate_06_sensor,79.4,15.0,3.0,"Removable sensing-only doorway bar, optical centre (0,0,75)."
+28_ToF_cap,1,plate_06_sensor,22.6,15.0,4.8,
+29_ToF_jamb_clip,2,plate_07_hardware,8.5,6.0,7.5,
+C01_key_0p2,1,plate_08_coupon,20.0,9.0,5.0,
+C01_key_0p3,1,plate_08_coupon,20.0,9.0,5.0,
+C01_key_0p4,1,plate_08_coupon,20.0,9.0,5.0,
+C02_bore_12,1,plate_08_coupon,14.8,14.8,3.0,
+C02_bore_12p2,1,plate_08_coupon,15.0,15.0,3.0,
+C02_bore_12p4,1,plate_08_coupon,15.2,15.2,3.0,
+C02_bore_12p6,1,plate_08_coupon,15.4,15.4,3.0,
+C02_bore_12p8,1,plate_08_coupon,15.6,15.6,3.0,
+C03_pivot_fit,2,plate_08_coupon,10.0,10.0,3.0,Test with one assembly pivot pin; add two coupons to represent two plates.
+C04_angle_gauge,1,plate_08_coupon,23.0,23.0,1.2,Quadrant gauge: marks 40 to 85 degrees every 5; longer marks 45 and 60. Use horizontal reference edge.

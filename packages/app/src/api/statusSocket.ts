@@ -1,4 +1,4 @@
-import type { StatusUpdateMessage } from "@buspass/shared";
+import type { StatusUpdateMessage, StopVehiclePresence } from "@buspass/shared";
 import { WS_BASE_URL } from "../config";
 
 type StatusSocketOptions = {
@@ -42,6 +42,23 @@ const assistanceCaseStates = new Set([
   "BLOCKED",
   "FAILED",
   "CANCELLED",
+]);
+const rampPositions = new Set([
+  "STOWED",
+  "DEPLOYING",
+  "DEPLOYED",
+  "RETRACTING",
+  "FAULT",
+  "UNKNOWN",
+]);
+const actuatorStates = new Set([
+  "ISSUED",
+  "ACCEPTED",
+  "IN_PROGRESS",
+  "COMPLETED",
+  "CANCELLED",
+  "BLOCKED",
+  "FAILED",
 ]);
 
 function parseStatusUpdate(
@@ -130,6 +147,54 @@ function parseStatusUpdate(
     return message as unknown as StatusUpdateMessage;
   }
 
+  if (message.type === "SAFETY_TELEMETRY") {
+    const telemetry = message.telemetry as Record<string, unknown> | undefined;
+    if (
+      !expectedBusId ||
+      message.busId !== expectedBusId ||
+      typeof message.fresh !== "boolean" ||
+      !telemetry ||
+      telemetry.busId !== expectedBusId ||
+      typeof telemetry.vehicleStopped !== "boolean" ||
+      typeof telemetry.parkingBrakeActive !== "boolean" ||
+      typeof telemetry.doorOpen !== "boolean" ||
+      typeof telemetry.deploymentPathClear !== "boolean" ||
+      typeof telemetry.rampPosition !== "string" ||
+      !rampPositions.has(telemetry.rampPosition) ||
+      typeof telemetry.observedAt !== "string"
+    ) {
+      return null;
+    }
+    return message as unknown as StatusUpdateMessage;
+  }
+
+  if (message.type === "ACTUATOR_STATUS") {
+    const status = message.status as Record<string, unknown> | undefined;
+    if (
+      !caseId ||
+      message.caseId !== caseId ||
+      typeof message.busId !== "string" ||
+      !status ||
+      typeof status.state !== "string" ||
+      !actuatorStates.has(status.state)
+    ) {
+      return null;
+    }
+    return message as unknown as StatusUpdateMessage;
+  }
+
+  if (message.type === "OPERATOR_ESCALATION") {
+    if (
+      !caseId ||
+      message.caseId !== caseId ||
+      typeof message.stopCode !== "string" ||
+      typeof message.reason !== "string"
+    ) {
+      return null;
+    }
+    return message as unknown as StatusUpdateMessage;
+  }
+
   return null;
 }
 
@@ -137,7 +202,7 @@ export function subscribeToRequestStatus(
   requestId: string,
   onUpdate: (message: StatusUpdateMessage) => void,
   onError: () => void,
-  options: StatusSocketOptions = {}
+  options: StatusSocketOptions = {},
 ) {
   const initialReconnectDelayMs = options.initialReconnectDelayMs ?? 750;
   const maxReconnectDelayMs = options.maxReconnectDelayMs ?? 10_000;
@@ -155,7 +220,7 @@ export function subscribeToRequestStatus(
 
     const delay = Math.min(
       initialReconnectDelayMs * 2 ** reconnectAttempt,
-      maxReconnectDelayMs
+      maxReconnectDelayMs,
     );
     reconnectAttempt += 1;
     reconnectTimer = setTimeout(() => {
@@ -198,7 +263,7 @@ export function subscribeToRequestStatus(
         JSON.stringify({
           type: "SUBSCRIBE",
           requestId,
-        })
+        }),
       );
       if (options.caseId) {
         socket.send(
@@ -253,6 +318,110 @@ export function subscribeToRequestStatus(
       clearTimeout(reconnectTimer);
       reconnectTimer = null;
     }
+    const socket = activeSocket;
+    activeSocket = null;
+    socket?.close();
+  };
+}
+
+export function subscribeToStopVehiclePresence(
+  stopCode: string,
+  onUpdate: (vehicle: StopVehiclePresence) => void,
+  onError: () => void,
+  options: Pick<
+    StatusSocketOptions,
+    "initialReconnectDelayMs" | "maxReconnectDelayMs" | "onConnected"
+  > = {},
+) {
+  const initialReconnectDelayMs = options.initialReconnectDelayMs ?? 750;
+  const maxReconnectDelayMs = options.maxReconnectDelayMs ?? 10_000;
+  let activeSocket: WebSocket | null = null;
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let reconnectAttempt = 0;
+  let stopped = false;
+  let outageReported = false;
+
+  const reportOutage = () => {
+    if (stopped || outageReported) return;
+    outageReported = true;
+    onError();
+  };
+  const scheduleReconnect = () => {
+    if (stopped || reconnectTimer) return;
+    const delay = Math.min(
+      initialReconnectDelayMs * 2 ** reconnectAttempt,
+      maxReconnectDelayMs,
+    );
+    reconnectAttempt += 1;
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      connect();
+    }, delay);
+  };
+
+  function connect() {
+    if (stopped) return;
+    let socket: WebSocket;
+    try {
+      socket = new WebSocket(WS_BASE_URL);
+    } catch {
+      reportOutage();
+      scheduleReconnect();
+      return;
+    }
+    activeSocket = socket;
+    socket.onopen = () => {
+      if (stopped || socket !== activeSocket) return;
+      reconnectAttempt = 0;
+      outageReported = false;
+      options.onConnected?.();
+      socket.send(JSON.stringify({ type: "SUBSCRIBE_STOP", stopCode }));
+    };
+    socket.onmessage = (event) => {
+      if (stopped || socket !== activeSocket) return;
+      try {
+        const message = JSON.parse(String(event.data)) as Record<
+          string,
+          unknown
+        >;
+        const vehicle = message.vehicle as Record<string, unknown> | undefined;
+        if (
+          message.type !== "STOP_VEHICLE_PRESENCE" ||
+          message.stopCode !== stopCode ||
+          typeof message.timestamp !== "string" ||
+          !vehicle ||
+          typeof vehicle.busId !== "string" ||
+          typeof vehicle.busService !== "string" ||
+          vehicle.stopCode !== stopCode ||
+          !["APPROACHING", "PARKED", "DEPARTED"].includes(
+            String(vehicle.state),
+          ) ||
+          typeof vehicle.wheelchairAccessible !== "boolean" ||
+          typeof vehicle.observedAt !== "string" ||
+          typeof vehicle.fresh !== "boolean"
+        ) {
+          return;
+        }
+        onUpdate(vehicle as unknown as StopVehiclePresence);
+      } catch {
+        // Ignore malformed frames and keep the stop subscription alive.
+      }
+    };
+    socket.onerror = reportOutage;
+    socket.onclose = () => {
+      if (socket === activeSocket) activeSocket = null;
+      if (!stopped) {
+        reportOutage();
+        scheduleReconnect();
+      }
+    };
+  }
+
+  connect();
+  return () => {
+    stopped = true;
+    if (reconnectTimer) clearTimeout(reconnectTimer);
+    reconnectTimer = null;
     const socket = activeSocket;
     activeSocket = null;
     socket?.close();

@@ -97,7 +97,9 @@ export class VoiceAssistantController {
   }
 
   processTranscript(transcript: string): Promise<AssistantTurnResult> {
-    const queued = this.turnQueue.then(() => this.processTranscriptSerial(transcript));
+    const queued = this.turnQueue.then(() =>
+      this.processTranscriptSerial(transcript),
+    );
     this.turnQueue = queued.then(
       () => undefined,
       () => undefined,
@@ -486,6 +488,20 @@ export class VoiceAssistantController {
           shelteredRouteResponse(context),
           provider,
         );
+      case "GET_STOP_AMENITIES":
+        return this.respond(
+          transcript,
+          intent,
+          stopAmenitiesResponse(context),
+          provider,
+        );
+      case "GET_SERVICE_ADVISORIES":
+        return this.respond(
+          transcript,
+          intent,
+          serviceAdvisoryResponse(context),
+          provider,
+        );
       case "REQUEST_RAMP":
         return this.prepareRampRequest(
           transcript,
@@ -516,10 +532,7 @@ export class VoiceAssistantController {
             transcript,
             intent,
             { type: "START_DIRECTIONS" },
-            assistantSafetyCopy(
-              context.locale,
-              "startDirectionsConfirmation",
-            ),
+            assistantSafetyCopy(context.locale, "startDirectionsConfirmation"),
             provider,
             context,
           );
@@ -747,11 +760,7 @@ export class VoiceAssistantController {
         provider,
       );
     }
-    if (
-      !requestedBus &&
-      !activeJourneyBus &&
-      candidates.length > 1
-    ) {
+    if (!requestedBus && !activeJourneyBus && candidates.length > 1) {
       const selectionType =
         type === "REQUEST_RAMP"
           ? "SELECT_BUS_FOR_RAMP"
@@ -1189,7 +1198,95 @@ function shelteredRouteResponse(context: AssistantContext) {
   return assistantCopy(locale, "shelterUnverified");
 }
 
-function routeOptionLabel(route: NonNullable<AssistantContext["routeOptions"]>[number]) {
+function stopAmenitiesResponse(context: AssistantContext) {
+  const locale = normalizeAssistantLocale(context.locale);
+  const amenities = context.currentStopAmenities;
+  if (!context.currentStop || !amenities) {
+    return localizedOperationalCopy(locale, "AMENITIES_UNAVAILABLE");
+  }
+  const available = [
+    [amenities.shelter, "shelter"],
+    [amenities.seating, "seating"],
+    [amenities.lighting, "lighting"],
+    [amenities.tactilePaving, "tactile paving"],
+    [amenities.stepFreeKerb, "step-free kerb"],
+    [amenities.audioBeacon, "audio beacon"],
+    [amenities.physicalAssistButton, "physical assistance button"],
+  ]
+    .filter(([status]) => status === "YES")
+    .map(([, label]) => label);
+  if (available.length === 0) {
+    return `${localizedOperationalCopy(locale, "AMENITIES_UNKNOWN")} ${amenities.provenance.sourceLabel}.`;
+  }
+  return `${localizedOperationalCopy(locale, "AMENITIES_PREFIX")} ${available.join(", ")}. ${amenities.provenance.sourceLabel}.`;
+}
+
+function serviceAdvisoryResponse(context: AssistantContext) {
+  const locale = normalizeAssistantLocale(context.locale);
+  const advisories = context.serviceAdvisories ?? [];
+  if (advisories.length === 0) {
+    return localizedOperationalCopy(locale, "NO_ADVISORIES");
+  }
+  return `${localizedOperationalCopy(locale, "ADVISORIES_PREFIX")} ${advisories
+    .slice(0, 2)
+    .map((advisory) => advisory.title)
+    .join(" ")} ${advisories[0].provenance.sourceLabel}.`;
+}
+
+function localizedOperationalCopy(
+  locale: AssistantContext["locale"],
+  key:
+    | "AMENITIES_UNAVAILABLE"
+    | "AMENITIES_UNKNOWN"
+    | "AMENITIES_PREFIX"
+    | "NO_ADVISORIES"
+    | "ADVISORIES_PREFIX",
+) {
+  const copy = {
+    "en-SG": {
+      AMENITIES_UNAVAILABLE:
+        "Choose or confirm a bus stop to check its facilities.",
+      AMENITIES_UNKNOWN:
+        "Verified facility information is unavailable for this stop.",
+      AMENITIES_PREFIX: "Verified at this stop:",
+      NO_ADVISORIES:
+        "There are no verified advisories for your current stop or service.",
+      ADVISORIES_PREFIX: "Travel notice:",
+    },
+    "zh-SG": {
+      AMENITIES_UNAVAILABLE: "请先选择或确认巴士站，以查看站点设施。",
+      AMENITIES_UNKNOWN: "此站暂无已验证的设施资料。",
+      AMENITIES_PREFIX: "此站已验证的设施：",
+      NO_ADVISORIES: "当前车站或服务没有已验证的通知。",
+      ADVISORIES_PREFIX: "出行通知：",
+    },
+    "ms-SG": {
+      AMENITIES_UNAVAILABLE:
+        "Pilih atau sahkan perhentian bas untuk menyemak kemudahannya.",
+      AMENITIES_UNKNOWN:
+        "Maklumat kemudahan yang disahkan tidak tersedia untuk perhentian ini.",
+      AMENITIES_PREFIX: "Disahkan di perhentian ini:",
+      NO_ADVISORIES:
+        "Tiada nasihat yang disahkan untuk perhentian atau perkhidmatan semasa anda.",
+      ADVISORIES_PREFIX: "Notis perjalanan:",
+    },
+    "ta-SG": {
+      AMENITIES_UNAVAILABLE:
+        "வசதிகளைச் சரிபார்க்க பேருந்து நிறுத்தத்தைத் தேர்ந்தெடுக்கவும் அல்லது உறுதிப்படுத்தவும்.",
+      AMENITIES_UNKNOWN:
+        "இந்த நிறுத்தத்திற்கான சரிபார்க்கப்பட்ட வசதி தகவல் கிடைக்கவில்லை.",
+      AMENITIES_PREFIX: "இந்த நிறுத்தத்தில் சரிபார்க்கப்பட்டவை:",
+      NO_ADVISORIES:
+        "உங்கள் தற்போதைய நிறுத்தம் அல்லது சேவைக்கு சரிபார்க்கப்பட்ட அறிவிப்புகள் இல்லை.",
+      ADVISORIES_PREFIX: "பயண அறிவிப்பு:",
+    },
+  } as const;
+  return copy[normalizeAssistantLocale(locale)][key];
+}
+
+function routeOptionLabel(
+  route: NonNullable<AssistantContext["routeOptions"]>[number],
+) {
   return `${route.title}, Service ${route.serviceNo}`;
 }
 
@@ -1293,6 +1390,18 @@ function snapshotAssistantContext(
       ? { ...context.selectedBusAtStop }
       : null,
     routeOptions: context.routeOptions?.map((route) => ({ ...route })),
+    currentStopAmenities: context.currentStopAmenities
+      ? {
+          ...context.currentStopAmenities,
+          provenance: { ...context.currentStopAmenities.provenance },
+        }
+      : null,
+    serviceAdvisories: context.serviceAdvisories?.map((advisory) => ({
+      ...advisory,
+      affectedServices: [...advisory.affectedServices],
+      affectedStops: [...advisory.affectedStops],
+      provenance: { ...advisory.provenance },
+    })),
     preferences: { ...context.preferences },
     conversationHistory: conversationHistory.map((message) => ({
       ...message,

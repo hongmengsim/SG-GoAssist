@@ -47,6 +47,7 @@ function contextInput(
     nearbyStops: [stop],
     manuallySelectedStop: null,
     arrivals: [],
+    stopVehicles: [],
     activeJourney: null,
     onboard: false,
     destinationName: null,
@@ -150,6 +151,84 @@ describe("Focused Assist context", () => {
     expect(context.selectedBus?.source).toBe("LIVE_ARRIVAL");
   });
 
+  it("uses only fresh parked telemetry for immediate ramp access", () => {
+    const parkedVehicle = {
+      busId: "BUS-151",
+      busService: "151",
+      stopCode: stop.busStopCode,
+      state: "PARKED" as const,
+      destination: "Kent Ridge Terminal",
+      wheelchairAccessible: true,
+      observedAt: new Date().toISOString(),
+      fresh: true,
+    };
+    const parked = deriveFocusedAssistContext(
+      contextInput({
+        arrivals: [service151Arrival],
+        stopVehicles: [parkedVehicle],
+      }),
+      new RealBusPresenceProvider(),
+    );
+    expect(parked.state).toBe("ONE_BUS_PRESENT");
+    expect(parked.selectedBus).toMatchObject({
+      id: "BUS-151",
+      confidence: "HIGH",
+      presenceState: "PARKED",
+      source: "VEHICLE_TELEMETRY",
+    });
+
+    const stale = deriveFocusedAssistContext(
+      contextInput({
+        arrivals: [service151Arrival],
+        stopVehicles: [{ ...parkedVehicle, fresh: false }],
+      }),
+      new RealBusPresenceProvider(),
+    );
+    expect(stale.state).toBe("BUS_CONFIRMATION_REQUIRED");
+    expect(stale.selectedBus?.source).toBe("LIVE_ARRIVAL");
+  });
+
+  it("requires a choice for multiple parked buses and ignores mismatched or departed presence", () => {
+    const parkedVehicle = {
+      busId: "BUS-151",
+      busService: "151",
+      stopCode: stop.busStopCode,
+      state: "PARKED" as const,
+      destination: "Kent Ridge Terminal",
+      wheelchairAccessible: true,
+      observedAt: new Date().toISOString(),
+      fresh: true,
+    };
+    const secondParkedVehicle = {
+      ...parkedVehicle,
+      busId: "BUS-95",
+      busService: "95",
+      destination: "Buona Vista Terminal",
+    };
+
+    const multiple = deriveFocusedAssistContext(
+      contextInput({
+        stopVehicles: [parkedVehicle, secondParkedVehicle],
+      }),
+      new RealBusPresenceProvider(),
+    );
+    expect(multiple.state).toBe("MULTIPLE_BUSES_PRESENT");
+    expect(multiple.buses).toHaveLength(2);
+    expect(multiple.selectedBus).toBeNull();
+
+    const unavailable = deriveFocusedAssistContext(
+      contextInput({
+        stopVehicles: [
+          { ...parkedVehicle, stopCode: "99999" },
+          { ...secondParkedVehicle, state: "DEPARTED" as const },
+        ],
+      }),
+      new RealBusPresenceProvider(),
+    );
+    expect(unavailable.state).toBe("AT_STOP_NO_BUS");
+    expect(unavailable.buses).toHaveLength(0);
+  });
+
   it("uses real ARRIVED telemetry for high confidence and prioritizes the active journey", () => {
     const context = deriveFocusedAssistContext(
       contextInput({
@@ -250,6 +329,62 @@ describe("Focused Assist context", () => {
     );
     expect(context.state).toBe("ACKNOWLEDGED");
     expect(context.state).not.toBe("RAMP_READY");
+  });
+
+  it("shows ramp ready only with a ready case and fresh verified telemetry", () => {
+    jest.useFakeTimers().setSystemTime(new Date("2026-09-01T04:00:05.000Z"));
+    const bus: BusAtStop = {
+      id: "BUS-151",
+      serviceNo: "151",
+      vehicleId: "BUS-151",
+      wheelchairAccessible: true,
+      confidence: "HIGH",
+      source: "DEMO",
+      activeJourneyMatch: false,
+    };
+    const input = contextInput({
+      arrivals: [service151Arrival],
+      request: {
+        requestId: "REQ-151",
+        caseId: "CASE-151",
+        caseState: "READY",
+        status: AssistanceRequestStatus.ACKNOWLEDGED,
+        assistanceType: "WHEELCHAIR_RAMP",
+        submitting: false,
+        bus,
+        stop,
+        safetyTelemetry: {
+          busId: "BUS-151",
+          stopCode: stop.busStopCode,
+          vehicleStopped: true,
+          parkingBrakeActive: true,
+          doorOpen: true,
+          deploymentPathClear: true,
+          rampPosition: "DEPLOYED",
+          observedAt: "2026-09-01T04:00:03.000Z",
+        },
+        error: null,
+      },
+    });
+    expect(
+      deriveFocusedAssistContext(input, new DemoBusPresenceProvider()).state,
+    ).toBe("RAMP_READY");
+    expect(
+      deriveFocusedAssistContext(
+        {
+          ...input,
+          request: {
+            ...input.request,
+            safetyTelemetry: {
+              ...input.request.safetyTelemetry!,
+              doorOpen: false,
+            },
+          },
+        },
+        new DemoBusPresenceProvider(),
+      ).state,
+    ).not.toBe("RAMP_READY");
+    jest.useRealTimers();
   });
 
   it("keeps a confirmed request authoritative when live updates disconnect", () => {

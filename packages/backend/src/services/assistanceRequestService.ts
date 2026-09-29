@@ -11,7 +11,6 @@ import { logger } from "./logger";
 import { recordPassengerRequest } from "./assistanceCaseService";
 
 const defaultBoardingStop = "Changi Airport Terminal 1";
-const defaultDestination = "Kent Ridge Terminal";
 
 export const supportedAssistanceTypes: AssistanceType[] = [
   "WHEELCHAIR_RAMP",
@@ -23,20 +22,22 @@ export function isAssistanceType(value: string): value is AssistanceType {
   return supportedAssistanceTypes.includes(value as AssistanceType);
 }
 
-export function createStandardizedAssistanceRequest(input: AssistanceRequestInput): {
-  request: PassengerAssistanceRequest;
-  duplicateOfRequestId?: string;
-};
 export function createStandardizedAssistanceRequest(
   input: AssistanceRequestInput,
-  options: { autoAcknowledge?: boolean }
 ): {
   request: PassengerAssistanceRequest;
   duplicateOfRequestId?: string;
 };
 export function createStandardizedAssistanceRequest(
   input: AssistanceRequestInput,
-  options: { autoAcknowledge?: boolean } = { autoAcknowledge: true }
+  options: { autoAcknowledge?: boolean },
+): {
+  request: PassengerAssistanceRequest;
+  duplicateOfRequestId?: string;
+};
+export function createStandardizedAssistanceRequest(
+  input: AssistanceRequestInput,
+  options: { autoAcknowledge?: boolean } = { autoAcknowledge: true },
 ): {
   request: PassengerAssistanceRequest;
   duplicateOfRequestId?: string;
@@ -46,7 +47,7 @@ export function createStandardizedAssistanceRequest(
       ...input,
       assistanceTypes: [input.assistanceType],
     },
-    options
+    options,
   );
 }
 
@@ -54,7 +55,7 @@ export function createStandardizedAssistanceRequestBundle(
   input: Omit<AssistanceRequestInput, "assistanceType"> & {
     assistanceTypes: AssistanceType[];
   },
-  options: { autoAcknowledge?: boolean } = { autoAcknowledge: true }
+  options: { autoAcknowledge?: boolean } = { autoAcknowledge: true },
 ): {
   request: PassengerAssistanceRequest;
   duplicateOfRequestId?: string;
@@ -70,7 +71,9 @@ export function createStandardizedAssistanceRequestBundle(
   }
 
   if (!bus.isAccessible && assistanceTypes.includes("WHEELCHAIR_RAMP")) {
-    throw new Error(`Bus is not accessible for wheelchair ramp requests: ${input.busId}`);
+    throw new Error(
+      `Bus is not accessible for wheelchair ramp requests: ${input.busId}`,
+    );
   }
 
   const candidate: PassengerAssistanceRequest = {
@@ -79,7 +82,7 @@ export function createStandardizedAssistanceRequestBundle(
     busService: input.busService,
     busId: input.busId,
     boardingStop: input.boardingStop ?? defaultBoardingStop,
-    destination: input.destination ?? defaultDestination,
+    destination: input.destination,
     stopCode: input.stopCode,
     assistanceTypes,
     source: input.source,
@@ -95,18 +98,27 @@ export function createStandardizedAssistanceRequestBundle(
   savedRequest.caseId = assistanceCase.caseId;
   savedRequest.assistanceCaseState = assistanceCase.state;
   const duplicateOfRequestId =
-    savedRequest.requestId !== candidate.requestId ? savedRequest.requestId : undefined;
+    savedRequest.requestId !== candidate.requestId
+      ? savedRequest.requestId
+      : undefined;
 
-  logger.info("Standardized assistance input accepted", savedRequest.requestId, {
-    assistanceTypes,
-    source: input.source,
-    busId: input.busId,
-    duplicateOfRequestId,
-  });
+  logger.info(
+    "Standardized assistance input accepted",
+    savedRequest.requestId,
+    {
+      assistanceTypes,
+      source: input.source,
+      busId: input.busId,
+      duplicateOfRequestId,
+    },
+  );
 
   if (!duplicateOfRequestId && options.autoAcknowledge !== false) {
     setTimeout(() => {
-      processSimulatorCommand({ requestId: savedRequest.requestId, command: "ACKNOWLEDGE" });
+      processSimulatorCommand({
+        requestId: savedRequest.requestId,
+        command: "ACKNOWLEDGE",
+      });
     }, 300);
   }
 

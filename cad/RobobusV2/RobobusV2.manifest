@@ -1,0 +1,1 @@
+{"autodeskProduct":"Fusion360","type":"script","author":"GoAssist","description":{"":"Build or operate the Robobus v2 boarding concept. Run again to select Travel, Doors Open, Ramp Extended or Boarding Ready."},"version":"2.0.0","runOnStartup":false,"supportedOS":"windows"}

@@ -1,5 +1,6 @@
 import type { NearbyBusStop } from "@buspass/shared";
 import type { ReactNode } from "react";
+import type { PresentationSizes } from "../accessibility/presentationSizes";
 
 export type JourneyMapCoordinate = {
   latitude: number;
@@ -30,8 +31,15 @@ export type JourneyMapPalette = {
 };
 
 export type JourneyMapProps = {
+  presentationSizes?: PresentationSizes;
   stops: NearbyBusStop[];
+  stopDensity?: "PRIORITIZED" | "ALL";
   recommendedStopCode?: string;
+  recommendedStopCallout?: {
+    label: string;
+    distanceLabel: string;
+    accessibilitySymbol: "ACCESSIBLE" | "PROVISIONAL" | "STANDARD";
+  };
   selectedStop: NearbyBusStop | null;
   currentLocation:
     | (JourneyMapCoordinate & {

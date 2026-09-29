@@ -1,0 +1,4 @@
+NOT_READY: correct wiring / power-cycle and press RESET. Lasers remain OFF.
+NOT_READY: correct wiring / power-cycle and press RESET. Lasers remain OFF.
+NOT_READY: correct wiring / power-cycle and press RESET. Lasers remain OFF.
+NOT_READY: correct wiring / power-cycle and press RESET. Lasers remain OFF.

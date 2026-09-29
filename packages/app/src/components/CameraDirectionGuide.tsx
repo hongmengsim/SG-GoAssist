@@ -1,6 +1,10 @@
 import React from "react";
-import { Modal, Pressable, StyleSheet, Text, View } from "react-native";
-import { CameraOff, Map } from "lucide-react-native";
+import { Modal, StyleSheet, View } from "react-native";
+import {
+  PassengerPressable as Pressable,
+  PassengerText as Text,
+} from "../accessibility/PassengerControls";
+import { CameraOff, Map } from "./AppIcons";
 import type { CameraDirectionGuideProps } from "./CameraDirectionGuide.types";
 
 export type { CameraDirectionGuideProps } from "./CameraDirectionGuide.types";
