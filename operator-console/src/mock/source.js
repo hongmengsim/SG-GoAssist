@@ -29,6 +29,16 @@ export function createMockSource({ setIntervalFn = setInterval } = {}) {
       return revision;
     },
     actionsFor: (busId) => world.actionsFor(busId),
+    async perform(action, { busId } = {}) {
+      if (action === "proceed") world.proceedNext("OPERATOR");
+      else if (action === "deploy") world.deploy(busId, "OPERATOR");
+      else if (action === "halt") world.halt(busId, "OPERATOR");
+      else if (action === "cancel") world.cancelRequest(busId, "OPERATOR");
+      else return { ok: false, message: "Unknown action." };
+      changed();
+      return { ok: true, message: "Done (mock)." };
+    },
+    start() {},
     onChange: (listener) => {
       listeners.add(listener);
     },

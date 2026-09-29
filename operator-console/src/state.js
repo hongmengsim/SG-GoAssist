@@ -91,6 +91,25 @@ export function reduce(state, message) {
       if (!isRecord(request) || !isId(request.requestId)) return state;
       return withRequest(state, request.requestId, requestFromPush(request));
     }
+    case "REQUEST_SNAPSHOT": {
+      // A request as listed by the backend. Only the fields the console needs: never the session id.
+      const request = message.request;
+      if (!isRecord(request) || !isId(request.requestId)) return state;
+      const kept = {};
+      for (const key of [
+        "caseId",
+        "busId",
+        "busService",
+        "boardingStop",
+        "stopCode",
+        "assistanceTypes",
+        "createdAt",
+        "status",
+      ]) {
+        if (request[key] !== undefined) kept[key] = request[key];
+      }
+      return withRequest(state, request.requestId, kept);
+    }
     case "REQUEST_STATUS": {
       if (!isId(message.requestId)) return state;
       const patch = { status: message.status };

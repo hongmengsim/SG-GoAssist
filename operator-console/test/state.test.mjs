@@ -218,3 +218,23 @@ test("audit events are kept newest first, without duplicates, and bounded", () =
   }));
   assert.equal(setAudit(initialState(), many).audit.length, MAX_AUDIT);
 });
+
+test("a request listed by the backend keeps its case id and drops the passenger session", () => {
+  const state = reduce(initialState(), {
+    type: "REQUEST_SNAPSHOT",
+    request: {
+      requestId: "REQ-5",
+      caseId: "CASE-5",
+      sessionId: "secret",
+      busId: "AV-095-01",
+      boardingStop: "18301",
+      stopCode: "18331",
+      assistanceTypes: ["WHEELCHAIR_RAMP"],
+      status: "ACKNOWLEDGED",
+      createdAt: T1,
+    },
+  });
+  assert.equal(state.requests["REQ-5"].caseId, "CASE-5");
+  assert.equal(state.requests["REQ-5"].status, "ACKNOWLEDGED");
+  assert.equal("sessionId" in state.requests["REQ-5"], false);
+});

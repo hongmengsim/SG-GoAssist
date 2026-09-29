@@ -261,7 +261,7 @@ export function stopPage(state, stopCode, ui, actions) {
       "Buses at this stop",
       tag("idle", "Click a bus to open"),
       `<table><thead><tr><th>Bus</th><th>Status at stop</th><th>Request</th><th>Ramp (simulated)</th></tr></thead><tbody>${rows}</tbody></table>
-      <div class="row spaced">${action(actions, "proceed", "Proceed next waiting bus to bay", "")}
+      <div class="row spaced">${action(actions, "proceed", "Proceed next waiting bus to bay", "", `data-stop="${esc(stopCode)}"`)}
       <span class="note">A bus leaving never deploys the next one; the next bus must be granted the bay and reach the boarding position first.</span></div>`,
     )}
     ${section("c4", "Requests at this stop", tag("idle", String(view.requests.length)), `<table><thead><tr><th>Request</th><th>Bus</th><th>Passenger sees</th></tr></thead><tbody>${requests}</tbody></table>`)}
