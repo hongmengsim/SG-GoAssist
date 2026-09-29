@@ -131,8 +131,8 @@ test(
         assert.equal(source.state.bays[STOP].occupantBusId, B1);
         assert.deepEqual(source.state.bays[STOP].waitingBusIds, [B2]);
         await until(
-          () => source.state.buses[B1].decision,
-          "the decision to arrive",
+          () => source.state.buses[B1].decision && source.state.buses[B1].ramp,
+          "the decision and the ramp state to arrive",
         );
 
         const cats = busCategories(source.state, B1);
