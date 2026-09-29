@@ -26,6 +26,13 @@ export interface OperationsAuditEvent {
   detail?: Record<string, unknown>;
 }
 
+export interface AuditQuery {
+  /** Callers always pass a bound. */
+  limit: number;
+  caseId?: string;
+  busId?: string;
+}
+
 export interface OperationsState {
   cases: AssistanceCase[];
   observations: SignalObservation[];
@@ -60,6 +67,7 @@ export class OperationsStore {
     exec: (sql: string) => void;
     prepare: (sql: string) => {
       get: (...values: unknown[]) => unknown;
+      all: (...values: unknown[]) => unknown[];
       run: (...values: unknown[]) => unknown;
     };
   };
@@ -103,6 +111,77 @@ export class OperationsStore {
         JSON.stringify(event.detail ?? {}),
       );
     fs.appendFileSync(this.auditPath, `${JSON.stringify(event)}\n`, "utf8");
+  }
+
+  /**
+   * Newest events first. SQLite answers from indexes and reads only `limit` rows; the
+   * ndjson fallback has to read the whole file, which is acceptable for a demo-sized log
+   * and is the reason the SQLite driver is the default outside tests.
+   */
+  readAudit(query: AuditQuery): OperationsAuditEvent[] {
+    return this.database
+      ? this.readAuditFromDatabase(query)
+      : this.readAuditFromFile(query);
+  }
+
+  private readAuditFromDatabase(query: AuditQuery): OperationsAuditEvent[] {
+    const conditions: string[] = [];
+    const values: unknown[] = [];
+    if (query.caseId !== undefined) {
+      conditions.push("case_id = ?");
+      values.push(query.caseId);
+    }
+    if (query.busId !== undefined) {
+      conditions.push("bus_id = ?");
+      values.push(query.busId);
+    }
+    const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+    const rows = this.database
+      ?.prepare(
+        `SELECT event_id, event_type, case_id, bus_id, actor, timestamp, detail_json FROM audit_events ${where} ORDER BY sequence DESC LIMIT ?`,
+      )
+      .all(...values, query.limit) as Array<{
+      event_id: string;
+      event_type: string;
+      case_id: string | null;
+      bus_id: string | null;
+      actor: string;
+      timestamp: string;
+      detail_json: string;
+    }>;
+    return (rows ?? []).map((row) => ({
+      eventId: row.event_id,
+      eventType: row.event_type,
+      ...(row.case_id !== null ? { caseId: row.case_id } : {}),
+      ...(row.bus_id !== null ? { busId: row.bus_id } : {}),
+      actor: row.actor,
+      timestamp: row.timestamp,
+      detail: JSON.parse(row.detail_json) as Record<string, unknown>,
+    }));
+  }
+
+  private readAuditFromFile(query: AuditQuery): OperationsAuditEvent[] {
+    if (!fs.existsSync(this.auditPath)) return [];
+    const matches: OperationsAuditEvent[] = [];
+    const lines = fs.readFileSync(this.auditPath, "utf8").split("\n");
+    for (let index = lines.length - 1; index >= 0; index -= 1) {
+      if (!lines[index]) continue;
+      let parsed: OperationsAuditEvent;
+      try {
+        parsed = JSON.parse(lines[index]) as OperationsAuditEvent;
+      } catch (error) {
+        logger.warn("Skipped an unreadable audit line", undefined, {
+          error: String(error),
+        });
+        continue;
+      }
+      if (query.caseId !== undefined && parsed.caseId !== query.caseId)
+        continue;
+      if (query.busId !== undefined && parsed.busId !== query.busId) continue;
+      matches.push(parsed);
+      if (matches.length >= query.limit) break;
+    }
+    return matches;
   }
 
   reset(removePersistentFiles = false): void {
@@ -192,7 +271,8 @@ export class OperationsStore {
 
   private openDatabase(): OperationsStore["database"] {
     if (
-      process.env.NODE_TEST_CONTEXT ||
+      (process.env.NODE_TEST_CONTEXT &&
+        process.env.GOASSIST_STORAGE_DRIVER?.toLowerCase() !== "sqlite") ||
       process.env.GOASSIST_STORAGE_DRIVER?.toLowerCase() === "json"
     ) {
       return undefined;
@@ -224,6 +304,8 @@ export class OperationsStore {
           timestamp TEXT NOT NULL,
           detail_json TEXT NOT NULL
         );
+        CREATE INDEX IF NOT EXISTS audit_events_case ON audit_events (case_id, sequence);
+        CREATE INDEX IF NOT EXISTS audit_events_bus ON audit_events (bus_id, sequence);
       `);
       return database;
     } catch (error) {

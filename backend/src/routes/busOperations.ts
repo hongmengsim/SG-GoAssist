@@ -9,6 +9,7 @@ import {
   BusOperationsConflictError,
   BusOperationsValidationError,
 } from "../busOperations/busOperationsService";
+import { getOperationsStore } from "../services/operationsStore";
 import { getBusOperations } from "../busOperations/composition";
 import { getRequest, processSimulatorCommand } from "../services/aviator";
 import { requireOperator, verifyDeviceRequest } from "./auth";
@@ -124,3 +125,24 @@ router.post(
     res.json(await getBusOperations().grantBayEntry(req.params.stopCode));
   }),
 );
+
+const DEFAULT_AUDIT_LIMIT = 100;
+const MAX_AUDIT_LIMIT = 500;
+
+function queryText(value: unknown): string | undefined {
+  return typeof value === "string" && value ? value : undefined;
+}
+
+router.get("/audit", requireOperator, (req: Request, res: Response) => {
+  const requested = Number(queryText(req.query.limit));
+  const limit =
+    Number.isFinite(requested) && requested >= 1
+      ? Math.min(Math.trunc(requested), MAX_AUDIT_LIMIT)
+      : DEFAULT_AUDIT_LIMIT;
+  const events = getOperationsStore().readAudit({
+    limit,
+    caseId: queryText(req.query.caseId),
+    busId: queryText(req.query.busId),
+  });
+  res.json({ count: events.length, events });
+});
