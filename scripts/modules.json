@@ -39,7 +39,7 @@
       "path": "pi/tof-link",
       "kind": "python",
       "status": "active",
-      "pythonModules": ["demo_state", "pi_web_demo", "pi_demo"],
+      "pythonModules": ["demo_state", "pi_web_demo", "pi_demo", "beam_reading"],
       "readme": "strict",
       "manifest": "requirements.txt",
       "verify": "python -m unittest",
