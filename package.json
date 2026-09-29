@@ -42,7 +42,8 @@
     "bench:store": "node --no-warnings scripts/bench-operations-store.mjs",
     "lint": "npm run typecheck && npm run format:check",
     "format": "prettier --write package.json contracts/package.json backend/package.json passenger-app/package.json scripts README.md",
-    "format:check": "prettier --check package.json contracts/package.json backend/package.json passenger-app/package.json scripts README.md"
+    "format:check": "prettier --check package.json contracts/package.json backend/package.json passenger-app/package.json scripts README.md",
+    "e2e:scenario": "python scripts/e2e_scenario.py"
   },
   "devDependencies": {
     "eslint": "^8.50.0",

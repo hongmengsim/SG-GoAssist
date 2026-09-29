@@ -42,6 +42,15 @@ export function buildSteps(modules, { fast: skipSlow }) {
       cwd: module.verifyCwd ?? ".",
     });
   }
+  if (!skipSlow) {
+    // Needs the backend built (the typecheck step above builds the contracts, not the backend).
+    steps.push({
+      name: "end-to-end scenario",
+      command:
+        "npm run build --workspace @buspass/backend && python scripts/e2e_scenario.py",
+      cwd: ".",
+    });
+  }
   return steps;
 }
 

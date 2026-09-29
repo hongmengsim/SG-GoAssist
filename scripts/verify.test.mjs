@@ -60,3 +60,10 @@ test("a module's verifyCwd is used as the working directory", () => {
   );
   assert.equal(step.cwd, "pi/b");
 });
+
+test("the end-to-end scenario runs in the full check and is skipped in fast mode", () => {
+  const full = buildSteps(modules, { fast: false }).map((step) => step.name);
+  const fast = buildSteps(modules, { fast: true }).map((step) => step.name);
+  assert.ok(full.includes("end-to-end scenario"));
+  assert.ok(!fast.includes("end-to-end scenario"));
+});
