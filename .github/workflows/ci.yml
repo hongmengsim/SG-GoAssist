@@ -1,0 +1,90 @@
+name: CI
+
+# Every module is checked on its own, so a failure names the module. The steps mirror
+# `npm run verify` (see scripts/modules.json). This file has not been run yet: it was written
+# on 30 Sep 2026 without a way to try it, so the first run may need small fixes.
+
+on:
+  push:
+    branches: [main, integration]
+  pull_request:
+
+jobs:
+  node-modules:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run check:modules
+      - run: npm run test:modules
+      - run: npm run format:check
+      - name: contracts (schema drift and fixtures)
+        run: npm test --workspace @buspass/shared
+      - name: backend
+        run: npm test --workspace @buspass/backend
+      - name: operator console
+        run: npm test
+        working-directory: operator-console
+
+  python-modules:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module: [pi/tof-link, pi/perception, pi/safety-gate, pi/bus-agent]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # Tests use fakes; the hardware libraries (picamera2, ultralytics, opencv) are not needed.
+      - run: pip install jsonschema websockets pyserial
+      - name: ${{ matrix.module }}
+        run: python -m unittest
+        working-directory: ${{ matrix.module }}
+
+  contracts-python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install jsonschema
+      - run: python -m unittest discover -s contracts/python
+
+  passenger-app:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test --workspace @buspass/app
+
+  end-to-end:
+    runs-on: ubuntu-latest
+    needs: [node-modules, python-modules]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: npm ci
+      - run: pip install jsonschema websockets pyserial
+      - run: npm run build --workspace @buspass/backend
+      - name: scenario (real backend, two simulated buses, a third for a stalled deployment)
+        run: python scripts/e2e_scenario.py
+      - name: overload (browsing is shed, buses are still heard)
+        run: node scripts/load-test.mjs --overload --rate 200 --seconds 6
