@@ -22,6 +22,7 @@
     "test:integration": "npm run test:integration --workspace @buspass/backend",
     "test:e2e": "node scripts/e2e-managed.js",
     "test:e2e:journey-assistant": "node scripts/full-journey-managed.mjs",
+    "test:e2e:journey-bus-ack": "node scripts/full-journey-bus-ack.mjs",
     "smoke:journey-assistant": "node scripts/full-journey-assistant-smoke.mjs",
     "test:android:assistant": "node scripts/android-assistant-smoke.mjs",
     "test:coverage": "npm run test:coverage --workspace @buspass/backend",

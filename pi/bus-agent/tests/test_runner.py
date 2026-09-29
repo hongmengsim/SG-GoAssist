@@ -133,3 +133,20 @@ class RunnerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StatusPublishingTests(unittest.TestCase):
+    def test_each_step_publishes_a_snapshot_for_the_status_page(self) -> None:
+        from bus_agent.status_page import StatusBoard
+
+        built, backend, clock = rig()
+        board = StatusBoard()
+        runner = Runner(built, queue.Queue(), board=board, clock=clock)
+        self.assertEqual({}, board.read())
+        clock.now += 0.2
+        runner.step()
+        data = board.read()
+        self.assertEqual("AV-095-01", data["busId"])
+        self.assertTrue(data["simulated"])
+        self.assertIsNotNone(data["decision"])
+        self.assertIsNotNone(data["beam"])

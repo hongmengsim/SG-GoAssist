@@ -39,13 +39,19 @@ Legend: `[x]` built and verified by a test or a run (evidence given), `[ ]` not 
 - [x] B6 Pi halt through telemetry blocks deployment (tested over HTTP); bus movement maps to the app's `APPROACHING` / `ARRIVED` / `DEPARTED` events.
 - [x] C1 JSON Schema generated from `contracts/`; shared valid and invalid fixtures checked in TypeScript, Python and by the backend; a field rename fails the drift test.
 
-### Pi side in software (S1, P1, T1, A1, A2)
+### Pi side in software (S1, P1, T1, A1 to A3)
 
 - [x] S1 `pi/safety-gate`: fail-safe `decide()`; exhaustive combination tests; every decision validates against the report schema. Rewritten around the single-beam ToF states (the prototype used a distance threshold).
 - [x] P1 `pi/perception`: safe/unsafe policy (unsafe by default; leaf and plastic bag only at 0.92 confidence or above), box-overlaps-polygon, image health, stub detector. No camera or model runner.
 - [x] T1 `pi/tof-link/beam_reading.py`: `BeamReading` over the teammate's `BeamState` (their code untouched) with fake, simulated and serial line sources.
 - [x] A1 `pi/bus-agent` core: ramp state machine, decision loop, backend interface, on-change plus 5 s heartbeat posting, signing that matches the backend.
 - [x] A2 Agent against the real backend: HTTP client, WebSocket listener, simulated-bus runner and console commands.
+- [x] A3 Local status page (`--status-port`): movement, simulated ramp, Pi decision with reasons, beam, camera health and backend link in words and marks, guarded by a start-up code, no image data; simulation-only scene controls.
+- [x] **Safety-loop isolation (found during A3):** every network call now runs on a worker thread (`async_backend.py`). Before, a blocked connection could stall a tick for many seconds and the ramp would act on a stale decision. A tick now also counts for at most 1 s of ramp movement. Tests include 50 ticks against a stuck backend finishing in under a second and still halting on a person.
+
+### App check (R2)
+
+- [x] R2 The passenger app's full journey passes with the backend's acknowledgement timer off and a bus-only responder acknowledging (`npm run test:e2e:journey-bus-ack`; both requests were acknowledged by the responder, two cases completed).
 
 ### End to end and operator console (E1, O1 to O4)
 
@@ -58,12 +64,10 @@ Legend: `[x]` built and verified by a test or a run (evidence given), `[ ]` not 
 ### Software, no hardware needed
 
 - [ ] **R1 Timeouts, help-required behaviour, lost-agent handling.** Blocked on an agreed deployment timeout; the report endpoint and the console alert exist, nothing raises help-required in the agent, and a stalled deployment is not detected.
-- [ ] **R2 App check with bus-only acknowledgement:** run the app's own full-journey test with `GOASSIST_AUTO_ACK=off` and an agent acknowledging.
 - [~] **R3 Security parity:** signed requests from Python and the operator token in the console are done. Per-device credentials and per-device WebSocket authentication are not (the agent subscribes with the operator token).
 - [~] **R4 Documentation:** runbook, endpoint reference and module READMEs done. Still to write: a hardware bring-up runbook, and an update to `CLAUDE.md`-style project notes.
 - [ ] **R5 CI:** per-module jobs; needs a push to try.
 - [ ] **R6 Safe-object policy constants agreed with the team** (0.92 is in code; the size limit is open; the agent and backend must mirror the final values).
-- [ ] **A3 Agent status page** (ramp state, decision, ToF and camera health, control code).
 - [ ] **Operator halt channel** to the bus (the console's Halt is shown disabled in live mode); deploy is issued by the backend, not the operator.
 - [ ] **Scale items:** SC2 role mounting, SC4 rate limiting with priority, SC5 cache headers, SC6 retention and bounded logger, SC7 metrics and readiness, SC8 load-test harness, SC9 cursor-based command polling and store-and-forward, SC10 move existing cases and telemetry off the whole-state document (touches the teammate's backend; needs agreement).
 - [ ] **Update the teammate:** contract additions, `packages/*` rename, lockfile churn (about 150 lines), the audit-index addition to their store, the `/operator` removal, and how to refresh their checkout (decision 0003).
@@ -86,7 +90,7 @@ Legend: `[x]` built and verified by a test or a run (evidence given), `[ ]` not 
 ## Known gaps and risks
 
 - **Nothing has run on hardware.** Every "real" claim above means "the real backend and the real code paths", with simulated sensors and a simulated ramp, labelled as such in every report.
-- **A lost backend link does not halt an in-progress deployment.** The local gate keeps running and halts on an obstruction, but nothing halts on link loss alone (R1).
+- **A lost backend link does not halt an in-progress deployment** (the loop itself now keeps running on its own; halting on link loss is still R1). The local gate keeps running and halts on an obstruction, but nothing halts on link loss alone (R1).
 - **No timeouts:** a stalled deployment is never detected. Placeholders that must not be mistaken for agreed values: simulated deployment time 4 s, poll intervals, camera freshness 1.0 s, the placeholder ramp polygon, image-health thresholds, the mock console's 8 s stall timeout.
 - **The existing cases and telemetry still use the whole-state store** (the measured bottleneck). New entities do not, but the case path does until SC10.
 - **The mock console's gate rules are stand-ins** for `pi/safety-gate`.

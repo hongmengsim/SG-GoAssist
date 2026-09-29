@@ -42,6 +42,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "pi" / "bus-agent"))
 
+from bus_agent.async_backend import AsyncBackend  # noqa: E402
 from bus_agent.event_listener import EventListener  # noqa: E402
 from bus_agent.http_backend import HttpBackend  # noqa: E402
 from bus_agent.runner import Runner, build_simulated_rig  # noqa: E402
@@ -163,8 +164,10 @@ class Bus:
 
     def __init__(self, bus_id: str, base: str) -> None:
         self.bus_id = bus_id
+        # A signed client of its own for the scenario's checks, and the non-blocking one the agent uses.
         self.backend = HttpBackend(base, bus_id, secret=SECRET)
-        self.rig = build_simulated_rig(bus_id, "95", self.backend)
+        self.agent_backend = AsyncBackend(HttpBackend(base, bus_id, secret=SECRET))
+        self.rig = build_simulated_rig(bus_id, "95", self.agent_backend)
         self.events: "queue.Queue[dict]" = queue.Queue()
         self.commands: "queue.Queue[str]" = queue.Queue()
         self.runner = Runner(self.rig, self.events, self.commands)
@@ -173,7 +176,7 @@ class Bus:
         self.thread = threading.Thread(target=self._run, name=bus_id, daemon=True)
 
     def _run(self) -> None:
-        self.runner.start_up(self.backend)
+        self.runner.start_up(self.agent_backend)
         self.runner.run(self.stop_flag)
 
     def start(self) -> None:
@@ -184,6 +187,7 @@ class Bus:
         self.stop_flag.set()
         self.listener.stop()
         self.thread.join(timeout=10)
+        self.agent_backend.stop()
 
     def do(self, line: str) -> None:
         self.commands.put(line)

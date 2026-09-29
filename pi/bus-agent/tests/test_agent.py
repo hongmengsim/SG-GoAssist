@@ -48,10 +48,10 @@ def command(command_id="CMD-1", kind="DEPLOY_RAMP"):
 class World:
     """One agent with simulated sensors and a fake clock that advances 0.2 s per tick."""
 
-    def __init__(self, bus_id=BUS, config=None) -> None:
+    def __init__(self, bus_id=BUS, config=None, backend=None) -> None:
         self.now = 100.0
         self.clock = lambda: self.now
-        self.backend = FakeBackend()
+        self.backend = backend if backend is not None else FakeBackend()
         self.camera = SimulatedCamera(self.clock)
         self.beam_source = SimulatedBeamSource(reference_mm=500)
         self.beam = BeamReader(self.beam_source, clock=self.clock, simulated=True)
@@ -347,6 +347,59 @@ class PostingTests(unittest.TestCase):
         world.tick(1)
         moves = [b["movement"] for b in world.backend.posted("bus-status")]
         self.assertIn("POSITIONED_AT_STOP", moves)
+
+
+class LoopTimingTests(unittest.TestCase):
+    def test_a_long_gap_between_ticks_cannot_make_the_ramp_jump(self) -> None:
+        world = World()
+        world.positioned_with_request()
+        world.backend.commands = [command()]
+        world.tick(3)
+        self.assertEqual("DEPLOYING", world.agent.ramp.state)
+        world.now += 30.0  # the loop was stalled for half a minute
+        world.agent.tick()
+        self.assertNotEqual("DEPLOYED", world.agent.ramp.state)
+        self.assertLessEqual(world.agent.ramp.progress, 0.6)
+
+    def test_a_stuck_backend_does_not_slow_the_safety_loop_or_stale_its_decision(self) -> None:
+        import threading
+        import time
+
+        from bus_agent.async_backend import AsyncBackend
+        from bus_agent.backend import FakeBackend
+
+        class Stuck(FakeBackend):
+            def __init__(self) -> None:
+                super().__init__()
+                self.release = threading.Event()
+
+            def post(self, kind, body):
+                self.release.wait(5)
+                return super().post(kind, body)
+
+            def pending_requests(self):
+                self.release.wait(5)
+                return []
+
+            def pending_actuator_commands(self):
+                self.release.wait(5)
+                return []
+
+        inner = Stuck()
+        backend = AsyncBackend(inner, retry_seconds=0.05)
+        try:
+            world = World(backend=backend)
+            world.agent.arrive(STOP)
+            world.camera.place("person")
+            started = time.monotonic()
+            world.tick(50)
+            elapsed = time.monotonic() - started
+            self.assertLess(elapsed, 1.0, "50 ticks must not wait for the network")
+            self.assertEqual("HALT", world.agent.last_decision.permission)
+            self.assertIn("OBJECT_IN_ZONE", world.agent.last_decision.reasons)
+        finally:
+            inner.release.set()
+            backend.stop()
 
 
 if __name__ == "__main__":

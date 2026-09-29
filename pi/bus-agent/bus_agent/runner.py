@@ -15,6 +15,7 @@ from beam_reading import BeamReader, SimulatedBeamSource
 from .agent import BusAgent
 from .backend import Backend, BackendError
 from .console import apply_command
+from .status_page import StatusBoard, snapshot
 from .sim_sensors import SimulatedCamera
 
 log = logging.getLogger(__name__)
@@ -83,7 +84,11 @@ class Runner:
         events: "queue.Queue[dict]",
         commands: Optional["queue.Queue[str]"] = None,
         clock: Callable[[], float] = time.monotonic,
+        board: Optional[StatusBoard] = None,
+        controls: bool = True,
     ) -> None:
+        self._board = board
+        self._controls = controls
         self._rig = rig
         self._events = events
         self._commands = commands if commands is not None else queue.Queue()
@@ -94,6 +99,9 @@ class Runner:
         self._drain(self._events, self._rig.agent.handle_event)
         self._drain(self._commands, lambda line: log.info("%s", apply_command(self._rig, line)))
         self._rig.agent.tick()
+        if self._board is not None:
+            agent = self._rig.agent
+            self._board.publish(snapshot(agent, agent.last_beam, self._controls))
 
     @staticmethod
     def _drain(source: queue.Queue, handle: Callable) -> None:

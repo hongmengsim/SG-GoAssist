@@ -6,10 +6,18 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const delay = (milliseconds) =>
   new Promise((resolveDelay) => setTimeout(resolveDelay, milliseconds));
 
-function node(script) {
+// GOASSIST_JOURNEY_BUS_ACK=1 turns off the backend's own acknowledgement timer and starts a bus
+// that only acknowledges requests, to check that the app behaves the same when "Confirmed by
+// bus" really comes from the bus (roadmap R2).
+const busAcknowledges = process.env.GOASSIST_JOURNEY_BUS_ACK === "1";
+const managerEnv = busAcknowledges
+  ? { ...process.env, GOASSIST_AUTO_ACK: "off" }
+  : process.env;
+
+function node(script, env = process.env) {
   return spawn(process.execPath, [script], {
     cwd: root,
-    env: process.env,
+    env,
     stdio: "inherit",
     windowsHide: true,
   });
@@ -53,16 +61,32 @@ async function stopManager(manager) {
   }
 }
 
-const manager = node("scripts/dev.mjs");
+const manager = node("scripts/dev.mjs", managerEnv);
+let responder;
 let exitCode = 1;
 try {
   await waitForServices();
+  if (busAcknowledges) {
+    responder = spawn(
+      "python",
+      [
+        "scripts/ack_responder.py",
+        "--bus-id",
+        "AV-095-01",
+        "--backend",
+        "http://localhost:3000",
+      ],
+      { cwd: root, env: process.env, stdio: "inherit", windowsHide: true },
+    );
+    await delay(1500);
+  }
   const scenario = node("scripts/full-journey-assistant-smoke.mjs");
   exitCode = await new Promise((resolveExit) => {
     scenario.once("exit", (code) => resolveExit(code ?? 1));
     scenario.once("error", () => resolveExit(1));
   });
 } finally {
+  responder?.kill();
   await stopManager(manager);
 }
 process.exitCode = exitCode;

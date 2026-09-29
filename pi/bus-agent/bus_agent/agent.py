@@ -34,6 +34,8 @@ DEPARTING = "DEPARTING"
 DEFAULT_RAMP_POLYGON = ((0.25, 0.25), (0.75, 0.25), (0.75, 0.75), (0.25, 0.75))
 
 MAX_UNACKED_REQUESTS = 50
+# A stalled loop must not let the ramp jump ahead: one tick never counts as more than this.
+MAX_TICK_SECONDS = 1.0
 MAX_REMEMBERED_COMMANDS = 200
 
 _RAMP_POSITION = {
@@ -57,6 +59,8 @@ class AgentConfig:
     command_poll_seconds: float = 1.0
     request_poll_seconds: float = 5.0
     deploy_seconds: float = ramp_sim.DEFAULT_DEPLOY_SECONDS
+    # ASSUMPTION: how long to wait for the backend's verdict on entering the bay (placeholder).
+    entry_timeout_seconds: float = 2.0
     ramp_polygon: tuple = DEFAULT_RAMP_POLYGON
 
 
@@ -105,6 +109,9 @@ class BusAgent:
         self._next_command_poll = 0.0
         self._next_request_poll = 0.0
         self._simulated = bool(getattr(camera, "simulated", False))
+        # Whether the last report reached the backend, for the local status page.
+        self.link: dict = {"ok": True, "error": None}
+        self.last_beam = None  # the latest BeamReading, for the status page
 
     # ---- controls the scenario, the status page and the backend link call -------------------
 
@@ -113,7 +120,7 @@ class BusAgent:
         self.stop_code = stop_code
         self.movement = POSITIONED
         try:
-            self._post("bus-status", self._bus_status_body())
+            self._post_now("bus-status", self._bus_status_body())
         except BackendRefused as refusal:
             log.info("Bay entry refused (%s); waiting for the bay", refusal)
             self.movement = WAITING
@@ -148,7 +155,7 @@ class BusAgent:
 
     def tick(self) -> None:
         now = self._clock()
-        dt = 0.0 if self._last_tick is None else max(0.0, now - self._last_tick)
+        dt = 0.0 if self._last_tick is None else min(MAX_TICK_SECONDS, max(0.0, now - self._last_tick))
         self._last_tick = now
 
         decision = self._decide(now)
@@ -165,6 +172,7 @@ class BusAgent:
 
     def _decide(self, now: float) -> Decision:
         reading = self._beam.poll()
+        self.last_beam = reading
         capture = self._camera.capture()
         result = analyse(
             capture.frame,
@@ -286,7 +294,7 @@ class BusAgent:
         ):
             self.movement = POSITIONED
             try:
-                self._post("bus-status", self._bus_status_body())
+                self._post_now("bus-status", self._bus_status_body())
             except BackendError as error:
                 log.warning("Granted the bay but could not enter it yet: %s", error)
                 self.movement = WAITING
@@ -337,6 +345,21 @@ class BusAgent:
     def _post(self, kind: str, body: dict) -> None:
         self._backend.post(kind, body)
         self._gate.sent(kind, body)
+        self.link = {"ok": True, "error": None}
+
+    def _post_now(self, kind: str, body: dict) -> None:
+        """A post whose answer decides what the bus does next (entering the bay).
+
+        With a non-blocking backend this waits only up to ``entry_timeout_seconds``; otherwise it
+        is an ordinary post.
+        """
+        wait_for_answer = getattr(self._backend, "post_now", None)
+        if wait_for_answer is None:
+            self._post(kind, body)
+            return
+        wait_for_answer(kind, body, timeout=self._config.entry_timeout_seconds)
+        self._gate.sent(kind, body)
+        self.link = {"ok": True, "error": None}
 
     def _post_safely(self, kind: str, body: dict) -> None:
         """Post when due; a failure is logged and retried on a later tick, never raised."""
@@ -346,3 +369,4 @@ class BusAgent:
             self._post(kind, body)
         except BackendError as error:
             log.warning("Could not post %s: %s", kind, error)
+            self.link = {"ok": False, "error": str(error)}
