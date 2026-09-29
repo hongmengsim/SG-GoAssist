@@ -29,7 +29,7 @@ A full `npm install` must be run from PowerShell: Git Bash's `tar` breaks the na
 npm.cmd test --workspace @buspass/app
 ```
 
-Verified 30 Sep 2026: 419 pass and 1 fails. The single failure, "does not render empty search shells and keeps selected-stop actions above navigation", fails on the untouched original commit as well, so it is a known pre-existing failure and not caused by any restructure change. `npm run typecheck` is clean.
+Verified 30 Sep 2026: 420 of 420 pass. Some tests read source files as text and match multi-line strings, so they need LF line endings; `.gitattributes` enforces that on every checkout (see `docs/decisions/0003-line-endings.md`). Before that fix, one test ("does not render empty search shells...") failed on Windows checkouts with `core.autocrlf=true`. `npm run typecheck` is clean.
 
 ## Depends on
 
