@@ -12,6 +12,7 @@ import {
   describe,
   filterAudit,
   helpAlerts,
+  reportAge,
   requestsForBus,
   stopCodes,
   stopStatus,
@@ -78,14 +79,16 @@ function kindWord(kind) {
   }[kind];
 }
 
-function busCard(state, busId) {
+function busCard(state, busId, now) {
   const bus = state.buses[busId];
+  const age = now === undefined ? undefined : reportAge(state, busId, now);
   const { text, kind } = stopStatus(state, busId);
   const [request] = requestsForBus(state, busId);
   const decision = bus.decision;
   const help = helpAlerts(state).some((alert) => alert.busId === busId);
   const flags = [
     help ? tag("stop", "Help required") : "",
+    age?.stale ? tag("warn", "No recent report") : "",
     bus.status?.simulated
       ? simulatedTag("Sensors simulated")
       : tag("info", "Camera + ToF"),
@@ -97,6 +100,7 @@ function busCard(state, busId) {
         "Location",
         `${tag(kind, text)}${bus.status?.stopCode ? ` <small>· ${esc(bus.status.stopCode)}</small>` : ""}`,
       ],
+      ...(age ? [["Last report", `<small>${esc(age.text)}</small>`]] : []),
       [
         "Request",
         request
@@ -204,7 +208,7 @@ export function overviewPage(state, ui) {
     ${metricsStrip(state)}
     ${attentionPanel(state)}
     ${section("c12", "Bus stops", tag("idle", "Click to open"), `<div class="cards">${stops.map((code) => stopCard(state, code)).join("") || '<p class="empty">No bus stop has reported yet.</p>'}</div>`)}
-    ${section("c12", "Buses", tag("idle", "Click to open"), `<div class="cards">${buses.map((id) => busCard(state, id)).join("") || '<p class="empty">No bus has reported yet.</p>'}</div>`)}
+    ${section("c12", "Buses", tag("idle", "Click to open"), `<div class="cards">${buses.map((id) => busCard(state, id, ui?.now)).join("") || '<p class="empty">No bus has reported yet.</p>'}</div>`)}
     ${auditSection(state, ui, "Audit log · all requests, all buses")}`;
 }
 
@@ -331,10 +335,16 @@ function zonePanel(state, busId) {
 export function busPage(state, busId, ui, actions) {
   const bus = state.buses[busId] ?? {};
   const alert = helpAlerts(state).find((item) => item.busId === busId);
+  const age =
+    ui?.now === undefined ? undefined : reportAge(state, busId, ui.now);
+  const quiet = age?.stale
+    ? `<div class="banner" role="alert"><span>No recent report from this bus (${esc(age.text.toLowerCase())}). It may be offline; what is shown is its last known state.</span></div>`
+    : "";
   const halted = bus.operatorHalt?.halted
     ? `<div class="banner" role="alert"><span>Operator halt is on${bus.operatorHalt.reason ? `: ${esc(bus.operatorHalt.reason)}` : ""}. The bus will not move its ramp until it is released.</span></div>`
     : "";
   const banner =
+    quiet +
     halted +
     (alert
       ? `<div class="banner" role="alert"><span>HELP REQUIRED · ${esc(alert.text)}. Inspect the bus; halt or cancel if needed.</span></div>`
@@ -364,6 +374,7 @@ export function busPage(state, busId, ui, actions) {
             : "<small>none accepted</small>",
         ],
         ["Case", busCaseRow(state, busId) ?? "<small>no open case</small>"],
+        ...(age ? [["Last report", `<small>${esc(age.text)}</small>`]] : []),
       ])}`,
     )}
     ${zonePanel(state, busId)}

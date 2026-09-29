@@ -322,3 +322,37 @@ export function filterAudit(
 }
 
 export * from "./cases.js";
+
+// ---- how long since a bus last reported -------------------------------------------------------
+
+// ASSUMPTION: a placeholder, three times the agent's five-second heartbeat. Not an agreed value.
+export const STALE_AFTER_SECONDS = 15;
+
+const AGE_FIELDS = [
+  ["status", "observedAt"],
+  ["ramp", "observedAt"],
+  ["decision", "observedAt"],
+  ["help", "observedAt"],
+];
+
+function ageText(seconds) {
+  if (seconds < 60) return `${seconds} s ago`;
+  if (seconds < 90 * 60) return `${Math.round(seconds / 60)} min ago`;
+  return `${Math.round(seconds / 3600)} h ago`;
+}
+
+/** Seconds since the newest report of any kind from the bus, in words, and whether it has gone quiet. */
+export function reportAge(state, busId, nowMs) {
+  const bus = state.buses[busId] ?? {};
+  const times = AGE_FIELDS.map(([key, field]) =>
+    Date.parse(bus[key]?.[field]),
+  ).filter(Number.isFinite);
+  if (times.length === 0)
+    return { seconds: null, text: "No report yet", stale: false };
+  const seconds = Math.max(0, Math.round((nowMs - Math.max(...times)) / 1000));
+  return {
+    seconds,
+    text: `Last report ${ageText(seconds)}`,
+    stale: seconds > STALE_AFTER_SECONDS,
+  };
+}

@@ -42,7 +42,7 @@ const source =
   mode === "live"
     ? createLiveSource({ baseUrl: backend, token: storedToken() })
     : createMockSource();
-const ui = { kind: "ALL", busId: "ALL", requestId: "ALL" };
+const ui = { kind: "ALL", busId: "ALL", requestId: "ALL", now: Date.now() };
 let notice = "";
 
 // ---- header ---------------------------------------------------------------------------------------
@@ -98,9 +98,17 @@ function route(state) {
 
 let lastKey = "";
 function render(force = false) {
+  ui.now = Date.now();
   const state = source.state;
   const current = route(state);
-  const key = JSON.stringify([current, state, ui, source.revision, notice]);
+  // The clock is rounded to five seconds so a page that is otherwise idle redraws only that often.
+  const key = JSON.stringify([
+    current,
+    state,
+    { ...ui, now: Math.floor(ui.now / 5000) },
+    source.revision,
+    notice,
+  ]);
   if (!force && key === lastKey) return;
   lastKey = key;
 
@@ -284,6 +292,7 @@ if (mode === "mock") {
   });
 }
 
+setInterval(() => render(), 5000);
 setInterval(() => {
   $("clock").textContent = new Date().toTimeString().slice(0, 8);
 }, 1000);
