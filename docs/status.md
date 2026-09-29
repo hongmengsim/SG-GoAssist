@@ -1,0 +1,97 @@
+# Status audit and checklist
+
+Audit of the `integration` branch on 30 Sep 2026: 39 commits ahead of `main`, nothing pushed. Everything below is simulated unless it says otherwise: **no camera, ESP32, Raspberry Pi or physical ramp has been used**, and no model has run.
+
+Legend: `[x]` built and verified by a test or a run (evidence given), `[ ]` not done, `[~]` partly done (the gap is stated).
+
+## How it was verified
+
+| Check                                                      | Result on 30 Sep 2026                                                                                               |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `npm run verify` (full)                                    | 12 of 12 passed, including the passenger app and the end-to-end scenario                                            |
+| `npm run verify:fast`                                      | 11 of 11 passed (last run after the final commit)                                                                   |
+| Backend                                                    | 244 tests                                                                                                           |
+| Passenger app                                              | 420 tests (last full run; unchanged code)                                                                           |
+| Contracts                                                  | 4 (TypeScript, schema drift and fixtures) + 3 (Python, fixtures)                                                    |
+| `pi/tof-link` / `perception` / `safety-gate` / `bus-agent` | 28 / 33 / 29 / 77 tests, no hardware                                                                                |
+| `operator-console`                                         | 89 tests, including an integration test against the real built backend                                              |
+| Module checker and verify runner                           | 18 tests                                                                                                            |
+| `npm run e2e:scenario`                                     | 4 consecutive passes, about 40 s each: real backend, two simulated buses, signed requests, bus-only acknowledgement |
+| Browser checks                                             | Console mock and live modes opened in the browser pane; no console errors                                           |
+
+## Done
+
+### Foundations
+
+- [x] Ownership and naming rulings recorded (`docs/decisions/0002`, `docs/interfaces/message-additions.md`).
+- [x] Full rename `packages/*` to `contracts/`, `backend/`, `passenger-app/`; hardware moved to `pi/`, `firmware/`, `archive/`; module READMEs, `scripts/modules.json`, boundary checker, `CODEOWNERS` (decision 0001).
+- [x] Line endings fixed to LF (decision 0003).
+- [x] `npm run verify` / `verify:fast`: one command, plain-text PASS or FAIL (no colour).
+- [x] Scalability design with Built / Designed / Deferred labels, a measured bottleneck and `npm run bench:store` (decision 0004). Labels were brought up to date in this audit.
+
+### Backend (roadmap B1 to B6, C1)
+
+- [x] B1 Bus status, bay, ramp state, Pi decision and help-required stored one row per bus or stop behind repository interfaces (memory and SQLite adapters).
+- [x] B2 Bus-only acknowledgement (`assist-ack`), `GOASSIST_AUTO_ACK=off`, the simulator route refuses to acknowledge when off; requests are pushed to the addressed bus (`ASSIST_REQUESTED`) with a pull fallback and no passenger identity.
+- [x] B3 Single-bay coordination: FIFO queue, controller grant, refusal of an ungranted entry (409), departure never grants.
+- [x] B4 Operator-only broadcasting through a topic-based `EventBus` with scoped operator subscriptions; passenger sockets never receive the new messages (tests).
+- [x] B5 Audit read endpoint for SQLite and the ndjson file, filters and a bound.
+- [x] B6 Pi halt through telemetry blocks deployment (tested over HTTP); bus movement maps to the app's `APPROACHING` / `ARRIVED` / `DEPARTED` events.
+- [x] C1 JSON Schema generated from `contracts/`; shared valid and invalid fixtures checked in TypeScript, Python and by the backend; a field rename fails the drift test.
+
+### Pi side in software (S1, P1, T1, A1, A2)
+
+- [x] S1 `pi/safety-gate`: fail-safe `decide()`; exhaustive combination tests; every decision validates against the report schema. Rewritten around the single-beam ToF states (the prototype used a distance threshold).
+- [x] P1 `pi/perception`: safe/unsafe policy (unsafe by default; leaf and plastic bag only at 0.92 confidence or above), box-overlaps-polygon, image health, stub detector. No camera or model runner.
+- [x] T1 `pi/tof-link/beam_reading.py`: `BeamReading` over the teammate's `BeamState` (their code untouched) with fake, simulated and serial line sources.
+- [x] A1 `pi/bus-agent` core: ramp state machine, decision loop, backend interface, on-change plus 5 s heartbeat posting, signing that matches the backend.
+- [x] A2 Agent against the real backend: HTTP client, WebSocket listener, simulated-bus runner and console commands.
+
+### End to end and operator console (E1, O1 to O4)
+
+- [x] E1 `scripts/e2e_scenario.py` (in the full verify) plus the runbook `docs/runbooks/run-everything-on-one-laptop.md`.
+- [x] O1 to O4 `operator-console/`: overview, stop, bus, filterable audit log, playground, live mode, case queue and case actions, autonomy panel, decision reasons in words, camera-view placeholder. Status is never colour alone (words, shape marks, border styles; tests enforce it).
+- [x] The built-in `/operator` page was removed once the console covered it.
+
+## Left to do
+
+### Software, no hardware needed
+
+- [ ] **R1 Timeouts, help-required behaviour, lost-agent handling.** Blocked on an agreed deployment timeout; the report endpoint and the console alert exist, nothing raises help-required in the agent, and a stalled deployment is not detected.
+- [ ] **R2 App check with bus-only acknowledgement:** run the app's own full-journey test with `GOASSIST_AUTO_ACK=off` and an agent acknowledging.
+- [~] **R3 Security parity:** signed requests from Python and the operator token in the console are done. Per-device credentials and per-device WebSocket authentication are not (the agent subscribes with the operator token).
+- [~] **R4 Documentation:** runbook, endpoint reference and module READMEs done. Still to write: a hardware bring-up runbook, and an update to `CLAUDE.md`-style project notes.
+- [ ] **R5 CI:** per-module jobs; needs a push to try.
+- [ ] **R6 Safe-object policy constants agreed with the team** (0.92 is in code; the size limit is open; the agent and backend must mirror the final values).
+- [ ] **A3 Agent status page** (ramp state, decision, ToF and camera health, control code).
+- [ ] **Operator halt channel** to the bus (the console's Halt is shown disabled in live mode); deploy is issued by the backend, not the operator.
+- [ ] **Scale items:** SC2 role mounting, SC4 rate limiting with priority, SC5 cache headers, SC6 retention and bounded logger, SC7 metrics and readiness, SC8 load-test harness, SC9 cursor-based command polling and store-and-forward, SC10 move existing cases and telemetry off the whole-state document (touches the teammate's backend; needs agreement).
+- [ ] **Update the teammate:** contract additions, `packages/*` rename, lockfile churn (about 150 lines), the audit-index addition to their store, the `/operator` removal, and how to refresh their checkout (decision 0003).
+- [ ] Update the local `CLAUDE.md` to the current state.
+
+### Needs hardware (deferred by scope)
+
+- [ ] Flash and test the ESP32 sketches; read the ToF through `SerialLineSource`; take the reference; confirm on the device whether readings need the handshake and keepalive (`beam_reading` is read-only).
+- [ ] Pi bring-up: camera capture, serial permissions, a `--real` start mode, deployment as a service.
+- [ ] Aim and align the beam, camera view and ramp polygon; tune the health thresholds on real frames.
+- [ ] Two Pis on a network with synchronised clocks (signatures allow 60 s).
+- [ ] Run the scenario by hand on real Bus 1 and record the results and latencies.
+
+### Needs the ML work (owner: CE2)
+
+- [ ] Film, label (with double-labelled frames for Cohen's kappa), train, evaluate once on the sealed set, write model cards.
+- [ ] A model runner behind the `Detector` protocol; a benchmark at or above 10 FPS on the Pi; the zero-missed-obstruction matrix. The pretrained model cannot see wheelchairs, strollers or boxes; until a fine-tuned model exists only the beam guards against them.
+- [ ] ML 3 dwell classifier or the documented fixed-dwell fallback.
+
+## Known gaps and risks
+
+- **Nothing has run on hardware.** Every "real" claim above means "the real backend and the real code paths", with simulated sensors and a simulated ramp, labelled as such in every report.
+- **A lost backend link does not halt an in-progress deployment.** The local gate keeps running and halts on an obstruction, but nothing halts on link loss alone (R1).
+- **No timeouts:** a stalled deployment is never detected. Placeholders that must not be mistaken for agreed values: simulated deployment time 4 s, poll intervals, camera freshness 1.0 s, the placeholder ramp polygon, image-health thresholds, the mock console's 8 s stall timeout.
+- **The existing cases and telemetry still use the whole-state store** (the measured bottleneck). New entities do not, but the case path does until SC10.
+- **The mock console's gate rules are stand-ins** for `pi/safety-gate`.
+- **Cancelling a request only starts a safe stow;** the request keeps showing "Confirmed by bus" until the case finishes.
+- **The console's live camera view is a labelled placeholder;** the ramp-zone panel is drawn from the Pi's decision, not an image.
+- **Unresolved from the 29 Sep handoff:** alighting and destination scope in the app (documented, not hidden), backend as both cloud and controller, final ToF sensor, submission deadline.
+- **Contract change process:** additions to `contracts/` (operator-only messages, report types) were made ahead of a written proposal; recorded in `docs/interfaces/message-additions.md`.
+- **CI is unverified** until something is pushed.
