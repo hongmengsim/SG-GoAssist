@@ -99,7 +99,7 @@ R0 to R2 are safe to start immediately because they only add things. R3 and R4 m
 
 ## 7. What continues in parallel (no conflict with the restructure)
 
-The shared-type additions and backend work in `docs/integration-proposal-01-messages.md` stay in `packages/shared` and `packages/backend`, whose paths do not change under the recommended layout. The Pi code is built directly in the new `pi/` modules, so it never has to be moved.
+The shared-type additions and backend work in `docs/interfaces/message-additions.md` stay in `packages/shared` and `packages/backend`, whose paths do not change under the recommended layout. The Pi code is built directly in the new `pi/` modules, so it never has to be moved.
 
 ## 8. Risks and mitigations
 

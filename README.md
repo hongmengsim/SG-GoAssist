@@ -53,8 +53,8 @@ The portable stop, mock-bus firmware, wiring, safety demonstration, contracts,
 and API reference are documented in:
 
 - `archive/legacy-hardware/INTEGRATED_PROTOTYPE.md`
-- `docs/grand-challenge-integrated-prototype.md`
-- `docs/task-requirements-traceability.md`
+- `docs/architecture/integrated-prototype.md`
+- `docs/architecture/task-requirements-traceability.md`
 
 ## Private hybrid assistant
 
@@ -65,7 +65,7 @@ AI can interpret or explain, but it cannot call an API, move a ramp, open a
 door, or control the vehicle. Android model failure immediately retains the
 rule-based assistant and active journey.
 
-See `docs/hybrid-on-device-assistant.md` for Android model delivery, privacy,
+See `docs/architecture/hybrid-on-device-assistant.md` for Android model delivery, privacy,
 speech, diagnostics, and verification details.
 
 ## Regional bus-stop data
@@ -85,7 +85,7 @@ arrivals, amenities, parked-bus presence, advisories, freshness, and explicit
 provenance. Journey planning returns up to three direct or one-transfer options.
 Competition fixtures are always labelled “Prototype verified data”; missing
 regional evidence remains visibly unknown. See
-`docs/feature-readiness-matrix.md` for the release status of every major
+`docs/architecture/feature-readiness-matrix.md` for the release status of every major
 capability.
 
 Local development includes a normalized static LTA DataMall snapshot with 5,204
