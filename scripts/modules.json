@@ -77,10 +77,13 @@
       "name": "safety-gate",
       "path": "pi/safety-gate",
       "kind": "python",
-      "status": "planned",
+      "status": "active",
       "pythonModules": ["safety_gate"],
       "readme": "strict",
-      "allowedDependencies": []
+      "allowedDependencies": ["contracts"],
+      "manifest": "requirements.txt",
+      "verify": "python -m unittest",
+      "verifyCwd": "pi/safety-gate"
     },
     {
       "name": "bus-agent",
