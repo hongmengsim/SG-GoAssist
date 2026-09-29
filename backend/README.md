@@ -10,7 +10,7 @@ For the prototype this one process plays both the "cloud" and the "controller" r
 
 - HTTP routes under `/api/...` and a WebSocket on the same port, as typed in `contracts/`.
 - Devices post telemetry and poll `/api/operations/actuators/pending`; clients subscribe with `SUBSCRIBE`, `SUBSCRIBE_CASE`, `SUBSCRIBE_STOP` or `SUBSCRIBE_OPERATIONS`.
-- Operator page at `/operator`; health at `/health`.
+- Health at `/health`. The operator screen is the separate `operator-console/` module (the old built-in `/operator` page was removed on 30 Sep 2026 once the console covered everything it did).
 - Configuration (environment): `PORT` (default 3000), `GOASSIST_DATA_DIR` (default `.runtime/`, gitignored), `GOASSIST_TELEMETRY_FRESHNESS_MS` (default 5000), `DEVICE_SHARED_SECRET` (HMAC for device requests), `OPERATOR_API_TOKEN` (operator endpoints), `ALLOWED_ORIGINS`. See `.env.example`.
 - State is persisted to SQLite when the runtime supports it, otherwise to a JSON file.
 

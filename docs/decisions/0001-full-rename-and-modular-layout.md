@@ -118,4 +118,4 @@ The shared-type additions and backend work in `docs/interfaces/message-additions
 2. Is the teammate willing to have hardware and reference material moved (R3, R4), and when?
 3. Python granularity: four modules (`tof-link`, `perception`, `safety-gate`, `bus-agent`) or merge `safety-gate` into `bus-agent`?
 4. Generate JSON Schema from the TS types (adds a dev dependency) or maintain schemas by hand?
-5. The teammate's `/operator` console has case actions (confirm, escalate, cancel, complete, retry) that the CE2 console does not yet replicate. Keep it reachable as a legacy page during the port, and port those actions before it is retired.
+5. The teammate's `/operator` console has case actions (confirm, escalate, cancel, complete, retry) that the CE2 console does not yet replicate. Keep it reachable as a legacy page during the port, and port those actions before it is retired. (Done 30 Sep 2026: ported, and the page removed.)

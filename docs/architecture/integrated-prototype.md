@@ -27,7 +27,7 @@ The mock-bus ESP32 independently repeats the stopped, brake, door, and obstructi
 - The stop node stores failed explicit requests in ESP32 NVS and retries after reconnection.
 - Camera metadata keys for images, frames, faces, biometrics, photos, or video are stripped. The reference edge observer never saves or uploads frames.
 - Set `DEVICE_SHARED_SECRET` to require timestamped HMAC-SHA256 device requests.
-- Set `OPERATOR_API_TOKEN` to protect operator APIs and live operations subscriptions. Open `/operator?token=...` for the protected console.
+- Set `OPERATOR_API_TOKEN` to protect operator APIs and live operations subscriptions. The operator console asks for the token on the page (`operator-console/`).
 - HTTPS termination and per-device secrets are expected at the deployment gateway; development defaults remain loopback-friendly.
 
 ## Operations API

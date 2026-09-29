@@ -51,4 +51,4 @@ It starts the backend on a free port with a device secret and `GOASSIST_AUTO_ACK
 
 - Real sensors: the beam and camera are simulated and labelled so in every report.
 - A deployment timeout or a help-required alert (roadmap R1): the timeout value is not agreed and is not invented here.
-- The operator console: today the operator uses the endpoints above or the existing `/operator` page.
+- Nothing else is missing from the operator side: `npm run console` and `?mode=live` show the same data as the endpoints above, and covers case actions.

@@ -13,7 +13,6 @@ import { getConnectedClientCount } from "./services/websocket";
 import { logger } from "./services/logger";
 import { clearAllRequests, getAllRequests } from "./services/aviator";
 import { clearOperations, listCases } from "./services/assistanceCaseService";
-import path from "path";
 
 export function createApp() {
   const NODE_ENV = process.env.NODE_ENV || "development";
@@ -59,10 +58,6 @@ export function createApp() {
   app.use("/api/assistant", assistantDiagnosticsRouter);
   app.use("/api/passenger", passengerRouter);
   app.use("/api/journeys", journeysRouter);
-
-  app.get("/operator", (_req, res) => {
-    res.sendFile(path.resolve(__dirname, "../operator/index.html"));
-  });
 
   app.get("/health", (req, res) => {
     res.json({

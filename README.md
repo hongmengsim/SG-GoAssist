@@ -62,7 +62,7 @@ command first, then run it again so the same ports are reused.
 ## Integrated assistance demonstrator
 
 The passenger request API now feeds a persistent assistance-case orchestrator.
-Open `http://localhost:3000/operator` for the multi-bus operator console. Run
+Run `npm run console` and open `http://localhost:5173/?mode=live&backend=http://localhost:3000` for the operator console. Run
 `npm.cmd run demo:integrated` while the backend is active to exercise confirmed
 intent, vehicle capability discovery, safety telemetry, ramp command delivery,
 deployed/stowed limit-switch verification, safe cancellation, completion, and
