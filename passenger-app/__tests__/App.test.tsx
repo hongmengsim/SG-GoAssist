@@ -2947,7 +2947,7 @@ it("uses provider-native geographic maps on Android and iOS", () => {
   ].forEach((token) => expect(nativeMapSource).toContain(token));
 
   [
-    "../../.env",
+    "../.env",
     "googleMapsApiKey",
     "googleMaps",
     "EXPO_PUBLIC_GOOGLE_MAPS_API_KEY",

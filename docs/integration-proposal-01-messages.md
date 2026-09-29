@@ -17,7 +17,7 @@
 | free-text reasons (`tof_unavailable`) | `HaltReason` enum |
 | UI log kinds (`cmd`, `ok`, `fault`, `op`) | derived from the backend's audit event names (`SIGNAL_ACCEPTED`, `ACTUATOR_COMMAND_ISSUED`, ...) |
 
-Branch: `integration`. Scope: add the few messages the SG GoAssist handoff needs that `packages/shared` does not have yet. **Additive only.** Existing types, statuses and endpoints keep their meaning, so the current app and all 94 backend tests are unaffected.
+Branch: `integration`. Scope: add the few messages the SG GoAssist handoff needs that `contracts` does not have yet. **Additive only.** Existing types, statuses and endpoints keep their meaning, so the current app and all 94 backend tests are unaffected.
 
 ## What the handoff needs vs what exists
 
@@ -39,7 +39,7 @@ Branch: `integration`. Scope: add the few messages the SG GoAssist handoff needs
 5. **The backend gate reads `deploymentPathClear`.** `rampSafetyFailure` blocks when it is `false`. The Pi's halt therefore maps onto an existing field with **no gate change**.
 6. **`rampObstacle` in telemetry is re-fused by the backend** (`ingestSafetyTelemetry` calls `fuseRampObstacleAssessment`). The Pi is the authority, so the Pi omits `rampObstacle` (it is optional) and reports its decision through `deploymentPathClear` plus the new decision message.
 
-## Proposed additions to `packages/shared/src/index.ts`
+## Proposed additions to `contracts/src/index.ts`
 
 ```ts
 /** Bus movement relative to a stop. Separate from request status, ramp state and faults. */

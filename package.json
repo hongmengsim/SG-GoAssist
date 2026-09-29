@@ -4,16 +4,16 @@
   "description": "MVP autonomous passenger assistance system for Singapore BusTech Grand Challenge 2026",
   "private": true,
   "workspaces": [
-    "packages/shared",
-    "packages/backend",
-    "packages/app"
+    "contracts",
+    "backend",
+    "passenger-app"
   ],
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "dev:app": "node scripts/dev.mjs --app",
     "dev:backend": "node scripts/dev.mjs --backend",
     "dev:health": "node scripts/dev.mjs --health",
-    "simulator": "cd packages/backend && npm run simulator",
+    "simulator": "cd backend && npm run simulator",
     "demo:integrated": "npm run demo:integrated --workspace @buspass/backend",
     "build": "npm run build --workspaces --if-present",
     "typecheck": "npm run build --workspace @buspass/shared && npm run typecheck --workspace @buspass/backend && npm run typecheck --workspace @buspass/app",
@@ -36,8 +36,8 @@
     "smoke:onboard": "node scripts/onboard-responsive-smoke.mjs",
     "install-all": "npm install",
     "lint": "npm run typecheck && npm run format:check",
-    "format": "prettier --write package.json packages/shared/package.json packages/backend/package.json packages/app/package.json scripts README.md",
-    "format:check": "prettier --check package.json packages/shared/package.json packages/backend/package.json packages/app/package.json scripts README.md"
+    "format": "prettier --write package.json contracts/package.json backend/package.json passenger-app/package.json scripts README.md",
+    "format:check": "prettier --check package.json contracts/package.json backend/package.json passenger-app/package.json scripts README.md"
   },
   "devDependencies": {
     "eslint": "^8.50.0",

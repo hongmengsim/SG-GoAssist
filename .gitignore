@@ -8,9 +8,9 @@ npm-debug.log*
 .env.*.local
 !.env.example
 .runtime/
-packages/app/.model-cache/
-packages/app/android/
-packages/app/ios/
+passenger-app/.model-cache/
+passenger-app/android/
+passenger-app/ios/
 __pycache__/
 *.py[cod]
 hardware/edge-observer/ml1/runs/

@@ -10,9 +10,9 @@ This stack is intentionally small: Express handles request creation through REST
 
 ## Folder Structure
 
-- `packages/shared`: TypeScript contracts shared by app, backend, and simulator.
-- `packages/backend`: Passenger Assistance Engine, REST API, WebSocket broadcaster, mocked bus data, simulator control.
-- `packages/app`: Expo React Native passenger app.
+- `contracts`: TypeScript contracts shared by app, backend, and simulator.
+- `backend`: Passenger Assistance Engine, REST API, WebSocket broadcaster, mocked bus data, simulator control.
+- `passenger-app`: Expo React Native passenger app.
 - `docs`: Architecture notes for the student engineering team.
 
 ## Communication Model

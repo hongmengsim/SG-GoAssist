@@ -41,7 +41,7 @@ Prepare and prebuild locally when testing the full Android runtime:
 
 ```powershell
 npm run model:prepare --workspace @buspass/app
-cd packages/app
+cd passenger-app
 npx expo prebuild --platform android --no-install
 npm run android:dev-build
 ```
@@ -72,7 +72,7 @@ retention is 30 days.
 npm run typecheck
 npm test --workspace @buspass/app -- --runInBand
 npm test --workspace @buspass/backend
-cd packages/app
+cd passenger-app
 npx expo export --platform web
 ```
 

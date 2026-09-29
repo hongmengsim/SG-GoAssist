@@ -15,7 +15,7 @@ jobs:
       - run: npm ci
       - run: npm run model:prepare --workspace @buspass/app
       - run: npx expo prebuild --platform android --no-install
-        working-directory: packages/app
+        working-directory: passenger-app
         env:
           GOASSIST_REQUIRE_AI_MODEL: "1"
       - run: npm run typecheck

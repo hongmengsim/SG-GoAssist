@@ -3,7 +3,7 @@ const dotenv = require("dotenv");
 const baseConfig = require("./app.json").expo;
 
 dotenv.config({
-  path: path.resolve(__dirname, "../../.env"),
+  path: path.resolve(__dirname, "../.env"),
 });
 
 module.exports = () => {

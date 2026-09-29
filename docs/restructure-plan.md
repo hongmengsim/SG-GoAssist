@@ -1,4 +1,6 @@
-# Restructure plan: independent, modular parts (DRAFT for approval, nothing moved yet)
+# Restructure plan: independent, modular parts
+
+> **Update, 30 Sep 2026: the project owner chose the full rename, and it is done (step R6 below).** Read every `packages/shared` in this document as **`contracts/`**, `packages/backend` as **`backend/`**, `packages/app` as **`passenger-app/`**, and `packages/operator-console` as top-level **`operator-console/`**. The npm package names (`@buspass/shared`, `@buspass/backend`, `@buspass/app`) are unchanged so no import site changed. Steps R0 to R5 (docs layout, `pi/`, `firmware/`, `archive/`, CODEOWNERS, module READMEs) are still to do. Verified after the rename against the pre-rename baseline: typecheck clean; backend 94/94; passenger app 419 pass with the same single pre-existing failure ("does not render empty search shells..."); backend boots; Metro and Expo config load.
 
 Goal (from the project owner, 30 Sep 2026): the repo should be clear and modular, and **each part should be able to live and be developed on its own** without needing the others to be running or even present.
 

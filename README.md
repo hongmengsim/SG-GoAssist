@@ -107,7 +107,7 @@ npm.cmd run sync:lta --workspace @buspass/backend
 ```
 
 The sync paginates both `BusStops` and `BusRoutes` in 500-record pages and writes
-`packages/backend/data/bus-stops.sg.json`. Never expose this key through an `EXPO_PUBLIC_`
+`backend/data/bus-stops.sg.json`. Never expose this key through an `EXPO_PUBLIC_`
 variable.
 
 The vendored BusStops and BusRoutes source snapshots contain LTA DataMall data

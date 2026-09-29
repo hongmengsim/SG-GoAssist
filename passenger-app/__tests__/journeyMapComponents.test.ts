@@ -173,7 +173,7 @@ it("uses provider-native geographic maps on Android and iOS", () => {
     "clusterStops(",
   ].forEach((token) => expect(nativeMap).toContain(token));
   [
-    "../../.env",
+    "../.env",
     "googleMapsApiKey",
     "googleMaps",
     "EXPO_PUBLIC_GOOGLE_MAPS_API_KEY",

@@ -14,9 +14,9 @@ const BUS_STOPS_ENDPOINT =
 const BUS_ROUTES_ENDPOINT =
   "https://datamall2.mytransport.sg/ltaodataservice/BusRoutes";
 
-// Workspace scripts execute with packages/backend as their working directory,
+// Workspace scripts execute with backend as their working directory,
 // while the repository's documented environment file lives at the root.
-dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
+dotenv.config({ path: path.resolve(__dirname, "../../../.env") });
 dotenv.config();
 
 export async function syncLtaBusData(options: {

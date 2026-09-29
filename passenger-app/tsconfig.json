@@ -6,7 +6,7 @@
     "baseUrl": ".",
     "ignoreDeprecations": "6.0",
     "paths": {
-      "@buspass/shared": ["../shared/src"]
+      "@buspass/shared": ["../contracts/src"]
     }
   },
   "include": ["App.tsx", "src/**/*.ts", "src/**/*.tsx"]

@@ -12,7 +12,7 @@
     "resolveJsonModule": true,
     "baseUrl": ".",
     "paths": {
-      "@buspass/shared": ["../shared/dist"]
+      "@buspass/shared": ["../contracts/dist"]
     },
     "declaration": true,
     "declarationMap": true,

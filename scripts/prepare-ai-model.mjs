@@ -12,7 +12,7 @@ const expectedSha256 =
   "9465e63a22add5354d9bb4b99e90117043c7124007664907259bd16d043bb031";
 const expectedBytes = 639446688;
 const scriptRoot = path.dirname(fileURLToPath(import.meta.url));
-const outputDir = path.resolve(scriptRoot, "../packages/app/.model-cache");
+const outputDir = path.resolve(scriptRoot, "../passenger-app/.model-cache");
 const outputPath = path.join(outputDir, modelName);
 const temporaryPath = `${outputPath}.partial`;
 const modelUrl = `https://huggingface.co/Qwen/Qwen3-0.6B-GGUF/resolve/${revision}/${modelName}`;
