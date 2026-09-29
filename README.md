@@ -2,6 +2,25 @@
 
 Accessible journeys. Guided with care.
 
+## Repository map
+
+Each part lives in its own folder, has its own README (purpose, interface, how to run it alone, how to test it) and can be worked on without the others running. Start with [`docs/`](docs/README.md).
+
+| Part | Folder | State |
+|---|---|---|
+| Message contract (types and constants) | [`contracts/`](contracts/README.md) | active |
+| Backend (REST, WebSocket, case orchestration) | [`backend/`](backend/README.md) | active |
+| Passenger app | [`passenger-app/`](passenger-app/README.md) | active |
+| ESP32 ToF link on the Pi | [`pi/tof-link/`](pi/tof-link/README.md) | active |
+| Camera perception on the Pi | [`pi/perception/`](pi/perception/README.md) | planned |
+| Pi safety decision (halt or continue) | [`pi/safety-gate/`](pi/safety-gate/README.md) | planned |
+| Pi bus agent (one Pi = one bus) | [`pi/bus-agent/`](pi/bus-agent/README.md) | planned |
+| Operator console | [`operator-console/`](operator-console/README.md) | planned |
+| ESP32 firmware in use | [`firmware/`](firmware/README.md) | active |
+| Earlier designs and reference material | [`archive/`](archive/README.md) | not maintained |
+
+`npm run check:modules` verifies that every module has its README, a test command, and no imports across module boundaries. `npm run test:modules` tests that checker.
+
 ## Local development
 
 From the repository root, start the complete development environment once:

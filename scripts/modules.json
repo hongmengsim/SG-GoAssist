@@ -1,0 +1,103 @@
+{
+  "modules": [
+    {
+      "name": "contracts",
+      "path": "contracts",
+      "kind": "js",
+      "status": "active",
+      "packageName": "@buspass/shared",
+      "readme": "strict",
+      "manifest": "package.json",
+      "verify": "npm run typecheck --workspace @buspass/shared",
+      "allowedDependencies": []
+    },
+    {
+      "name": "backend",
+      "path": "backend",
+      "kind": "js",
+      "status": "active",
+      "packageName": "@buspass/backend",
+      "readme": "strict",
+      "manifest": "package.json",
+      "verify": "npm test --workspace @buspass/backend",
+      "allowedDependencies": ["contracts"]
+    },
+    {
+      "name": "passenger-app",
+      "path": "passenger-app",
+      "kind": "js",
+      "status": "active",
+      "packageName": "@buspass/app",
+      "readme": "strict",
+      "manifest": "package.json",
+      "verify": "npm test --workspace @buspass/app",
+      "allowedDependencies": ["contracts"]
+    },
+    {
+      "name": "tof-link",
+      "path": "pi/tof-link",
+      "kind": "python",
+      "status": "active",
+      "pythonModules": ["demo_state", "pi_web_demo", "pi_demo"],
+      "readme": "strict",
+      "manifest": "requirements.txt",
+      "verify": "python -m unittest",
+      "verifyCwd": "pi/tof-link",
+      "allowedDependencies": []
+    },
+    {
+      "name": "apas-tof-lasers",
+      "path": "firmware/apas-tof-lasers",
+      "kind": "firmware",
+      "status": "active",
+      "readme": "exists",
+      "verify": "hardware only: flash the sketch, then run Test-Lasers.ps1",
+      "allowedDependencies": []
+    },
+    {
+      "name": "esp32-s3-tof-test",
+      "path": "firmware/esp32-s3-tof-test",
+      "kind": "firmware",
+      "status": "active",
+      "readme": "exists",
+      "verify": "hardware only: flash the sketch, then read serial output",
+      "allowedDependencies": []
+    },
+    {
+      "name": "perception",
+      "path": "pi/perception",
+      "kind": "python",
+      "status": "planned",
+      "pythonModules": ["perception"],
+      "readme": "strict",
+      "allowedDependencies": []
+    },
+    {
+      "name": "safety-gate",
+      "path": "pi/safety-gate",
+      "kind": "python",
+      "status": "planned",
+      "pythonModules": ["safety_gate"],
+      "readme": "strict",
+      "allowedDependencies": []
+    },
+    {
+      "name": "bus-agent",
+      "path": "pi/bus-agent",
+      "kind": "python",
+      "status": "planned",
+      "pythonModules": ["bus_agent"],
+      "readme": "strict",
+      "allowedDependencies": ["tof-link", "perception", "safety-gate"]
+    },
+    {
+      "name": "operator-console",
+      "path": "operator-console",
+      "kind": "js",
+      "status": "planned",
+      "packageName": "@buspass/operator-console",
+      "readme": "strict",
+      "allowedDependencies": ["contracts"]
+    }
+  ]
+}

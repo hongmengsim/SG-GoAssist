@@ -1,0 +1,21 @@
+# Code owners. GitHub requests a review from the listed owners when a path changes.
+# hongmengsim owns the passenger app, backend core, firmware and the ToF link.
+# ry-koh (CE2) owns perception, the safety gate, the bus agent and the operator console.
+# The message contract and decision records need both.
+# Later rules override earlier ones. Backend files for bus status, bay and audit
+# endpoints will get their own ry-koh rules when those files exist.
+
+*                         @hongmengsim
+/passenger-app/           @hongmengsim
+/backend/                 @hongmengsim
+/firmware/                @hongmengsim
+/pi/tof-link/             @hongmengsim
+/archive/                 @hongmengsim
+/contracts/               @hongmengsim @ry-koh
+/docs/                    @hongmengsim @ry-koh
+/pi/perception/           @ry-koh
+/pi/safety-gate/          @ry-koh
+/pi/bus-agent/            @ry-koh
+/operator-console/        @ry-koh
+/scripts/check-modules*   @hongmengsim @ry-koh
+/scripts/modules.json     @hongmengsim @ry-koh
