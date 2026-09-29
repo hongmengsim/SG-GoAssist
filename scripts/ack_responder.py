@@ -46,6 +46,7 @@ def main() -> int:
         args.bus_id,
         events.put,
         token=os.environ.get("OPERATOR_API_TOKEN") or None,
+        secret=os.environ.get("DEVICE_SHARED_SECRET") or None,
     )
     stop = threading.Event()
     signal.signal(signal.SIGINT, lambda *_: stop.set())

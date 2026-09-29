@@ -68,7 +68,7 @@ python -m unittest
 
 ## Known gaps
 
-- The backend guards the event subscription with the operator token, not a per-device credential; per-device WebSocket authentication is designed, not built.
+- The event subscription is signed with the device secret (`SUBSCRIBE_DEVICE`, own bus only) when one is configured. The secret is still one shared value for all devices; per-device secrets and rotation are designed, not built.
 - A refused acknowledgement or a rejected report (HTTP 4xx other than 409) is logged and retried, not escalated.
 
 ## Depends on

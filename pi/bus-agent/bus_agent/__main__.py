@@ -113,7 +113,7 @@ def main(argv: "list[str] | None" = None) -> int:
     listener = None
     if not args.no_events:
         ws_url = args.backend.replace("https://", "wss://").replace("http://", "ws://")
-        listener = EventListener(ws_url, args.bus_id, events.put, token=token)
+        listener = EventListener(ws_url, args.bus_id, events.put, token=token, secret=secret)
         listener.start()
 
     stop = threading.Event()

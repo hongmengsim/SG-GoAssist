@@ -4,9 +4,9 @@ It subscribes with the operator-style scoped subscription for this bus id, so it
 only this bus's requests and bay changes. Messages are handed to ``sink`` on the listener's
 thread; the agent runner puts them on a queue and applies them on the main loop.
 
-Known gap, written down rather than hidden: the backend guards this subscription with the
-operator token, not a per-device credential. Per-device WebSocket authentication is a
-designed, not built, part of the scale plan.
+With a device secret (DEVICE_SHARED_SECRET) it subscribes as the device: a signed
+SUBSCRIBE_DEVICE for its own bus, so no operator token is needed on the Pi. Without a secret
+(development) it falls back to the operator-style subscription scoped to its bus.
 """
 
 from __future__ import annotations
@@ -14,9 +14,11 @@ from __future__ import annotations
 import json
 import logging
 import threading
+import time
 from typing import Callable, Optional
 
 from websockets.exceptions import WebSocketException
+from .signing import sign_body
 from websockets.sync.client import connect
 
 log = logging.getLogger(__name__)
@@ -32,7 +34,9 @@ class EventListener:
         sink: Callable[[dict], None],
         token: Optional[str] = None,
         reconnect_seconds: float = 2.0,
+        secret: Optional[str] = None,
     ) -> None:
+        self._secret = secret
         self._url = url
         self._bus_id = bus_id
         self._sink = sink
@@ -57,6 +61,18 @@ class EventListener:
             self._thread.join(timeout=5)
 
     def _subscription(self) -> str:
+        if self._secret:
+            # Prove which bus this is with the device secret; no operator token is needed.
+            timestamp = str(int(time.time() * 1000))
+            return json.dumps(
+                {
+                    "type": "SUBSCRIBE_DEVICE",
+                    "busId": self._bus_id,
+                    "deviceId": self._bus_id,
+                    "timestamp": timestamp,
+                    "signature": sign_body(self._secret, self._bus_id, timestamp, b"SUBSCRIBE_DEVICE"),
+                }
+            )
         message: dict = {"type": "SUBSCRIBE_OPERATIONS", "buses": [self._bus_id]}
         if self._token:
             message["token"] = self._token
@@ -90,6 +106,6 @@ class EventListener:
         kind = message.get("type") if isinstance(message, dict) else None
         if kind in FORWARDED_TYPES:
             self._sink(message)
-        elif kind in ("AUTH_REQUIRED", "INVALID_OPERATIONS_SCOPE"):
+        elif kind in ("AUTH_REQUIRED", "INVALID_OPERATIONS_SCOPE", "INVALID_DEVICE_SUBSCRIPTION"):
             self.last_error = f"subscription refused: {kind}"
             log.error("Backend refused the event subscription: %s", kind)

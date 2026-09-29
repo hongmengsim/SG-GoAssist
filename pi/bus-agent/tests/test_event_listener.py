@@ -113,5 +113,23 @@ class ListenerTests(unittest.TestCase):
         self.assertIn("AUTH_REQUIRED", self.listener.last_error)
 
 
+    def test_with_a_device_secret_it_subscribes_as_the_device_with_a_valid_signature(self) -> None:
+        from bus_agent.signing import sign_body
+
+        self.server = Server([[{"type": "SUBSCRIBED_DEVICE", "busId": BUS}]])
+        self.listener = EventListener(self.server.url, BUS, self.events.append, secret="s3cret", reconnect_seconds=0.05)
+        self.listener.start()
+        self.assertTrue(wait_for(lambda: self.server.received))
+        message = self.server.received[0]
+        self.assertEqual("SUBSCRIBE_DEVICE", message["type"])
+        self.assertEqual(BUS, message["busId"])
+        self.assertEqual(BUS, message["deviceId"])
+        self.assertEqual(
+            sign_body("s3cret", BUS, message["timestamp"], b"SUBSCRIBE_DEVICE"), message["signature"]
+        )
+        self.assertNotIn("token", message)
+        self.assertNotIn("s3cret", json.dumps(message))
+
+
 if __name__ == "__main__":
     unittest.main()

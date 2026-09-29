@@ -171,7 +171,7 @@ class Bus:
         self.events: "queue.Queue[dict]" = queue.Queue()
         self.commands: "queue.Queue[str]" = queue.Queue()
         self.runner = Runner(self.rig, self.events, self.commands)
-        self.listener = EventListener(base.replace("http://", "ws://"), bus_id, self.events.put)
+        self.listener = EventListener(base.replace("http://", "ws://"), bus_id, self.events.put, secret=SECRET)
         self.stop_flag = threading.Event()
         self.thread = threading.Thread(target=self._run, name=bus_id, daemon=True)
 

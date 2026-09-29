@@ -10,7 +10,7 @@ Legend: `[x]` built and verified by a test or a run (evidence given), `[ ]` not 
 | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
 | `npm run verify` (full)                                    | 12 of 12 passed, including the passenger app and the end-to-end scenario                                            |
 | `npm run verify:fast`                                      | 11 of 11 passed (last run after the final commit)                                                                   |
-| Backend                                                    | 244 tests                                                                                                           |
+| Backend                                                    | 273 tests                                                                                                           |
 | Passenger app                                              | 420 tests (last full run; unchanged code)                                                                           |
 | Contracts                                                  | 4 (TypeScript, schema drift and fixtures) + 3 (Python, fixtures)                                                    |
 | `pi/tof-link` / `perception` / `safety-gate` / `bus-agent` | 28 / 33 / 29 / 153 tests, no hardware                                                                               |
@@ -72,7 +72,7 @@ Legend: `[x]` built and verified by a test or a run (evidence given), `[ ]` not 
 ### Software, no hardware needed
 
 - [ ] **R1 Timeouts, help-required behaviour, lost-agent handling.** Blocked on an agreed deployment timeout; the report endpoint and the console alert exist, nothing raises help-required in the agent, and a stalled deployment is not detected.
-- [~] **R3 Security parity:** signed requests from Python and the operator token in the console are done. Per-device credentials and per-device WebSocket authentication are not (the agent subscribes with the operator token).
+- [~] **R3 Security parity:** signed requests from Python, the operator token in the console, and signed per-bus WebSocket subscription (`SUBSCRIBE_DEVICE`; the Pi holds no operator token) are done. Per-device secrets (today one shared secret) and rotation are not.
 - [~] **R4 Documentation:** runbook, endpoint reference and module READMEs done. Still to write: a hardware bring-up runbook, and an update to `CLAUDE.md`-style project notes.
 - [ ] **R5 CI:** per-module jobs; needs a push to try.
 - [ ] **R6 Safe-object policy constants agreed with the team** (0.92 is in code; the size limit is open; the agent and backend must mirror the final values).

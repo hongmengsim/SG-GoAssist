@@ -2,6 +2,7 @@ import WebSocket from "ws";
 import http from "http";
 import { StatusUpdateMessage } from "@buspass/shared";
 import { logger } from "./logger";
+import { DEVICE_SUBSCRIBE_BODY, verifyDeviceSignature } from "../routes/auth";
 import { getRequest, onAssistanceEvent } from "./aviator";
 import { getCase, onOperationsEvent } from "./assistanceCaseService";
 import { listStopVehiclePresence } from "./stopVehiclePresenceService";
@@ -208,6 +209,39 @@ export function initializeWebSocketServer(
                 }),
               );
             });
+          }
+        }
+        if (message.type === "SUBSCRIBE_DEVICE") {
+          // A bus subscribes to its own bus only, proving who it is with the device secret
+          // instead of holding the operator token.
+          const busId = message.busId;
+          const secret = process.env.DEVICE_SHARED_SECRET;
+          const valid =
+            typeof busId === "string" && busId.length > 0 && busId.length <= 64;
+          if (!valid) {
+            ws.send(JSON.stringify({ type: "INVALID_DEVICE_SUBSCRIPTION" }));
+          } else if (
+            secret &&
+            !(
+              message.deviceId === busId &&
+              verifyDeviceSignature({
+                secret,
+                deviceId: String(message.deviceId),
+                timestamp: String(message.timestamp ?? ""),
+                signature: String(message.signature ?? ""),
+                body: DEVICE_SUBSCRIBE_BODY,
+              })
+            )
+          ) {
+            ws.send(JSON.stringify({ type: "AUTH_REQUIRED" }));
+          } else {
+            clearSubscriptions(client, "ops:");
+            setSubscription(
+              client,
+              `ops:${topic.operatorBus(busId)}`,
+              topic.operatorBus(busId),
+            );
+            ws.send(JSON.stringify({ type: "SUBSCRIBED_DEVICE", busId }));
           }
         }
         if (message.type === "SUBSCRIBE_OPERATIONS") {
