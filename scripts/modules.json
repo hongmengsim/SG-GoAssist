@@ -31,6 +31,7 @@
       "readme": "strict",
       "manifest": "package.json",
       "verify": "npm test --workspace @buspass/app",
+      "slow": true,
       "allowedDependencies": ["contracts"]
     },
     {
