@@ -904,7 +904,32 @@ export type StatusUpdateMessage =
  * passenger app narrows that union exhaustively (its describeEvent falls
  * through to DEVICE_HEALTH), so adding members there would break the app.
  */
+/**
+ * What a bus needs to know about a passenger request. No session id or other passenger
+ * identity is included.
+ */
+export interface AssistRequestForBus {
+  requestId: string;
+  caseId?: string;
+  busId: string;
+  busService: string;
+  boardingStop: string;
+  stopCode?: string;
+  destination?: string;
+  assistanceTypes: AssistanceType[];
+  boardingOrAlighting: AssistancePhase;
+  createdAt: string;
+}
+
+/** Pushed to the addressed bus (operator-style scoped subscription); never to passengers. */
+export interface AssistRequestedMessage {
+  type: "ASSIST_REQUESTED";
+  request: AssistRequestForBus;
+  timestamp: string;
+}
+
 export type OperatorStatusUpdateMessage =
+  | AssistRequestedMessage
   | BusStatusUpdateMessage
   | BayStatusUpdateMessage
   | RampSimulationUpdateMessage

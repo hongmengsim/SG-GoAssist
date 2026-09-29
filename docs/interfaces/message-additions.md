@@ -171,3 +171,7 @@ It does not change the app, `RampPosition`, request statuses, the autonomy/docki
 ## Open items that stay open
 
 Timeout value for `DEPLOYMENT_TIMEOUT`; service-to-bus assignment (today the app picks a bus id); whether the backend also keeps its `LIGHT_DEBRIS` thresholds as an extra check; staleness limit for Pi decisions (the backend already treats telemetry older than `GOASSIST_TELEMETRY_FRESHNESS_MS`, default 5 s, as stale).
+
+## Delivering a request to the bus
+
+When a passenger request is created (not when it is a duplicate), the backend publishes `ASSIST_REQUESTED` (`AssistRequestedMessage`, operator-only union) carrying an `AssistRequestForBus`: request, case, bus, service, stop, assistance types and phase, with no session id. A bus agent receives it by subscribing with `SUBSCRIBE_OPERATIONS` scoped to its own bus id; other buses and passenger sockets never see it. After a reconnect or restart the bus reads `GET .../vehicles/:busId/requests` and then acknowledges each request with `assist-ack`. The pull filters the in-memory request list (the teammate's `aviator` store), which is small at prototype scale and is a known limit for the report.

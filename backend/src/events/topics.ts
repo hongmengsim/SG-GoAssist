@@ -30,6 +30,7 @@ const NESTED_CONTAINERS = [
   "autonomy",
   "health",
   "bay",
+  "request",
 ] as const;
 
 type UnknownRecord = Record<string, unknown>;

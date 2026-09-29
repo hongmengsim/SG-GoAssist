@@ -8,6 +8,8 @@ import crypto from "crypto";
 import { getBusById } from "../data/buses.mock";
 import { createRequest, processSimulatorCommand } from "./aviator";
 import { logger } from "./logger";
+import { toBusRequest } from "./busRequest";
+import { publishEvent } from "../events/eventHub";
 import { isAutoAcknowledgeEnabled } from "./autoAcknowledge";
 import { recordPassengerRequest } from "./assistanceCaseService";
 
@@ -113,6 +115,14 @@ export function createStandardizedAssistanceRequestBundle(
       duplicateOfRequestId,
     },
   );
+
+  if (!duplicateOfRequestId) {
+    publishEvent({
+      type: "ASSIST_REQUESTED",
+      request: toBusRequest(savedRequest),
+      timestamp: new Date().toISOString(),
+    });
+  }
 
   if (
     !duplicateOfRequestId &&

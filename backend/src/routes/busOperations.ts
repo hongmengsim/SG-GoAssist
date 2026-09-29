@@ -5,13 +5,19 @@ import {
   Response,
   Router,
 } from "express";
+import { AssistanceRequestStatus } from "@buspass/shared";
 import {
   BusOperationsConflictError,
   BusOperationsValidationError,
 } from "../busOperations/busOperationsService";
 import { getOperationsStore } from "../services/operationsStore";
 import { getBusOperations } from "../busOperations/composition";
-import { getRequest, processSimulatorCommand } from "../services/aviator";
+import {
+  getAllRequests,
+  getRequest,
+  processSimulatorCommand,
+} from "../services/aviator";
+import { toBusRequest } from "../services/busRequest";
 import { requireOperator, verifyDeviceRequest } from "./auth";
 
 /**
@@ -79,6 +85,29 @@ router.post(
   },
 );
 
+/** Fallback for a bus that missed the push (reconnect, restart): requests still waiting for it. */
+router.get(
+  "/vehicles/:busId/requests",
+  verifyDeviceRequest,
+  (req: Request, res: Response) => {
+    const requested = Number(queryText(req.query.limit));
+    const limit =
+      Number.isFinite(requested) && requested >= 1
+        ? Math.min(Math.trunc(requested), MAX_WAITING_REQUESTS)
+        : MAX_WAITING_REQUESTS;
+    const requests = getAllRequests()
+      .filter(
+        (request) =>
+          request.busId === req.params.busId &&
+          request.status === AssistanceRequestStatus.SENDING,
+      )
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      .slice(0, limit)
+      .map(toBusRequest);
+    res.json({ count: requests.length, requests });
+  },
+);
+
 router.get(
   "/vehicles/:busId/status",
   requireOperator,
@@ -127,6 +156,7 @@ router.post(
 );
 
 const DEFAULT_AUDIT_LIMIT = 100;
+const MAX_WAITING_REQUESTS = 50;
 const MAX_AUDIT_LIMIT = 500;
 
 function queryText(value: unknown): string | undefined {
