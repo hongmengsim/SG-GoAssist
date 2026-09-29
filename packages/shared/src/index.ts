@@ -607,6 +607,173 @@ export interface AssistanceMetrics {
   averagePassengerFeedback?: number;
 }
 
+/**
+ * Integration additions: bus movement, single-bay coordination, the Pi's
+ * halt/continue decision, and the simulated ramp. All additive; existing
+ * statuses and unions above are unchanged. Wrapper messages below keep busId
+ * nested (not top-level) so passenger sockets never receive them: the
+ * broadcaster only sends top-level busId/caseId/requestId matches to
+ * non-operator clients.
+ */
+export const BUS_MOVEMENT_STATES = [
+  "TRAVELLING_TO_STOP",
+  "WAITING_FOR_BAY",
+  "POSITIONED_AT_STOP",
+  "DEPARTING",
+] as const;
+export type BusMovementState = (typeof BUS_MOVEMENT_STATES)[number];
+
+/** Movement only; request status, ramp state and faults are separate. */
+export interface BusStatus {
+  busId: string;
+  busService: string;
+  stopCode?: string;
+  bayId?: string;
+  movement: BusMovementState;
+  /** True when this bus's movement or sensors are simulated (for example Bus 2). */
+  simulated: boolean;
+  observedAt: string;
+}
+
+/** One bay per stop. A waiting bus may enter only after the controller grants it. */
+export interface BayStatus {
+  stopCode: string;
+  bayId: string;
+  occupantBusId: string | null;
+  /** First in, first out. */
+  waitingBusIds: string[];
+  /** Bus the controller has told to enter the now-free bay; null when none. */
+  grantedBusId: string | null;
+  updatedAt: string;
+}
+
+/** The ramp is simulated in this project; nothing here is physically verified. */
+export const SIMULATED_RAMP_STATES = [
+  "STOWED",
+  "DEPLOYMENT_REQUESTED",
+  "DEPLOYING",
+  "DEPLOYED",
+  "HALTED",
+] as const;
+export type SimulatedRampState = (typeof SIMULATED_RAMP_STATES)[number];
+
+export const ZONE_STATES = ["CLEAR", "OCCUPIED", "UNCERTAIN"] as const;
+export type ZoneState = (typeof ZONE_STATES)[number];
+
+export const RAMP_PERMISSIONS = ["CONTINUE", "HALT"] as const;
+export type RampPermission = (typeof RAMP_PERMISSIONS)[number];
+
+export const HALT_REASONS = [
+  "OBJECT_IN_ZONE",
+  "TOF_BLOCKED",
+  "TOF_UNAVAILABLE",
+  "TOF_NOT_CALIBRATED",
+  "CAMERA_DEGRADED",
+  "SENSORS_DISAGREE",
+  "BUS_NOT_AT_BOARDING_POSITION",
+  "WAITING_FOR_BAY",
+  "NO_ACCEPTED_REQUEST",
+  "OPERATOR_HALT",
+  "DEPLOYMENT_TIMEOUT",
+] as const;
+export type HaltReason = (typeof HALT_REASONS)[number];
+
+export const TOF_BEAM_STATES = [
+  "BEAM_CLEAR",
+  "BLOCKED",
+  "CHECKING",
+  "UNCALIBRATED",
+  "UNKNOWN",
+] as const;
+export type TofBeamState = (typeof TOF_BEAM_STATES)[number];
+
+export type ObjectSafety = "SAFE" | "UNSAFE";
+
+/**
+ * The Pi's local decision. CONTINUE only when zoneState is CLEAR and every
+ * check passed. Missing, stale or invalid sensor data is never CLEAR.
+ */
+export interface RampSafetyDecision {
+  busId: string;
+  zoneState: ZoneState;
+  permission: RampPermission;
+  reasons: HaltReason[];
+  tof: {
+    state: TofBeamState;
+    distanceMm?: number;
+    simulated: boolean;
+  };
+  camera: {
+    imageOk: boolean;
+    degradedReason?: string;
+  };
+  objectsInZone: Array<{
+    className: string;
+    safety: ObjectSafety;
+    confidence: number;
+  }>;
+  /** True when any input on this bus is simulated. */
+  simulated: boolean;
+  observedAt: string;
+}
+
+export interface RampSimulationStatus {
+  busId: string;
+  caseId?: string;
+  state: SimulatedRampState;
+  /** Literal true: this project never claims physical ramp verification. */
+  simulated: true;
+  haltReasons?: HaltReason[];
+  observedAt: string;
+}
+
+export const HELP_REASONS = [
+  "DEPLOYMENT_TIMEOUT",
+  "OBSTRUCTION_PERSISTENT",
+  "SENSOR_UNAVAILABLE",
+  "OTHER",
+] as const;
+export type HelpReason = (typeof HELP_REASONS)[number];
+
+export interface HelpRequired {
+  busId: string;
+  caseId?: string;
+  reason: HelpReason;
+  state: SimulatedRampState;
+  detail?: string;
+  observedAt: string;
+}
+
+export interface BusStatusUpdateMessage {
+  type: "BUS_STATUS";
+  status: BusStatus;
+  timestamp: string;
+}
+
+export interface BayStatusUpdateMessage {
+  type: "BAY_STATUS";
+  bay: BayStatus;
+  timestamp: string;
+}
+
+export interface RampSimulationUpdateMessage {
+  type: "RAMP_SIMULATION";
+  ramp: RampSimulationStatus;
+  timestamp: string;
+}
+
+export interface RampSafetyUpdateMessage {
+  type: "RAMP_SAFETY";
+  decision: RampSafetyDecision;
+  timestamp: string;
+}
+
+export interface HelpRequiredMessage {
+  type: "HELP_REQUIRED";
+  help: HelpRequired;
+  timestamp: string;
+}
+
 export interface RequestStatusUpdateMessage {
   type: "REQUEST_STATUS";
   requestId: string;
@@ -729,7 +896,12 @@ export type StatusUpdateMessage =
   | ActuatorStatusUpdateMessage
   | OperatorEscalationMessage
   | DeviceHealthUpdateMessage
-  | AutonomyStatusUpdateMessage;
+  | AutonomyStatusUpdateMessage
+  | BusStatusUpdateMessage
+  | BayStatusUpdateMessage
+  | RampSimulationUpdateMessage
+  | RampSafetyUpdateMessage
+  | HelpRequiredMessage;
 
 export interface Bus {
   busId: string;
