@@ -13,4 +13,4 @@ What is still missing and in what order: [`roadmap.md`](roadmap.md).
 
 The message contract itself is code: [`contracts/src/index.ts`](../contracts/src/index.ts).
 
-Runbooks (how to run and demo each part) will live in `docs/runbooks/` once the module READMEs exist. Each module documents how to run and test itself in its own README.
+Runbooks live in `docs/runbooks/`: [run everything on one laptop](runbooks/run-everything-on-one-laptop.md). Each module documents how to run and test itself in its own README.
