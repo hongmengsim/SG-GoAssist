@@ -27,6 +27,9 @@ const sqliteAvailable = (() => {
   return database !== undefined;
 })();
 
+// The repository holds only prepared statements; keep the databases referenced so they are not collected mid-test.
+const openDatabases: unknown[] = [];
+
 const adapters: Array<{
   name: string;
   create: () => BusRecordRepository<Sample>;
@@ -41,6 +44,7 @@ const adapters: Array<{
     create: () => {
       const database = openSqliteDatabase(":memory:");
       if (!database) throw new Error("sqlite unavailable");
+      openDatabases.push(database);
       return new SqliteBusRecordRepository<Sample>(database, "sample_records");
     },
   },
