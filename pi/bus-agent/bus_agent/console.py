@@ -1,0 +1,82 @@
+"""Text commands that drive a simulated bus and its surroundings, for demos and scenarios.
+
+Each command returns a one-line reply; a command it does not understand returns an
+explanation and changes nothing.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+from .agent import DepartureBlocked
+
+if TYPE_CHECKING:  # pragma: no cover
+    from .runner import SimulatedRig
+
+HELP = (
+    "commands: arrive <stop> | depart | travel [stop] | place <class> [confidence] | clear | "
+    "cover on|off | block on|off | dropout on|off | frames on|off | halt on|off | status"
+)
+
+
+def _switch(value: str) -> "bool | None":
+    return {"on": True, "off": False}.get(value)
+
+
+def apply_command(rig: "SimulatedRig", line: str) -> str:
+    parts = line.split()
+    if not parts:
+        return HELP
+    name, args = parts[0].lower(), parts[1:]
+    agent = rig.agent
+
+    if name == "arrive" and len(args) == 1:
+        agent.arrive(args[0])
+        return f"arrived at {args[0]}: {agent.movement}"
+    if name == "depart" and not args:
+        try:
+            agent.depart()
+        except DepartureBlocked as error:
+            return f"cannot depart: {error}"
+        return f"{agent.movement}"
+    if name == "travel" and len(args) <= 1:
+        agent.start_travel(args[0] if args else None)
+        return f"{agent.movement}"
+    if name == "place" and 1 <= len(args) <= 2:
+        try:
+            confidence = float(args[1]) if len(args) == 2 else 0.9
+        except ValueError:
+            return f"confidence must be a number, got {args[1]!r}"
+        rig.camera.place(args[0], confidence)
+        return f"placed {args[0]} in the ramp zone"
+    if name == "clear" and not args:
+        rig.camera.clear_objects()
+        return "zone emptied"
+    if name == "status" and not args:
+        return _status(rig)
+
+    switches = {
+        "cover": rig.camera.cover_lens,
+        "frames": lambda on: rig.camera.stop_frames(not on),
+        "block": rig.beam_source.set_blocked,
+        "dropout": rig.beam_source.set_dropout,
+        "halt": agent.set_operator_halt,
+    }
+    if name in switches and len(args) == 1:
+        state = _switch(args[0].lower())
+        if state is None:
+            return f"{name} needs on or off"
+        switches[name](state)
+        return f"{name} {'on' if state else 'off'}"
+    return f"not understood: {line.strip()!r}. {HELP}"
+
+
+def _status(rig: "SimulatedRig") -> str:
+    agent = rig.agent
+    decision = agent.last_decision
+    permission = decision.permission if decision else "none yet"
+    reasons = ", ".join(decision.reasons) if decision and decision.reasons else "none"
+    return (
+        f"{agent.bus_id} (simulated): movement {agent.movement}, ramp {agent.ramp.state} "
+        f"({agent.ramp.progress:.0%}), gate {permission}, reasons: {reasons}"
+    )
