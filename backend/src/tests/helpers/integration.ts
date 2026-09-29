@@ -7,6 +7,7 @@ import {
 } from "../../services/websocket";
 import { clearAllRequests } from "../../services/aviator";
 import { clearOperations } from "../../services/assistanceCaseService";
+import { resetBusOperations } from "../../busOperations/composition";
 
 export interface TestServer {
   baseUrl: string;
@@ -17,6 +18,7 @@ export interface TestServer {
 export async function startTestServer(): Promise<TestServer> {
   clearAllRequests();
   clearOperations();
+  resetBusOperations();
   const server = http.createServer(createApp());
   initializeWebSocketServer(server, 0);
   setupStateChangeListener();
@@ -40,7 +42,7 @@ export async function startTestServer(): Promise<TestServer> {
 export async function requestJson(
   baseUrl: string,
   path: string,
-  options: RequestInit = {}
+  options: RequestInit = {},
 ): Promise<{ status: number; body: any }> {
   const response = await fetch(`${baseUrl}${path}`, {
     headers: {
@@ -60,15 +62,24 @@ export function subscribeAndCollect(
   wsUrl: string,
   requestId: string,
   expected: string[],
-  timeoutMs = 2000
-): { socket: WebSocket; done: Promise<any[]>; waitForLabels: (labels: string[], timeoutMs?: number) => Promise<any[]> } {
+  timeoutMs = 2000,
+): {
+  socket: WebSocket;
+  done: Promise<any[]>;
+  waitForLabels: (labels: string[], timeoutMs?: number) => Promise<any[]>;
+} {
   const socket = new WebSocket(wsUrl);
   const seen: any[] = [];
 
-  const waitForLabels = (labelsToWaitFor: string[], waitTimeoutMs = timeoutMs) =>
+  const waitForLabels = (
+    labelsToWaitFor: string[],
+    waitTimeoutMs = timeoutMs,
+  ) =>
     new Promise<any[]>((resolve, reject) => {
       const hasAllLabels = () => {
-        const labels = seen.map((item) => `${item.type}:${item.status ?? item.announcement}`);
+        const labels = seen.map(
+          (item) => `${item.type}:${item.status ?? item.announcement}`,
+        );
         return labelsToWaitFor.every((label) => labels.includes(label));
       };
 
@@ -80,8 +91,8 @@ export function subscribeAndCollect(
       const timer = setTimeout(() => {
         reject(
           new Error(
-            `Timed out waiting for ${labelsToWaitFor.join(", ")}. Saw ${JSON.stringify(seen)}`
-          )
+            `Timed out waiting for ${labelsToWaitFor.join(", ")}. Saw ${JSON.stringify(seen)}`,
+          ),
         );
       }, waitTimeoutMs);
 
@@ -105,7 +116,9 @@ export function subscribeAndCollect(
     const timer = setTimeout(() => {
       socket.close();
       reject(
-        new Error(`Timed out waiting for ${expected.join(", ")}. Saw ${JSON.stringify(seen)}`)
+        new Error(
+          `Timed out waiting for ${expected.join(", ")}. Saw ${JSON.stringify(seen)}`,
+        ),
       );
     }, timeoutMs);
 
@@ -116,7 +129,9 @@ export function subscribeAndCollect(
     socket.on("message", (data) => {
       const message = JSON.parse(String(data));
       seen.push(message);
-      const labels = seen.map((item) => `${item.type}:${item.status ?? item.announcement}`);
+      const labels = seen.map(
+        (item) => `${item.type}:${item.status ?? item.announcement}`,
+      );
       if (expected.every((label) => labels.includes(label))) {
         clearTimeout(timer);
         resolve(seen);

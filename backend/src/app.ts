@@ -4,6 +4,8 @@ import { router as assistanceRouter } from "./routes/assistance";
 import { router as locationRouter } from "./routes/location";
 import { router as busStopsRouter } from "./routes/busStops";
 import { router as operationsRouter } from "./routes/operations";
+import { router as busOperationsRouter } from "./routes/busOperations";
+import { clearBusOperationsData } from "./busOperations/composition";
 import { router as assistantDiagnosticsRouter } from "./routes/assistantDiagnostics";
 import { router as passengerRouter } from "./routes/passenger";
 import { router as journeysRouter } from "./routes/journeys";
@@ -52,6 +54,7 @@ export function createApp() {
   app.use("/api/assistance", assistanceRouter);
   app.use("/api/location", locationRouter);
   app.use("/api/bus-stops", busStopsRouter);
+  app.use("/api/operations", busOperationsRouter);
   app.use("/api/operations", operationsRouter);
   app.use("/api/assistant", assistantDiagnosticsRouter);
   app.use("/api/passenger", passengerRouter);
@@ -89,12 +92,17 @@ export function createApp() {
     });
   });
 
-  app.post("/admin/reset", requireAdmin, (req, res) => {
-    clearAllRequests();
-    clearOperations();
-    res.json({
-      message: "All requests cleared",
-    });
+  app.post("/admin/reset", requireAdmin, async (req, res, next) => {
+    try {
+      clearAllRequests();
+      clearOperations();
+      await clearBusOperationsData();
+      res.json({
+        message: "All requests cleared",
+      });
+    } catch (error) {
+      next(error);
+    }
   });
 
   app.use((req, res) => {
@@ -112,6 +120,19 @@ export function createApp() {
       res: express.Response,
       next: express.NextFunction,
     ) => {
+      // Client mistakes (for example malformed JSON, which the body parser reports with a
+      // 4xx status) must not be reported as server failures.
+      const clientStatus =
+        Number.isInteger(error?.status) &&
+        error.status >= 400 &&
+        error.status < 500
+          ? error.status
+          : undefined;
+      if (clientStatus !== undefined) {
+        res.status(clientStatus).json({ error: "Invalid request" });
+        return;
+      }
+
       logger.error("Unhandled error", undefined, {
         message: error.message,
         stack: error.stack,
