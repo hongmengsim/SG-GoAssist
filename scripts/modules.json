@@ -108,10 +108,13 @@
       "name": "operator-console",
       "path": "operator-console",
       "kind": "js",
-      "status": "planned",
+      "status": "active",
       "packageName": "@buspass/operator-console",
       "readme": "strict",
-      "allowedDependencies": ["contracts"]
+      "allowedDependencies": ["contracts"],
+      "manifest": "package.json",
+      "verify": "npm test",
+      "verifyCwd": "operator-console"
     }
   ]
 }

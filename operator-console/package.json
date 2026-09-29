@@ -1,0 +1,11 @@
+{
+  "name": "@buspass/operator-console",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Controller screen for the GoAssist operator",
+  "scripts": {
+    "start": "node serve.mjs",
+    "test": "node --test \"test/*.test.mjs\""
+  }
+}

@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>GoAssist Controller</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header>
+      <h1>GoAssist Controller <small>boarding assistance</small></h1>
+      <span id="modeBar"></span>
+      <span id="clock" aria-label="Current time">--:--:--</span>
+    </header>
+    <nav class="crumbs" id="crumbs" aria-label="Breadcrumb"></nav>
+    <main id="root"></main>
+
+    <div
+      id="confirm"
+      role="alertdialog"
+      aria-live="assertive"
+      aria-labelledby="confirmText"
+    >
+      <b id="confirmText"></b>
+      <div class="row">
+        <button id="confirmYes" class="danger">Confirm</button
+        ><button id="confirmNo">Back</button>
+      </div>
+    </div>
+
+    <button id="drawerBtn" aria-expanded="false" aria-controls="drawer" hidden>
+      Playground
+    </button>
+    <aside id="drawer" aria-label="Simulation playground" hidden></aside>
+
+    <script type="module" src="src/app.js"></script>
+  </body>
+</html>
