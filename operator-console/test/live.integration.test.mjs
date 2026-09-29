@@ -105,11 +105,12 @@ test(
           });
         assert.equal((await bus(B1, "POSITIONED_AT_STOP")).status, 202);
         assert.equal((await bus(B2, "WAITING_FOR_BAY")).status, 202);
-        await post(base, `/api/operations/vehicles/${B1}/ramp-simulation`, {
-          state: "STOWED",
-          simulated: true,
-          observedAt: now(),
-        });
+        const rampReply = await post(
+          base,
+          `/api/operations/vehicles/${B1}/ramp-simulation`,
+          { state: "STOWED", simulated: true, observedAt: now() },
+        );
+        assert.equal(rampReply.status, 202, await rampReply.text());
         await post(base, `/api/operations/vehicles/${B1}/safety-decision`, {
           zoneState: "CLEAR",
           permission: "CONTINUE",
