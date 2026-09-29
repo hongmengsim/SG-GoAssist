@@ -1,7 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { OperatorStatusUpdateMessage } from "@buspass/shared";
-import { MemoryBusStatusRepository } from "../busOperations/memoryRepositories";
+import {
+  MemoryBayRepository,
+  MemoryBusStatusRepository,
+} from "../busOperations/memoryRepositories";
 import {
   BusOperationsService,
   BusOperationsValidationError,
@@ -13,15 +16,32 @@ const NOW = Date.parse("2026-09-30T00:10:00.000Z");
 function setup() {
   const published: OperatorStatusUpdateMessage[] = [];
   const audited: AuditEventInput[] = [];
+  const bayPublished: OperatorStatusUpdateMessage[] = [];
+  const bayAudited: AuditEventInput[] = [];
   const clock = { now: NOW };
   const repository = new MemoryBusStatusRepository();
   const service = new BusOperationsService({
     busStatus: repository,
-    publish: (message) => void published.push(message),
-    audit: (event) => void audited.push(event),
+    bays: new MemoryBayRepository(),
+    publish: (message) =>
+      void (message.type === "BUS_STATUS" ? published : bayPublished).push(
+        message,
+      ),
+    audit: (event) =>
+      void (
+        event.eventType === "BUS_STATUS_CHANGED" ? audited : bayAudited
+      ).push(event),
     now: () => clock.now,
   });
-  return { service, repository, published, audited, clock };
+  return {
+    service,
+    repository,
+    published,
+    audited,
+    bayPublished,
+    bayAudited,
+    clock,
+  };
 }
 
 function report(overrides: Record<string, unknown> = {}) {
@@ -187,9 +207,9 @@ test("concurrent reports for one bus are applied one at a time, in arrival order
   const { service, repository, published, audited } = setup();
   const movements = [
     "TRAVELLING_TO_STOP",
-    "WAITING_FOR_BAY",
     "POSITIONED_AT_STOP",
     "DEPARTING",
+    "WAITING_FOR_BAY",
   ];
   const reports = Array.from({ length: 40 }, (_, index) =>
     service.reportBusStatus(
@@ -225,4 +245,54 @@ test("clearAll removes stored statuses", async () => {
   await service.reportBusStatus(report(), "AV-095-01");
   await service.clearAll();
   assert.equal(await repository.count(), 0);
+});
+
+test("a bay change is published and audited once, and a repeat is silent", async () => {
+  const { service, bayPublished, bayAudited } = setup();
+  await service.reportBusStatus(
+    report({ movement: "POSITIONED_AT_STOP" }),
+    "AV-095-01",
+  );
+  await service.reportBusStatus(
+    report({
+      movement: "POSITIONED_AT_STOP",
+      observedAt: new Date(NOW - 500).toISOString(),
+    }),
+    "AV-095-01",
+  );
+  assert.equal(bayPublished.length, 1);
+  assert.equal(bayAudited.length, 1);
+  assert.equal(bayAudited[0].eventType, "BAY_CHANGED");
+});
+
+test("a bus moving to another stop leaves the bay of the stop it left", async () => {
+  const { service } = setup();
+  await service.reportBusStatus(
+    report({ movement: "POSITIONED_AT_STOP", stopCode: "18301" }),
+    "AV-095-01",
+  );
+  await service.reportBusStatus(
+    report({
+      movement: "TRAVELLING_TO_STOP",
+      stopCode: "18331",
+      observedAt: new Date(NOW - 500).toISOString(),
+    }),
+    "AV-095-01",
+  );
+  assert.equal((await service.getBay("18301")).occupantBusId, null);
+});
+
+test("granting entry is audited as an operator action for the granted bus", async () => {
+  const { service, bayAudited } = setup();
+  await service.reportBusStatus(
+    report({ movement: "WAITING_FOR_BAY", busId: undefined }),
+    "AV-095-02",
+  );
+  const bay = await service.grantBayEntry("18331");
+  assert.equal(bay.grantedBusId, "AV-095-02");
+  const grant = bayAudited.find(
+    (event) => event.eventType === "BAY_ENTRY_GRANTED",
+  );
+  assert.equal(grant?.actor, "OPERATOR");
+  assert.equal(grant?.busId, "AV-095-02");
 });

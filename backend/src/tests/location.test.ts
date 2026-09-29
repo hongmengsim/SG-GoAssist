@@ -56,6 +56,9 @@ test("kent ridge crescent stop returns mocked approaching buses for passenger se
   assert.ok(arrivals.some((arrival) => arrival.serviceNo === "151"));
 
   for (const arrival of arrivals) {
-    assert.ok(getBusById(arrival.busId), `Missing backend bus mapping for ${arrival.busId}`);
+    assert.ok(
+      getBusById(arrival.busId),
+      `Missing backend bus mapping for ${arrival.busId}`,
+    );
   }
 });

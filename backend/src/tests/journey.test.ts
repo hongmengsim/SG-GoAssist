@@ -37,11 +37,11 @@ const routeStops: RouteStop[] = [
 test("remaining route stops excludes stops already passed", () => {
   assert.deepEqual(
     remainingRouteStops(routeStops, 0).map((stop) => stop.busStopCode),
-    ["18321", "19011"]
+    ["18321", "19011"],
   );
   assert.deepEqual(
     remainingRouteStops(routeStops, 1).map((stop) => stop.busStopCode),
-    ["19011"]
+    ["19011"],
   );
 });
 

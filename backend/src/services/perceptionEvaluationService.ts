@@ -22,7 +22,9 @@ export function recordPerceptionEvaluation(
   const normalized = validateAndNormalize(input);
   const existing = getOperationsStore()
     .snapshot()
-    .perceptionEvaluationSamples.find((item) => item.sampleId === normalized.sampleId);
+    .perceptionEvaluationSamples.find(
+      (item) => item.sampleId === normalized.sampleId,
+    );
   if (existing) return existing;
   getOperationsStore().update((state) => {
     state.perceptionEvaluationSamples.push(normalized);
@@ -52,9 +54,18 @@ export function getPerceptionEvaluationMetrics(): PerceptionEvaluationMetrics {
       recall: ratio(truePositives, truePositives + falseNegatives),
     };
   });
-  const truePositives = classes.reduce((sum, item) => sum + item.truePositives, 0);
-  const falsePositives = classes.reduce((sum, item) => sum + item.falsePositives, 0);
-  const falseNegatives = classes.reduce((sum, item) => sum + item.falseNegatives, 0);
+  const truePositives = classes.reduce(
+    (sum, item) => sum + item.truePositives,
+    0,
+  );
+  const falsePositives = classes.reduce(
+    (sum, item) => sum + item.falsePositives,
+    0,
+  );
+  const falseNegatives = classes.reduce(
+    (sum, item) => sum + item.falseNegatives,
+    0,
+  );
   return {
     sampleCount: samples.length,
     microPrecision: ratio(truePositives, truePositives + falsePositives),
@@ -70,15 +81,21 @@ function validateAndNormalize(
     throw new PerceptionEvaluationValidationError("sampleId is required");
   }
   if (!Array.isArray(input.predicted) || !Array.isArray(input.actual)) {
-    throw new PerceptionEvaluationValidationError("predicted and actual must be arrays");
+    throw new PerceptionEvaluationValidationError(
+      "predicted and actual must be arrays",
+    );
   }
   if (
-    [...input.predicted, ...input.actual].some((className) => !CLASS_SET.has(className))
+    [...input.predicted, ...input.actual].some(
+      (className) => !CLASS_SET.has(className),
+    )
   ) {
     throw new PerceptionEvaluationValidationError("Unknown perception class");
   }
   if (Number.isNaN(Date.parse(input.observedAt))) {
-    throw new PerceptionEvaluationValidationError("observedAt must be an ISO timestamp");
+    throw new PerceptionEvaluationValidationError(
+      "observedAt must be an ISO timestamp",
+    );
   }
   if (
     input.confidence &&

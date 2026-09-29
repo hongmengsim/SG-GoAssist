@@ -10,9 +10,15 @@ import {
   type AuditEventInput,
   type BusOperationsDeps,
 } from "./busOperationsService";
-import { MemoryBusStatusRepository } from "./memoryRepositories";
-import type { BusStatusRepository } from "./ports";
-import { SqliteBusStatusRepository } from "./sqliteRepositories";
+import {
+  MemoryBayRepository,
+  MemoryBusStatusRepository,
+} from "./memoryRepositories";
+import type { BayRepository, BusStatusRepository } from "./ports";
+import {
+  SqliteBayRepository,
+  SqliteBusStatusRepository,
+} from "./sqliteRepositories";
 
 export type StorageDriver = "memory" | "sqlite";
 
@@ -52,6 +58,7 @@ export function createBusOperations(
   options: BusOperationsOptions,
 ): BusOperations {
   let repository: BusStatusRepository | undefined;
+  let bays: BayRepository | undefined;
   let database: SqliteDatabase | undefined;
   let driver = options.driver;
 
@@ -62,8 +69,10 @@ export function createBusOperations(
     database = openSqliteDatabase(
       path.join(directory, "bus-operations.sqlite"),
     );
-    if (database) repository = new SqliteBusStatusRepository(database);
-    else {
+    if (database) {
+      repository = new SqliteBusStatusRepository(database);
+      bays = new SqliteBayRepository(database);
+    } else {
       logger.warn(
         "Bus operations are using memory storage and will not survive a restart",
       );
@@ -71,9 +80,11 @@ export function createBusOperations(
     }
   }
   repository ??= new MemoryBusStatusRepository();
+  bays ??= new MemoryBayRepository();
 
   const service = new BusOperationsService({
     busStatus: repository,
+    bays,
     publish: options.publish ?? publishEvent,
     audit: options.audit ?? auditToOperationsStore,
     now: options.now ?? Date.now,

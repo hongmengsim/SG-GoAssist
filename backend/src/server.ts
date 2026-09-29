@@ -1,6 +1,6 @@
 /**
  * Main Express Server
- * 
+ *
  * Starts:
  * - HTTP server on PORT (default 3000)
  * - WebSocket server on WS_PORT (default 3001)
@@ -22,7 +22,9 @@ import { busStopRepository } from "./bus-stops/repository";
 dotenv.config();
 
 const PORT = process.env.PORT || 3000;
-const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || "http://localhost:8081,http://localhost:3000").split(",");
+const ALLOWED_ORIGINS = (
+  process.env.ALLOWED_ORIGINS || "http://localhost:8081,http://localhost:3000"
+).split(",");
 
 const app = createApp();
 

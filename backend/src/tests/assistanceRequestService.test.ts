@@ -1,7 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { AssistanceRequestStatus, assistanceTypesForPhase } from "@buspass/shared";
-import { clearAllRequests, getAllRequests, processSimulatorCommand } from "../services/aviator";
+import {
+  AssistanceRequestStatus,
+  assistanceTypesForPhase,
+} from "@buspass/shared";
+import {
+  clearAllRequests,
+  getAllRequests,
+  processSimulatorCommand,
+} from "../services/aviator";
 import {
   createStandardizedAssistanceRequestBundle,
   createStandardizedAssistanceRequest,
@@ -34,7 +41,7 @@ test("app-selected arrival bus IDs can create standardized assistance requests",
       assistanceType: "WHEELCHAIR_RAMP",
       source: "MOBILE_APP",
     },
-    { autoAcknowledge: false }
+    { autoAcknowledge: false },
   );
 
   assert.equal(result.request.busId, "AV-191-03");
@@ -57,9 +64,9 @@ test("wheelchair ramp requests are rejected for non-accessible vehicles", () => 
           assistanceType: "WHEELCHAIR_RAMP",
           source: "MOBILE_APP",
         },
-        { autoAcknowledge: false }
+        { autoAcknowledge: false },
       ),
-    /not accessible/
+    /not accessible/,
   );
 });
 
@@ -74,10 +81,13 @@ test("terminal request statuses cannot be overwritten by later simulator command
       assistanceType: "BUS_AUDIO_IDENTIFICATION",
       source: "MOBILE_APP",
     },
-    { autoAcknowledge: false }
+    { autoAcknowledge: false },
   );
 
-  processSimulatorCommand({ requestId: result.request.requestId, command: "FAIL" });
+  processSimulatorCommand({
+    requestId: result.request.requestId,
+    command: "FAIL",
+  });
   const afterAck = processSimulatorCommand({
     requestId: result.request.requestId,
     command: "ACKNOWLEDGE",
@@ -99,7 +109,7 @@ test("extended dwell time is treated as bus-facing assistance without ramp valid
       assistanceType: "EXTENDED_DWELL_TIME",
       source: "MOBILE_APP",
     },
-    { autoAcknowledge: false }
+    { autoAcknowledge: false },
   );
 
   assert.deepEqual(result.request.assistanceTypes, ["EXTENDED_DWELL_TIME"]);
@@ -121,10 +131,12 @@ test("verification status is stored separately from selected assistance needs", 
       accessibilityVerificationStatus: "VERIFIED",
       verificationMethod: "DEMO_CREDENTIAL",
     },
-    { autoAcknowledge: false }
+    { autoAcknowledge: false },
   );
 
-  assert.deepEqual(result.request.assistanceTypes, ["BUS_AUDIO_IDENTIFICATION"]);
+  assert.deepEqual(result.request.assistanceTypes, [
+    "BUS_AUDIO_IDENTIFICATION",
+  ]);
   assert.equal(result.request.accessibilityVerificationStatus, "VERIFIED");
   assert.equal(result.request.verificationMethod, "DEMO_CREDENTIAL");
 });
@@ -147,7 +159,7 @@ test("multiple selected needs share one request lifecycle", () => {
       source: "MOBILE_APP",
       boardingOrAlighting: "BOARDING",
     },
-    { autoAcknowledge: false }
+    { autoAcknowledge: false },
   );
 
   assert.equal(getAllRequests().length, 1);
@@ -169,7 +181,7 @@ test("an existing partial request does not swallow a newly added need", () => {
       assistanceType: "WHEELCHAIR_RAMP",
       source: "MOBILE_APP",
     },
-    { autoAcknowledge: false }
+    { autoAcknowledge: false },
   );
   const rampAndAudio = createStandardizedAssistanceRequestBundle(
     {
@@ -179,7 +191,7 @@ test("an existing partial request does not swallow a newly added need", () => {
       assistanceTypes: ["WHEELCHAIR_RAMP", "BUS_AUDIO_IDENTIFICATION"],
       source: "MOBILE_APP",
     },
-    { autoAcknowledge: false }
+    { autoAcknowledge: false },
   );
 
   assert.notEqual(rampAndAudio.request.requestId, rampOnly.request.requestId);
@@ -222,7 +234,7 @@ test("standardized alighting requests preserve phase and stop code", () => {
       boardingOrAlighting: "ALIGHTING",
       source: "MOBILE_APP",
     },
-    { autoAcknowledge: false }
+    { autoAcknowledge: false },
   );
 
   assert.equal(result.request.boardingOrAlighting, "ALIGHTING");

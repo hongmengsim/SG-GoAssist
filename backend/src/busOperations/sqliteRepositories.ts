@@ -1,6 +1,10 @@
-import type { BusMovementState, BusStatus } from "@buspass/shared";
+import type { BayStatus, BusMovementState, BusStatus } from "@buspass/shared";
 import type { SqliteDatabase, SqliteStatement } from "../storage/sqlite";
-import type { BusStatusFilter, BusStatusRepository } from "./ports";
+import type {
+  BayRepository,
+  BusStatusFilter,
+  BusStatusRepository,
+} from "./ports";
 
 interface BusStatusRow {
   bus_id: string;
@@ -100,6 +104,85 @@ export class SqliteBusStatusRepository implements BusStatusRepository {
         : this.listByStop.all(filter.stopCode, filter.limit)
     ) as BusStatusRow[];
     return rows.map(toStatus);
+  }
+
+  async count(): Promise<number> {
+    return Number((this.countAll.get() as { total: number | bigint }).total);
+  }
+
+  async clear(): Promise<void> {
+    this.deleteAll.run();
+  }
+}
+
+interface BayRow {
+  stop_code: string;
+  bay_id: string;
+  occupant_bus_id: string | null;
+  waiting_bus_ids: string;
+  granted_bus_id: string | null;
+  updated_at: string;
+}
+
+const BAY_SCHEMA = `
+  CREATE TABLE IF NOT EXISTS bay_status (
+    stop_code TEXT PRIMARY KEY,
+    bay_id TEXT NOT NULL,
+    occupant_bus_id TEXT,
+    waiting_bus_ids TEXT NOT NULL,
+    granted_bus_id TEXT,
+    updated_at TEXT NOT NULL
+  );
+`;
+
+/** One row per stop, written in place; the queue is a short JSON array. */
+export class SqliteBayRepository implements BayRepository {
+  private readonly selectOne: SqliteStatement;
+  private readonly upsertOne: SqliteStatement;
+  private readonly countAll: SqliteStatement;
+  private readonly deleteAll: SqliteStatement;
+
+  constructor(database: SqliteDatabase) {
+    database.exec(BAY_SCHEMA);
+    this.selectOne = database.prepare(
+      "SELECT * FROM bay_status WHERE stop_code = ?",
+    );
+    this.upsertOne = database.prepare(
+      `INSERT INTO bay_status (stop_code, bay_id, occupant_bus_id, waiting_bus_ids, granted_bus_id, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(stop_code) DO UPDATE SET
+         bay_id = excluded.bay_id, occupant_bus_id = excluded.occupant_bus_id,
+         waiting_bus_ids = excluded.waiting_bus_ids, granted_bus_id = excluded.granted_bus_id,
+         updated_at = excluded.updated_at`,
+    );
+    this.countAll = database.prepare(
+      "SELECT COUNT(*) AS total FROM bay_status",
+    );
+    this.deleteAll = database.prepare("DELETE FROM bay_status");
+  }
+
+  async get(stopCode: string): Promise<BayStatus | undefined> {
+    const row = this.selectOne.get(stopCode) as BayRow | undefined;
+    if (!row) return undefined;
+    return {
+      stopCode: row.stop_code,
+      bayId: row.bay_id,
+      occupantBusId: row.occupant_bus_id,
+      waitingBusIds: JSON.parse(row.waiting_bus_ids) as string[],
+      grantedBusId: row.granted_bus_id,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  async upsert(bay: BayStatus): Promise<void> {
+    this.upsertOne.run(
+      bay.stopCode,
+      bay.bayId,
+      bay.occupantBusId,
+      JSON.stringify(bay.waitingBusIds),
+      bay.grantedBusId,
+      bay.updatedAt,
+    );
   }
 
   async count(): Promise<number> {

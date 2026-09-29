@@ -65,7 +65,12 @@ export function fuseRampObstacleAssessment(
     return assessment(ranging, undefined, true, "Laser ranging is stale");
   }
   if (!ranging.laserHealthy) {
-    return assessment(ranging, undefined, true, "Laser sensor health check failed");
+    return assessment(
+      ranging,
+      undefined,
+      true,
+      "Laser sensor health check failed",
+    );
   }
   if (!ranging.objectDetected && ranging.occupiedZoneCount === 0) {
     return {
@@ -89,7 +94,8 @@ export function fuseRampObstacleAssessment(
     classification &&
     classification.busId &&
     nowMs - Date.parse(classification.observedAt) >= 0 &&
-    nowMs - Date.parse(classification.observedAt) <= CLASSIFICATION_FRESHNESS_MS;
+    nowMs - Date.parse(classification.observedAt) <=
+      CLASSIFICATION_FRESHNESS_MS;
   if (!classificationFresh) {
     return assessment(
       ranging,

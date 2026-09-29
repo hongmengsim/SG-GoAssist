@@ -48,30 +48,47 @@ test("operations API runs a safe ramp case from intent to verified readiness", a
   const server = await startTestServer();
   try {
     await capability(server.baseUrl);
-    const created = await requestJson(server.baseUrl, "/api/operations/signals", {
-      method: "POST",
-      body: JSON.stringify(signal("APP", "explicit-passenger")),
-    });
+    const created = await requestJson(
+      server.baseUrl,
+      "/api/operations/signals",
+      {
+        method: "POST",
+        body: JSON.stringify(signal("APP", "explicit-passenger")),
+      },
+    );
     assert.equal(created.status, 201);
     assert.equal(created.body.case.state, "BLOCKED");
-    assert.match(created.body.case.escalationReason, /telemetry is unavailable/i);
+    assert.match(
+      created.body.case.escalationReason,
+      /telemetry is unavailable/i,
+    );
     const caseId = created.body.case.caseId;
 
-    await requestJson(server.baseUrl, "/api/operations/vehicles/BUS-DEMO/telemetry", {
-      method: "POST",
-      body: JSON.stringify(telemetry("STOWED")),
-    });
+    await requestJson(
+      server.baseUrl,
+      "/api/operations/vehicles/BUS-DEMO/telemetry",
+      {
+        method: "POST",
+        body: JSON.stringify(telemetry("STOWED")),
+      },
+    );
     const pending = await requestJson(
       server.baseUrl,
       "/api/operations/actuators/pending?busId=BUS-DEMO",
     );
-    const command = pending.body.commands.find((item: any) => item.command === "DEPLOY_RAMP");
+    const command = pending.body.commands.find(
+      (item: any) => item.command === "DEPLOY_RAMP",
+    );
     assert.ok(command);
 
-    await requestJson(server.baseUrl, "/api/operations/vehicles/BUS-DEMO/telemetry", {
-      method: "POST",
-      body: JSON.stringify(telemetry("DEPLOYED")),
-    });
+    await requestJson(
+      server.baseUrl,
+      "/api/operations/vehicles/BUS-DEMO/telemetry",
+      {
+        method: "POST",
+        body: JSON.stringify(telemetry("DEPLOYED")),
+      },
+    );
     const completed = await requestJson(
       server.baseUrl,
       `/api/operations/actuators/${command.commandId}/status`,
@@ -88,7 +105,10 @@ test("operations API runs a safe ramp case from intent to verified readiness", a
     );
     assert.equal(completed.body.case.state, "READY");
 
-    const metrics = await requestJson(server.baseUrl, "/api/operations/metrics");
+    const metrics = await requestJson(
+      server.baseUrl,
+      "/api/operations/metrics",
+    );
     assert.equal(metrics.body.explicitRequests, 1);
     assert.equal(metrics.body.safetyBlocks, 1);
   } finally {
@@ -100,12 +120,19 @@ test("sensor observations are visible to operators but cannot move the ramp", as
   const server = await startTestServer();
   try {
     await capability(server.baseUrl);
-    const created = await requestJson(server.baseUrl, "/api/operations/signals", {
-      method: "POST",
-      body: JSON.stringify(signal("CAMERA", "anonymous-detection")),
-    });
+    const created = await requestJson(
+      server.baseUrl,
+      "/api/operations/signals",
+      {
+        method: "POST",
+        body: JSON.stringify(signal("CAMERA", "anonymous-detection")),
+      },
+    );
     assert.equal(created.body.case.state, "NEEDS_CONFIRMATION");
-    const pending = await requestJson(server.baseUrl, "/api/operations/actuators/pending");
+    const pending = await requestJson(
+      server.baseUrl,
+      "/api/operations/actuators/pending",
+    );
     assert.equal(pending.body.count, 0);
 
     const confirmed = await requestJson(
@@ -114,7 +141,10 @@ test("sensor observations are visible to operators but cannot move the ramp", as
       { method: "POST", body: JSON.stringify({ action: "CONFIRM" }) },
     );
     assert.equal(confirmed.body.case.state, "BLOCKED");
-    assert.match(confirmed.body.case.escalationReason, /telemetry is unavailable/i);
+    assert.match(
+      confirmed.body.case.escalationReason,
+      /telemetry is unavailable/i,
+    );
   } finally {
     await server.close();
   }
@@ -134,16 +164,20 @@ test("device authentication verifies the exact JSON bytes sent by firmware", asy
       .update(`${deviceId}.${timestamp}.${body}`)
       .digest("hex");
 
-    const accepted = await requestJson(server.baseUrl, "/api/operations/signals", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-device-id": deviceId,
-        "x-timestamp": timestamp,
-        "x-signature": signature,
+    const accepted = await requestJson(
+      server.baseUrl,
+      "/api/operations/signals",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-device-id": deviceId,
+          "x-timestamp": timestamp,
+          "x-signature": signature,
+        },
+        body,
       },
-      body,
-    });
+    );
     assert.equal(accepted.status, 201);
 
     const changedBytes = JSON.stringify(JSON.parse(body));
@@ -152,16 +186,20 @@ test("device authentication verifies the exact JSON bytes sent by firmware", asy
       .createHmac("sha256", secret)
       .update(`${deviceId}.${timestamp}.${changedBytes}`)
       .digest("hex");
-    const rejected = await requestJson(server.baseUrl, "/api/operations/signals", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-device-id": deviceId,
-        "x-timestamp": timestamp,
-        "x-signature": wrongSignature,
+    const rejected = await requestJson(
+      server.baseUrl,
+      "/api/operations/signals",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-device-id": deviceId,
+          "x-timestamp": timestamp,
+          "x-signature": wrongSignature,
+        },
+        body,
       },
-      body,
-    });
+    );
     assert.equal(rejected.status, 401);
   } finally {
     await server.close();
@@ -219,10 +257,14 @@ test("operator WebSocket receives safety and case events", async () => {
       method: "POST",
       body: JSON.stringify(signal("APP", "websocket-passenger")),
     });
-    await requestJson(server.baseUrl, "/api/operations/vehicles/BUS-DEMO/telemetry", {
-      method: "POST",
-      body: JSON.stringify(telemetry("STOWED")),
-    });
+    await requestJson(
+      server.baseUrl,
+      "/api/operations/vehicles/BUS-DEMO/telemetry",
+      {
+        method: "POST",
+        body: JSON.stringify(telemetry("STOWED")),
+      },
+    );
     await new Promise((resolve) => setTimeout(resolve, 40));
     assert.ok(messages.some((item) => item.type === "CASE_STATUS"));
     assert.ok(messages.some((item) => item.type === "SAFETY_TELEMETRY"));
@@ -456,10 +498,14 @@ test("autonomous secure stop requires fresh camera and ToF docking agreement", a
         }),
       },
     );
-    await requestJson(server.baseUrl, "/api/operations/vehicles/AV-DEMO/autonomy/start", {
-      method: "POST",
-      body: "{}",
-    });
+    await requestJson(
+      server.baseUrl,
+      "/api/operations/vehicles/AV-DEMO/autonomy/start",
+      {
+        method: "POST",
+        body: "{}",
+      },
+    );
 
     const withoutSensors = await autonomousMotion(server.baseUrl, {
       distanceToTargetMeters: 2,
@@ -467,7 +513,10 @@ test("autonomous secure stop requires fresh camera and ToF docking agreement", a
       localizationAccuracyMeters: 3,
     });
     assert.equal(withoutSensors.body.state, "PRECISION_STOPPING");
-    assert.match(withoutSensors.body.blockReason, /waiting for precision docking/i);
+    assert.match(
+      withoutSensors.body.blockReason,
+      /waiting for precision docking/i,
+    );
 
     const disagreement = await precisionDocking(server.baseUrl, {
       stopCode: "18331",
@@ -589,19 +638,27 @@ test("ramp laser fusion recognizes small light debris without clearing unsafe ob
 });
 
 async function capability(baseUrl: string) {
-  return requestJson(baseUrl, "/api/operations/vehicles/BUS-DEMO/capabilities", {
-    method: "PUT",
-    body: JSON.stringify({
-      busService: "95",
-      ramp: true,
-      externalAudio: true,
-      visualDisplay: true,
-      dwellControl: true,
-      wheelchairSpaceCapacity: 1,
-      supportedTelemetry: ["vehicleStopped", "parkingBrakeActive", "doorOpen"],
-      updatedAt: new Date().toISOString(),
-    }),
-  });
+  return requestJson(
+    baseUrl,
+    "/api/operations/vehicles/BUS-DEMO/capabilities",
+    {
+      method: "PUT",
+      body: JSON.stringify({
+        busService: "95",
+        ramp: true,
+        externalAudio: true,
+        visualDisplay: true,
+        dwellControl: true,
+        wheelchairSpaceCapacity: 1,
+        supportedTelemetry: [
+          "vehicleStopped",
+          "parkingBrakeActive",
+          "doorOpen",
+        ],
+        updatedAt: new Date().toISOString(),
+      }),
+    },
+  );
 }
 
 async function autonomousCapability(baseUrl: string) {
@@ -628,7 +685,10 @@ async function autonomousCapability(baseUrl: string) {
   });
 }
 
-async function autonomousMotion(baseUrl: string, body: Record<string, unknown>) {
+async function autonomousMotion(
+  baseUrl: string,
+  body: Record<string, unknown>,
+) {
   return requestJson(
     baseUrl,
     "/api/operations/vehicles/AV-DEMO/autonomy/motion",
@@ -636,7 +696,10 @@ async function autonomousMotion(baseUrl: string, body: Record<string, unknown>) 
   );
 }
 
-async function precisionDocking(baseUrl: string, body: Record<string, unknown>) {
+async function precisionDocking(
+  baseUrl: string,
+  body: Record<string, unknown>,
+) {
   return requestJson(
     baseUrl,
     "/api/operations/vehicles/AV-DEMO/autonomy/docking",
@@ -648,7 +711,8 @@ function signal(source: "APP" | "CAMERA", anonymousToken: string) {
   return {
     signalId: `signal-${anonymousToken}`,
     source,
-    kind: source === "APP" ? "EXPLICIT_ASSISTANCE_REQUEST" : "WHEELCHAIR_DETECTED",
+    kind:
+      source === "APP" ? "EXPLICIT_ASSISTANCE_REQUEST" : "WHEELCHAIR_DETECTED",
     stopCode: "18331",
     busCandidate: "BUS-DEMO",
     busService: "95",

@@ -1,12 +1,17 @@
 import {
   BUS_MOVEMENT_STATES,
   type BusMovementState,
+  type BayStatus,
   type BusStatus,
   type OperatorStatusUpdateMessage,
 } from "@buspass/shared";
-import type { BusStatusRepository } from "./ports";
+import { applyBusReport, emptyBay, grantNext } from "./bayCoordinator";
+import type { BayRepository, BusStatusRepository } from "./ports";
 
 export class BusOperationsValidationError extends Error {}
+
+/** The request is well formed but the current state does not allow it (HTTP 409). */
+export class BusOperationsConflictError extends Error {}
 
 export interface AuditEventInput {
   eventType: string;
@@ -18,6 +23,7 @@ export interface AuditEventInput {
 
 export interface BusOperationsDeps {
   busStatus: BusStatusRepository;
+  bays: BayRepository;
   publish: (message: OperatorStatusUpdateMessage) => void;
   audit: (event: AuditEventInput) => void;
   now: () => number;
@@ -141,6 +147,7 @@ export class BusOperationsService {
       ) {
         return { outcome: "STALE", status: existing };
       }
+      await this.applyBay(existing, status);
       const changed = existing === undefined || !sameFacts(existing, status);
       await this.deps.busStatus.upsert(status);
       if (!changed) return { outcome: "HEARTBEAT", status };
@@ -166,6 +173,37 @@ export class BusOperationsService {
     });
   }
 
+  /** Current bay for a stop; a stop nobody has reported at has an empty bay. */
+  async getBay(stopCode: string): Promise<BayStatus> {
+    return (
+      (await this.deps.bays.get(stopCode)) ??
+      emptyBay(stopCode, new Date(this.deps.now()).toISOString())
+    );
+  }
+
+  /** The controller sends the first waiting bus into the free bay. */
+  grantBayEntry(stopCode: string): Promise<BayStatus> {
+    const stop = optionalCode(stopCode, "stopCode");
+    if (stop === undefined) fail("stopCode is required");
+    return this.exclusive(`stop:${stop}`, async () => {
+      const nowIso = new Date(this.deps.now()).toISOString();
+      const bay = (await this.deps.bays.get(stop)) ?? emptyBay(stop, nowIso);
+      const decision = grantNext(bay, nowIso);
+      if (!decision.granted) {
+        throw new BusOperationsConflictError(decision.reason);
+      }
+      await this.deps.bays.upsert(decision.bay);
+      this.deps.audit({
+        eventType: "BAY_ENTRY_GRANTED",
+        actor: "OPERATOR",
+        busId: decision.bay.grantedBusId ?? undefined,
+        detail: { stopCode: stop, bayId: decision.bay.bayId },
+      });
+      this.publishBay(decision.bay);
+      return decision.bay;
+    });
+  }
+
   getBusStatus(busId: string): Promise<BusStatus | undefined> {
     return this.deps.busStatus.get(busId);
   }
@@ -180,8 +218,66 @@ export class BusOperationsService {
     });
   }
 
-  clearAll(): Promise<void> {
-    return this.deps.busStatus.clear();
+  async clearAll(): Promise<void> {
+    await this.deps.busStatus.clear();
+    await this.deps.bays.clear();
+  }
+
+  /**
+   * Applies a bus's report to the bay of its stop (and removes it from the bay of the stop
+   * it left). Throws a conflict before anything about the bus is stored when the bay rules
+   * refuse the movement.
+   */
+  private async applyBay(
+    existing: BusStatus | undefined,
+    status: BusStatus,
+  ): Promise<void> {
+    const previousStop = existing?.stopCode;
+    if (previousStop && previousStop !== status.stopCode) {
+      await this.exclusive(`stop:${previousStop}`, () =>
+        this.updateBay(previousStop, {
+          ...status,
+          stopCode: previousStop,
+          movement: "TRAVELLING_TO_STOP",
+        }),
+      );
+    }
+    const stop = status.stopCode;
+    if (stop) {
+      await this.exclusive(`stop:${stop}`, () => this.updateBay(stop, status));
+    }
+  }
+
+  private async updateBay(stopCode: string, status: BusStatus): Promise<void> {
+    const nowIso = new Date(this.deps.now()).toISOString();
+    const bay =
+      (await this.deps.bays.get(stopCode)) ?? emptyBay(stopCode, nowIso);
+    const decision = applyBusReport(bay, status, nowIso);
+    if (!decision.accepted) {
+      throw new BusOperationsConflictError(decision.reason);
+    }
+    if (!decision.changed) return;
+    await this.deps.bays.upsert(decision.bay);
+    this.deps.audit({
+      eventType: "BAY_CHANGED",
+      actor: "VEHICLE",
+      busId: status.busId,
+      detail: {
+        stopCode,
+        occupantBusId: decision.bay.occupantBusId,
+        waitingBusIds: decision.bay.waitingBusIds,
+        grantedBusId: decision.bay.grantedBusId,
+      },
+    });
+    this.publishBay(decision.bay);
+  }
+
+  private publishBay(bay: BayStatus): void {
+    this.deps.publish({
+      type: "BAY_STATUS",
+      bay,
+      timestamp: new Date(this.deps.now()).toISOString(),
+    });
   }
 
   private exclusive<T>(key: string, work: () => Promise<T>): Promise<T> {

@@ -19,7 +19,9 @@ import { createStandardizedAssistanceRequest } from "../services/assistanceReque
 function baseRequest(
   requestId: string,
   busId = "SBS-191-001",
-  assistanceTypes: PassengerAssistanceRequest["assistanceTypes"] = ["BUS_AUDIO_IDENTIFICATION"]
+  assistanceTypes: PassengerAssistanceRequest["assistanceTypes"] = [
+    "BUS_AUDIO_IDENTIFICATION",
+  ],
 ): PassengerAssistanceRequest {
   return {
     requestId,
@@ -39,15 +41,24 @@ function baseRequest(
 test("all bus-facing assistance requests can be created and acknowledged", () => {
   clearAllRequests();
 
-  const wheelchair = createRequest(baseRequest("REQ-WHEEL", "SBS-191-001", ["WHEELCHAIR_RAMP"]));
-  const audio = createRequest(baseRequest("REQ-AUDIO", "SBS-191-002", ["BUS_AUDIO_IDENTIFICATION"]));
-  const dwell = createRequest(baseRequest("REQ-DWELL", "SBS-191-003", ["EXTENDED_DWELL_TIME"]));
+  const wheelchair = createRequest(
+    baseRequest("REQ-WHEEL", "SBS-191-001", ["WHEELCHAIR_RAMP"]),
+  );
+  const audio = createRequest(
+    baseRequest("REQ-AUDIO", "SBS-191-002", ["BUS_AUDIO_IDENTIFICATION"]),
+  );
+  const dwell = createRequest(
+    baseRequest("REQ-DWELL", "SBS-191-003", ["EXTENDED_DWELL_TIME"]),
+  );
 
   assert.deepEqual(wheelchair.assistanceTypes, ["WHEELCHAIR_RAMP"]);
   assert.deepEqual(audio.assistanceTypes, ["BUS_AUDIO_IDENTIFICATION"]);
   assert.deepEqual(dwell.assistanceTypes, ["EXTENDED_DWELL_TIME"]);
 
-  const result = processSimulatorCommand({ requestId: audio.requestId, command: "ACKNOWLEDGE" });
+  const result = processSimulatorCommand({
+    requestId: audio.requestId,
+    command: "ACKNOWLEDGE",
+  });
   assert.equal(result.request?.status, AssistanceRequestStatus.ACKNOWLEDGED);
 });
 
@@ -81,7 +92,7 @@ test("mobile app and physical button use the same standardized wheelchair reques
       assistanceType: "WHEELCHAIR_RAMP",
       source: "MOBILE_APP",
     },
-    { autoAcknowledge: false }
+    { autoAcknowledge: false },
   );
 
   assert.equal(mobile.request.source, "MOBILE_APP");
@@ -95,7 +106,7 @@ test("mobile app and physical button use the same standardized wheelchair reques
       assistanceType: "WHEELCHAIR_RAMP",
       source: "PHYSICAL_BUTTON",
     },
-    { autoAcknowledge: false }
+    { autoAcknowledge: false },
   );
 
   assert.equal(physical.request.requestId, mobile.request.requestId);
@@ -109,7 +120,10 @@ test("acknowledgement reaches subscribed event listener", () => {
   const unsubscribe = onAssistanceEvent((message) => messages.push(message));
 
   const request = createRequest(baseRequest("REQ-WS"));
-  processSimulatorCommand({ requestId: request.requestId, command: "ACKNOWLEDGE" });
+  processSimulatorCommand({
+    requestId: request.requestId,
+    command: "ACKNOWLEDGE",
+  });
   unsubscribe();
 
   assert.ok(
@@ -117,8 +131,8 @@ test("acknowledgement reaches subscribed event listener", () => {
       (message) =>
         message.type === "REQUEST_STATUS" &&
         message.requestId === request.requestId &&
-        message.status === AssistanceRequestStatus.ACKNOWLEDGED
-    )
+        message.status === AssistanceRequestStatus.ACKNOWLEDGED,
+    ),
   );
 });
 
@@ -129,7 +143,10 @@ test("request can be cancelled and duplicate active requests are prevented", () 
   const duplicate = createRequest(baseRequest("REQ-DUP-2"));
   assert.equal(duplicate.requestId, first.requestId);
 
-  const cancelled = processSimulatorCommand({ requestId: first.requestId, command: "CANCEL" });
+  const cancelled = processSimulatorCommand({
+    requestId: first.requestId,
+    command: "CANCEL",
+  });
   assert.equal(cancelled.request?.status, AssistanceRequestStatus.CANCELLED);
 
   const retry = createRequest(baseRequest("REQ-DUP-3"));
@@ -140,8 +157,14 @@ test("state machines remain separate", () => {
   clearAllRequests();
 
   const request = createRequest(baseRequest("REQ-STATE"));
-  processSimulatorCommand({ requestId: request.requestId, command: "ACKNOWLEDGE" });
-  processVehicleCommand({ busId: request.busId, status: VehicleStatus.APPROACHING });
+  processSimulatorCommand({
+    requestId: request.requestId,
+    command: "ACKNOWLEDGE",
+  });
+  processVehicleCommand({
+    busId: request.busId,
+    status: VehicleStatus.APPROACHING,
+  });
 
   assert.equal(request.status, AssistanceRequestStatus.ACKNOWLEDGED);
   assert.equal(VehicleStatus.APPROACHING, "APPROACHING");
@@ -192,7 +215,10 @@ test("acknowledged requests can only remain acknowledged or be cancelled", () =>
   const unsubscribe = onAssistanceEvent((message) => messages.push(message));
   const request = createRequest(baseRequest("REQ-ACK-TERMINAL"));
 
-  processSimulatorCommand({ requestId: request.requestId, command: "ACKNOWLEDGE" });
+  processSimulatorCommand({
+    requestId: request.requestId,
+    command: "ACKNOWLEDGE",
+  });
   const invalidFailure = processSimulatorCommand({
     requestId: request.requestId,
     command: "FAIL",
@@ -200,15 +226,18 @@ test("acknowledged requests can only remain acknowledged or be cancelled", () =>
   unsubscribe();
 
   assert.equal(invalidFailure.success, false);
-  assert.equal(invalidFailure.request?.status, AssistanceRequestStatus.ACKNOWLEDGED);
+  assert.equal(
+    invalidFailure.request?.status,
+    AssistanceRequestStatus.ACKNOWLEDGED,
+  );
   assert.equal(
     messages.filter(
       (message) =>
         message.type === "REQUEST_STATUS" &&
         message.requestId === request.requestId &&
-        message.status === AssistanceRequestStatus.FAILED
+        message.status === AssistanceRequestStatus.FAILED,
     ).length,
-    0
+    0,
   );
 });
 
@@ -216,27 +245,56 @@ test("audio identification triggers only for matching acknowledged active reques
   clearAllRequests();
 
   const request = createRequest(baseRequest("REQ-AUDIO-MATCH"));
-  processSimulatorCommand({ requestId: request.requestId, command: "ACKNOWLEDGE" });
-  processVehicleCommand({ busId: request.busId, status: VehicleStatus.APPROACHING });
+  processSimulatorCommand({
+    requestId: request.requestId,
+    command: "ACKNOWLEDGE",
+  });
+  processVehicleCommand({
+    busId: request.busId,
+    status: VehicleStatus.APPROACHING,
+  });
   assert.equal(getAnnouncementEvents().length, 1);
 
   clearAllRequests();
   const cancelled = createRequest(baseRequest("REQ-AUDIO-CANCELLED"));
-  processSimulatorCommand({ requestId: cancelled.requestId, command: "ACKNOWLEDGE" });
-  processSimulatorCommand({ requestId: cancelled.requestId, command: "CANCEL" });
-  processVehicleCommand({ busId: cancelled.busId, status: VehicleStatus.APPROACHING });
+  processSimulatorCommand({
+    requestId: cancelled.requestId,
+    command: "ACKNOWLEDGE",
+  });
+  processSimulatorCommand({
+    requestId: cancelled.requestId,
+    command: "CANCEL",
+  });
+  processVehicleCommand({
+    busId: cancelled.busId,
+    status: VehicleStatus.APPROACHING,
+  });
   assert.equal(getAnnouncementEvents().length, 0);
 
   clearAllRequests();
-  const wheelchair = createRequest(baseRequest("REQ-WHEEL-ONLY", "SBS-191-001", ["WHEELCHAIR_RAMP"]));
-  processSimulatorCommand({ requestId: wheelchair.requestId, command: "ACKNOWLEDGE" });
-  processVehicleCommand({ busId: wheelchair.busId, status: VehicleStatus.APPROACHING });
+  const wheelchair = createRequest(
+    baseRequest("REQ-WHEEL-ONLY", "SBS-191-001", ["WHEELCHAIR_RAMP"]),
+  );
+  processSimulatorCommand({
+    requestId: wheelchair.requestId,
+    command: "ACKNOWLEDGE",
+  });
+  processVehicleCommand({
+    busId: wheelchair.busId,
+    status: VehicleStatus.APPROACHING,
+  });
   assert.equal(getAnnouncementEvents().length, 0);
 
   clearAllRequests();
   const otherBus = createRequest(baseRequest("REQ-OTHER-BUS", "SBS-191-002"));
-  processSimulatorCommand({ requestId: otherBus.requestId, command: "ACKNOWLEDGE" });
-  processVehicleCommand({ busId: "SBS-191-001", status: VehicleStatus.APPROACHING });
+  processSimulatorCommand({
+    requestId: otherBus.requestId,
+    command: "ACKNOWLEDGE",
+  });
+  processVehicleCommand({
+    busId: "SBS-191-001",
+    status: VehicleStatus.APPROACHING,
+  });
   assert.equal(getAnnouncementEvents().length, 0);
 });
 
@@ -254,7 +312,9 @@ test("failed request can be retried after failure", () => {
 test("boarding and alighting requests are not collapsed as duplicates", () => {
   clearAllRequests();
 
-  const boarding = createRequest(baseRequest("REQ-BOARDING", "SBS-191-001", ["WHEELCHAIR_RAMP"]));
+  const boarding = createRequest(
+    baseRequest("REQ-BOARDING", "SBS-191-001", ["WHEELCHAIR_RAMP"]),
+  );
   const alighting = createRequest({
     ...baseRequest("REQ-ALIGHTING", "SBS-191-001", ["WHEELCHAIR_RAMP"]),
     boardingOrAlighting: "ALIGHTING",

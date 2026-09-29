@@ -38,7 +38,11 @@ test("critical zones, weak classifications, and stale laser data remain blocked"
   };
   assert.equal(
     fuseRampObstacleAssessment(
-      ranging({ objectDetected: true, occupiedZoneCount: 1, criticalZoneOccupied: true }),
+      ranging({
+        objectDetected: true,
+        occupiedZoneCount: 1,
+        criticalZoneOccupied: true,
+      }),
       classification,
       now,
     ).blocksDeployment,

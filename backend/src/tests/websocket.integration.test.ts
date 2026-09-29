@@ -20,22 +20,29 @@ const audioPayload = {
 test("WebSocket subscription replays the current request status", async () => {
   const server = await startTestServer();
   try {
-    const created = await requestJson(server.baseUrl, "/api/assistance/request", {
-      method: "POST",
-      body: JSON.stringify(audioPayload),
-    });
+    const created = await requestJson(
+      server.baseUrl,
+      "/api/assistance/request",
+      {
+        method: "POST",
+        body: JSON.stringify(audioPayload),
+      },
+    );
 
-    const subscription = subscribeAndCollect(server.wsUrl, created.body.requestId, [
-      "REQUEST_STATUS:SENDING",
-    ]);
+    const subscription = subscribeAndCollect(
+      server.wsUrl,
+      created.body.requestId,
+      ["REQUEST_STATUS:SENDING"],
+    );
     const seen = await subscription.done;
     subscription.socket.close();
 
     assert.ok(seen.some((message) => message.type === "SUBSCRIBED"));
     assert.ok(
       seen.some(
-        (message) => message.type === "REQUEST_STATUS" && message.status === "SENDING"
-      )
+        (message) =>
+          message.type === "REQUEST_STATUS" && message.status === "SENDING",
+      ),
     );
   } finally {
     await server.close();
@@ -45,25 +52,39 @@ test("WebSocket subscription replays the current request status", async () => {
 test("WebSocket subscriber receives acknowledgement, approach, arrival, and announcement", async () => {
   const server = await startTestServer();
   try {
-    const created = await requestJson(server.baseUrl, "/api/assistance/request", {
-      method: "POST",
-      body: JSON.stringify(audioPayload),
-    });
+    const created = await requestJson(
+      server.baseUrl,
+      "/api/assistance/request",
+      {
+        method: "POST",
+        body: JSON.stringify(audioPayload),
+      },
+    );
 
-    const subscription = subscribeAndCollect(server.wsUrl, created.body.requestId, [
-      "REQUEST_STATUS:ACKNOWLEDGED",
-      "VEHICLE_STATUS:APPROACHING",
-      "EXTERNAL_ANNOUNCEMENT:Bus 191",
-      "VEHICLE_STATUS:ARRIVED",
-    ]);
+    const subscription = subscribeAndCollect(
+      server.wsUrl,
+      created.body.requestId,
+      [
+        "REQUEST_STATUS:ACKNOWLEDGED",
+        "VEHICLE_STATUS:APPROACHING",
+        "EXTERNAL_ANNOUNCEMENT:Bus 191",
+        "VEHICLE_STATUS:ARRIVED",
+      ],
+    );
 
     await requestJson(server.baseUrl, "/api/assistance/simulator/command", {
       method: "POST",
-      body: JSON.stringify({ requestId: created.body.requestId, command: "ACKNOWLEDGE" }),
+      body: JSON.stringify({
+        requestId: created.body.requestId,
+        command: "ACKNOWLEDGE",
+      }),
     });
     await requestJson(server.baseUrl, "/api/assistance/simulator/vehicle", {
       method: "POST",
-      body: JSON.stringify({ busId: audioPayload.busId, status: "APPROACHING" }),
+      body: JSON.stringify({
+        busId: audioPayload.busId,
+        status: "APPROACHING",
+      }),
     });
     await requestJson(server.baseUrl, "/api/assistance/simulator/vehicle", {
       method: "POST",
@@ -84,17 +105,27 @@ test("WebSocket subscriber receives acknowledgement, approach, arrival, and anno
 test("WebSocket subscriber receives cancellation updates", async () => {
   const server = await startTestServer();
   try {
-    const created = await requestJson(server.baseUrl, "/api/assistance/request", {
-      method: "POST",
-      body: JSON.stringify(audioPayload),
-    });
+    const created = await requestJson(
+      server.baseUrl,
+      "/api/assistance/request",
+      {
+        method: "POST",
+        body: JSON.stringify(audioPayload),
+      },
+    );
 
-    const subscription = subscribeAndCollect(server.wsUrl, created.body.requestId, [
-      "REQUEST_STATUS:CANCELLED",
-    ]);
-    await requestJson(server.baseUrl, `/api/assistance/${created.body.requestId}/cancel`, {
-      method: "POST",
-    });
+    const subscription = subscribeAndCollect(
+      server.wsUrl,
+      created.body.requestId,
+      ["REQUEST_STATUS:CANCELLED"],
+    );
+    await requestJson(
+      server.baseUrl,
+      `/api/assistance/${created.body.requestId}/cancel`,
+      {
+        method: "POST",
+      },
+    );
 
     const seen = await subscription.done;
     subscription.socket.close();
@@ -107,10 +138,14 @@ test("WebSocket subscriber receives cancellation updates", async () => {
 test("WebSocket vehicle events are isolated to the subscribed passenger bus", async () => {
   const server = await startTestServer();
   try {
-    const bus191 = await requestJson(server.baseUrl, "/api/assistance/request", {
-      method: "POST",
-      body: JSON.stringify(audioPayload),
-    });
+    const bus191 = await requestJson(
+      server.baseUrl,
+      "/api/assistance/request",
+      {
+        method: "POST",
+        body: JSON.stringify(audioPayload),
+      },
+    );
     const bus95 = await requestJson(server.baseUrl, "/api/assistance/request", {
       method: "POST",
       body: JSON.stringify({
@@ -123,12 +158,17 @@ test("WebSocket vehicle events are isolated to the subscribed passenger bus", as
       }),
     });
 
-    const passenger191 = subscribeAndCollect(server.wsUrl, bus191.body.requestId, [
-      "VEHICLE_STATUS:APPROACHING",
-    ], 300);
-    const passenger95 = subscribeAndCollect(server.wsUrl, bus95.body.requestId, [
-      "VEHICLE_STATUS:APPROACHING",
-    ]);
+    const passenger191 = subscribeAndCollect(
+      server.wsUrl,
+      bus191.body.requestId,
+      ["VEHICLE_STATUS:APPROACHING"],
+      300,
+    );
+    const passenger95 = subscribeAndCollect(
+      server.wsUrl,
+      bus95.body.requestId,
+      ["VEHICLE_STATUS:APPROACHING"],
+    );
 
     await Promise.all([
       passenger191.waitForLabels(["SUBSCRIBED:undefined"]),
@@ -137,7 +177,10 @@ test("WebSocket vehicle events are isolated to the subscribed passenger bus", as
 
     await requestJson(server.baseUrl, "/api/assistance/simulator/command", {
       method: "POST",
-      body: JSON.stringify({ requestId: bus95.body.requestId, command: "ACKNOWLEDGE" }),
+      body: JSON.stringify({
+        requestId: bus95.body.requestId,
+        command: "ACKNOWLEDGE",
+      }),
     });
     await requestJson(server.baseUrl, "/api/assistance/simulator/vehicle", {
       method: "POST",

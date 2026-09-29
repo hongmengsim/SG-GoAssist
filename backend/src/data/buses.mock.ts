@@ -1,6 +1,6 @@
 /**
  * Mock Bus Data
- * 
+ *
  * Simulates buses available in the system.
  * Later: Replace with real database/GTFS integration
  */

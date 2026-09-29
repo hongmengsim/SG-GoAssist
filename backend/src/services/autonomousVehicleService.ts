@@ -28,7 +28,9 @@ export function assignAutonomousRoute(
   busId: string,
   assignment: AutonomousRouteAssignment,
 ): AutonomousVehicleState {
-  const capability = listVehicleCapabilities().find((item) => item.busId === busId);
+  const capability = listVehicleCapabilities().find(
+    (item) => item.busId === busId,
+  );
   if (!capability?.autonomous) {
     throw new OperationsValidationError(
       "Vehicle must advertise autonomous mock-route capability",
@@ -52,7 +54,9 @@ export function assignAutonomousRoute(
     busId,
     busService: assignment.busService.trim(),
     routeId: assignment.routeId.trim(),
-    routeStopCodes: assignment.routeStopCodes.map((stopCode) => stopCode.trim()),
+    routeStopCodes: assignment.routeStopCodes.map((stopCode) =>
+      stopCode.trim(),
+    ),
     targetStopIndex: 0,
     targetStopCode: assignment.routeStopCodes[0].trim(),
     mode: "AUTONOMOUS",
@@ -66,11 +70,14 @@ export function assignAutonomousRoute(
   });
 }
 
-export function getAutonomousVehicleState(busId: string): AutonomousVehicleState {
+export function getAutonomousVehicleState(
+  busId: string,
+): AutonomousVehicleState {
   const state = getOperationsStore()
     .snapshot()
     .autonomousVehicles.find((item) => item.busId === busId);
-  if (!state) throw new OperationsNotFoundError("Autonomous vehicle state not found");
+  if (!state)
+    throw new OperationsNotFoundError("Autonomous vehicle state not found");
   return state;
 }
 
@@ -81,7 +88,9 @@ export function listAutonomousVehicles(): AutonomousVehicleState[] {
 export function startAutonomousRoute(busId: string): AutonomousVehicleState {
   const state = getAutonomousVehicleState(busId);
   if (state.state !== "ROUTE_ASSIGNED") {
-    throw new OperationsValidationError("Only an assigned route can be started");
+    throw new OperationsValidationError(
+      "Only an assigned route can be started",
+    );
   }
   return saveAndPublish({
     ...state,
@@ -114,7 +123,11 @@ export function updateAutonomousMotion(
   };
 
   if (updated.obstacleDetected) {
-    return enterSafeStop(updated, "EMERGENCY_STOP", "Obstacle detected in travel path");
+    return enterSafeStop(
+      updated,
+      "EMERGENCY_STOP",
+      "Obstacle detected in travel path",
+    );
   }
   if (updated.localizationAccuracyMeters > MAX_LOCALIZATION_ERROR_METERS) {
     return enterSafeStop(
@@ -135,7 +148,7 @@ export function updateAutonomousMotion(
       updated.blockReason =
         docking && docking.stopCode !== updated.targetStopCode
           ? "Docking marker belongs to a different stop"
-          : docking?.reason ?? "Waiting for precision docking sensors";
+          : (docking?.reason ?? "Waiting for precision docking sensors");
       return saveAndPublish(updated);
     }
     updated.state = "STOPPED_SECURE";
@@ -198,7 +211,12 @@ export function openAutonomousDoors(busId: string): AutonomousVehicleState {
     );
   }
   publishSafety(state, { doorOpen: true });
-  return saveAndPublish({ ...state, state: "DOORS_OPEN", speedKph: 0, docking });
+  return saveAndPublish({
+    ...state,
+    state: "DOORS_OPEN",
+    speedKph: 0,
+    docking,
+  });
 }
 
 export function departAutonomousStop(
@@ -225,8 +243,13 @@ export function departAutonomousStop(
 
   const nextIndex = state.targetStopIndex + 1;
   const routeComplete = nextIndex >= state.routeStopCodes.length;
-  if (!routeComplete && (!Number.isFinite(nextStopDistanceMeters) || nextStopDistanceMeters! <= 0)) {
-    throw new OperationsValidationError("Distance to the next stop is required");
+  if (
+    !routeComplete &&
+    (!Number.isFinite(nextStopDistanceMeters) || nextStopDistanceMeters! <= 0)
+  ) {
+    throw new OperationsValidationError(
+      "Distance to the next stop is required",
+    );
   }
   publishSafety(state, {
     vehicleStopped: false,
@@ -281,14 +304,17 @@ export function applyAutonomyOverride(
     });
   }
 
-  if (!['MANUAL_OVERRIDE', 'EMERGENCY_STOP', 'BLOCKED'].includes(state.state)) {
-    throw new OperationsValidationError("Vehicle is not waiting for an override reset");
+  if (!["MANUAL_OVERRIDE", "EMERGENCY_STOP", "BLOCKED"].includes(state.state)) {
+    throw new OperationsValidationError(
+      "Vehicle is not waiting for an override reset",
+    );
   }
   const localizationAccuracyMeters =
     clearance?.localizationAccuracyMeters ?? state.localizationAccuracyMeters;
   const safety = getLatestSafetyTelemetry(busId);
   const obstacleDetected = state.obstacleDetected
-    ? clearance?.obstacleCleared !== true || safety?.deploymentPathClear !== true
+    ? clearance?.obstacleCleared !== true ||
+      safety?.deploymentPathClear !== true
     : false;
   if (
     obstacleDetected ||
@@ -301,7 +327,9 @@ export function applyAutonomyOverride(
     localizationAccuracyMeters < 0 ||
     localizationAccuracyMeters > MAX_LOCALIZATION_ERROR_METERS
   ) {
-    throw new OperationsValidationError("Unsafe condition must clear before autonomous resume");
+    throw new OperationsValidationError(
+      "Unsafe condition must clear before autonomous resume",
+    );
   }
   publishSafety(state, {
     vehicleStopped: false,

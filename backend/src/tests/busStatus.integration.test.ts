@@ -211,7 +211,11 @@ test("a scoped operator sees a change live; a heartbeat and other buses are not 
     );
     await operator.waitFor((m) => m.type === "SUBSCRIBED_OPERATIONS");
 
-    await post(server.baseUrl, "AV-095-02", body());
+    await post(
+      server.baseUrl,
+      "AV-095-02",
+      body({ movement: "TRAVELLING_TO_STOP" }),
+    );
     await post(
       server.baseUrl,
       "AV-095-01",

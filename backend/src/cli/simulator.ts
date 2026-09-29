@@ -41,37 +41,58 @@ async function listRequests() {
       assistance: request.assistanceTypes.join(", "),
       source: request.source,
       status: request.status,
-    }))
+    })),
   );
 }
 
-async function sendRequestCommand(requestId: string, command: SimulatorCommand["command"]) {
-  const response = await fetch(`${API_BASE_URL}/api/assistance/simulator/command`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ requestId, command }),
-  });
+async function sendRequestCommand(
+  requestId: string,
+  command: SimulatorCommand["command"],
+) {
+  const response = await fetch(
+    `${API_BASE_URL}/api/assistance/simulator/command`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ requestId, command }),
+    },
+  );
   const body = (await response.json()) as { message: string };
   console.log(body.message);
 }
 
 async function sendVehicleCommand(busId: string, status: VehicleStatus) {
-  const response = await fetch(`${API_BASE_URL}/api/assistance/simulator/vehicle`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ busId, status }),
-  });
-  const body = (await response.json()) as { message: string; announcement?: { announcement: string } };
+  const response = await fetch(
+    `${API_BASE_URL}/api/assistance/simulator/vehicle`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ busId, status }),
+    },
+  );
+  const body = (await response.json()) as {
+    message: string;
+    announcement?: { announcement: string };
+  };
   console.log(body.message);
   if (body.announcement) {
-    console.log(`External announcement triggered: ${body.announcement.announcement}`);
+    console.log(
+      `External announcement triggered: ${body.announcement.announcement}`,
+    );
   }
 }
 
 async function listAnnouncements() {
-  const response = await fetch(`${API_BASE_URL}/api/assistance/simulator/announcements`);
+  const response = await fetch(
+    `${API_BASE_URL}/api/assistance/simulator/announcements`,
+  );
   const body = (await response.json()) as {
-    announcements: Array<{ busService: string; busId: string; requestId: string; announcement: string }>;
+    announcements: Array<{
+      busService: string;
+      busId: string;
+      requestId: string;
+      announcement: string;
+    }>;
   };
   console.table(body.announcements);
 }

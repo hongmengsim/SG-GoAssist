@@ -21,7 +21,9 @@ import { getOperationsStore } from "../services/operationsStore";
 let dataDirectory = "";
 
 beforeEach(() => {
-  dataDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "goassist-operations-"));
+  dataDirectory = fs.mkdtempSync(
+    path.join(os.tmpdir(), "goassist-operations-"),
+  );
   configureOperationsStore(dataDirectory);
   registerVehicleCapability({
     busId: "BUS-95-01",
@@ -52,7 +54,9 @@ test("confirmed ramp intent cannot actuate until every safety interlock is clear
   assert.match(item.escalationReason ?? "", /telemetry is unavailable/i);
   assert.equal(listPendingActuatorCommands("BUS-95-01").length, 0);
 
-  const blocked = ingestSafetyTelemetry(telemetry({ deploymentPathClear: false }));
+  const blocked = ingestSafetyTelemetry(
+    telemetry({ deploymentPathClear: false }),
+  );
   assert.equal(blocked.deploymentPathClear, false);
   assert.equal(getCase(item.caseId)?.state, "BLOCKED");
   assert.match(getCase(item.caseId)?.escalationReason ?? "", /obstructed/i);
@@ -60,7 +64,10 @@ test("confirmed ramp intent cannot actuate until every safety interlock is clear
 
   ingestSafetyTelemetry(telemetry());
   assert.equal(getCase(item.caseId)?.state, "ACTUATING");
-  assert.equal(listPendingActuatorCommands("BUS-95-01")[0].command, "DEPLOY_RAMP");
+  assert.equal(
+    listPendingActuatorCommands("BUS-95-01")[0].command,
+    "DEPLOY_RAMP",
+  );
 });
 
 test("expired actuator commands are failed and can never be polled for execution", () => {
@@ -78,7 +85,9 @@ test("expired actuator commands are failed and can never be polled for execution
   assert.equal(listPendingActuatorCommands("BUS-95-01").length, 0);
   const status = getOperationsStore()
     .snapshot()
-    .actuatorStatuses.find((candidate) => candidate.commandId === command.commandId);
+    .actuatorStatuses.find(
+      (candidate) => candidate.commandId === command.commandId,
+    );
   assert.equal(status?.state, "FAILED");
   assert.match(status?.detail ?? "", /expired/i);
   assert.equal(getCase(item.caseId)?.state, "FAILED");
@@ -145,7 +154,9 @@ test("multiple passengers share one actuator action without losing individual in
 
   ingestSafetyTelemetry(telemetry());
   assert.equal(
-    listPendingActuatorCommands().filter((item) => item.command === "DEPLOY_RAMP").length,
+    listPendingActuatorCommands().filter(
+      (item) => item.command === "DEPLOY_RAMP",
+    ).length,
     1,
   );
 });
@@ -204,13 +215,14 @@ test("boarding completion retracts and verifies the ramp before closing the case
   assert.equal(completed.state, "COMPLETED");
   assert.ok(completed.outcome.completionTimeMs !== undefined);
   assert.equal(
-    synchronizeLegacyCaseStatus(
-      item.caseId,
-      AssistanceRequestStatus.CANCELLED,
-    ).state,
+    synchronizeLegacyCaseStatus(item.caseId, AssistanceRequestStatus.CANCELLED)
+      .state,
     "COMPLETED",
   );
-  assert.equal(recordPassengerFeedback(item.caseId, 5).outcome.passengerFeedbackScore, 5);
+  assert.equal(
+    recordPassengerFeedback(item.caseId, 5).outcome.passengerFeedbackScore,
+    5,
+  );
 });
 
 test("cancellation retracts a deployed ramp before becoming terminal", () => {

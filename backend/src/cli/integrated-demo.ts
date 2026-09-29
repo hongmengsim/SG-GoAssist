@@ -37,7 +37,9 @@ async function main() {
 
   await sendTelemetry("STOWED");
   const pending = await get(`/api/operations/actuators/pending?busId=${busId}`);
-  console.log(`Commands issued: ${pending.commands.map((item: any) => item.command).join(", ")}`);
+  console.log(
+    `Commands issued: ${pending.commands.map((item: any) => item.command).join(", ")}`,
+  );
 
   for (const command of pending.commands) {
     await post(`/api/operations/actuators/${command.commandId}/status`, {
@@ -61,7 +63,9 @@ async function main() {
     action: "COMPLETE",
   });
   console.log(`Completion detected: ${closing.case.state}`);
-  const closingCommands = await get(`/api/operations/actuators/pending?busId=${busId}`);
+  const closingCommands = await get(
+    `/api/operations/actuators/pending?busId=${busId}`,
+  );
   const retract = closingCommands.commands.find(
     (item: any) => item.command === "RETRACT_RAMP",
   );
@@ -87,7 +91,9 @@ async function main() {
   console.log("Metrics:", await get(`/api/operations/metrics`));
 }
 
-async function sendTelemetry(rampPosition: "STOWED" | "DEPLOYED" | "RETRACTING") {
+async function sendTelemetry(
+  rampPosition: "STOWED" | "DEPLOYED" | "RETRACTING",
+) {
   return post(`/api/operations/vehicles/${busId}/telemetry`, {
     stopCode,
     vehicleStopped: true,
@@ -103,7 +109,8 @@ async function sendTelemetry(rampPosition: "STOWED" | "DEPLOYED" | "RETRACTING")
 
 async function get(path: string): Promise<any> {
   const response = await fetch(`${baseUrl}${path}`);
-  if (!response.ok) throw new Error(`${response.status} ${await response.text()}`);
+  if (!response.ok)
+    throw new Error(`${response.status} ${await response.text()}`);
   return response.json();
 }
 
@@ -115,13 +122,18 @@ async function put(path: string, body: unknown) {
   return request(path, "PUT", body);
 }
 
-async function request(path: string, method: string, body: unknown): Promise<any> {
+async function request(
+  path: string,
+  method: string,
+  body: unknown,
+): Promise<any> {
   const response = await fetch(`${baseUrl}${path}`, {
     method,
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  if (!response.ok) throw new Error(`${response.status} ${await response.text()}`);
+  if (!response.ok)
+    throw new Error(`${response.status} ${await response.text()}`);
   return response.json();
 }
 

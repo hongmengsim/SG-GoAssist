@@ -108,7 +108,9 @@ export class OperationsStore {
   reset(removePersistentFiles = false): void {
     this.state = emptyState();
     if (this.database) {
-      this.database.exec("DELETE FROM operations_state; DELETE FROM audit_events;");
+      this.database.exec(
+        "DELETE FROM operations_state; DELETE FROM audit_events;",
+      );
       this.persist();
     }
     if (removePersistentFiles) {
@@ -129,7 +131,10 @@ export class OperationsStore {
         .get() as { state_json?: string } | undefined;
       if (!row?.state_json) return emptyState();
       try {
-        return { ...emptyState(), ...JSON.parse(row.state_json) } as OperationsState;
+        return {
+          ...emptyState(),
+          ...JSON.parse(row.state_json),
+        } as OperationsState;
       } catch (error) {
         logger.error("Unable to read SQLite operations state", undefined, {
           databasePath: this.databasePath,
@@ -173,7 +178,11 @@ export class OperationsStore {
       return;
     }
     const temporaryPath = `${this.statePath}.${process.pid}.${crypto.randomUUID()}.tmp`;
-    fs.writeFileSync(temporaryPath, JSON.stringify(this.state, null, 2), "utf8");
+    fs.writeFileSync(
+      temporaryPath,
+      JSON.stringify(this.state, null, 2),
+      "utf8",
+    );
     if (fs.existsSync(this.statePath)) {
       fs.copyFileSync(this.statePath, this.backupPath);
     }
@@ -192,7 +201,9 @@ export class OperationsStore {
       // Dynamic loading keeps Node 20-compatible deployments on the JSON fallback.
       // eslint-disable-next-line @typescript-eslint/no-var-requires
       const { DatabaseSync } = require("node:sqlite") as {
-        DatabaseSync: new (filename: string) => NonNullable<OperationsStore["database"]>;
+        DatabaseSync: new (
+          filename: string,
+        ) => NonNullable<OperationsStore["database"]>;
       };
       const database = new DatabaseSync(this.databasePath);
       database.exec(`
@@ -216,9 +227,13 @@ export class OperationsStore {
       `);
       return database;
     } catch (error) {
-      logger.warn("SQLite unavailable; using durable JSON operations store", undefined, {
-        error: String(error),
-      });
+      logger.warn(
+        "SQLite unavailable; using durable JSON operations store",
+        undefined,
+        {
+          error: String(error),
+        },
+      );
       return undefined;
     }
   }
@@ -240,7 +255,9 @@ export function getOperationsStore(): OperationsStore {
 }
 
 /** Used by isolated tests and demo resets. */
-export function configureOperationsStore(dataDirectory: string): OperationsStore {
+export function configureOperationsStore(
+  dataDirectory: string,
+): OperationsStore {
   store = new OperationsStore(dataDirectory);
   return store;
 }

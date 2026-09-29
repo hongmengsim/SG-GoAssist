@@ -1,6 +1,6 @@
 /**
  * Logger Service
- * 
+ *
  * Provides structured logging with timestamps for:
  * - Request lifecycle events
  * - System performance metrics
@@ -18,7 +18,12 @@ interface LogEntry {
 class Logger {
   private logs: LogEntry[] = [];
 
-  log(level: "INFO" | "WARN" | "ERROR" | "DEBUG", message: string, requestId?: string, data?: Record<string, any>) {
+  log(
+    level: "INFO" | "WARN" | "ERROR" | "DEBUG",
+    message: string,
+    requestId?: string,
+    data?: Record<string, any>,
+  ) {
     const entry: LogEntry = {
       timestamp: new Date().toISOString(),
       level,
@@ -28,7 +33,10 @@ class Logger {
     };
 
     this.logs.push(entry);
-    console.log(`[${entry.timestamp}] [${level}] ${requestId ? `[${requestId}] ` : ""}${message}`, data || "");
+    console.log(
+      `[${entry.timestamp}] [${level}] ${requestId ? `[${requestId}] ` : ""}${message}`,
+      data || "",
+    );
   }
 
   info(message: string, requestId?: string, data?: Record<string, any>) {

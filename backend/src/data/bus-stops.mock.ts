@@ -1,4 +1,9 @@
-import { ArrivalBus, BusArrivalService, BusStop, NearbyBusStop } from "@buspass/shared";
+import {
+  ArrivalBus,
+  BusArrivalService,
+  BusStop,
+  NearbyBusStop,
+} from "@buspass/shared";
 
 const legacyMockBusStops: Array<Omit<BusStop, "services">> = [
   {
@@ -180,11 +185,22 @@ const mockArrivalsByStop: Record<string, BusArrivalService[]> = {
   "18301": [
     {
       serviceNo: "95",
-      buses: [arrival("AV-095-01", "95", "NEXT_BUS", 120, true, "Kent Ridge Terminal")],
+      buses: [
+        arrival(
+          "AV-095-01",
+          "95",
+          "NEXT_BUS",
+          120,
+          true,
+          "Kent Ridge Terminal",
+        ),
+      ],
     },
     {
       serviceNo: "151",
-      buses: [arrival("AV-151-01", "151", "NEXT_BUS", 300, true, "Hougang Central")],
+      buses: [
+        arrival("AV-151-01", "151", "NEXT_BUS", 300, true, "Hougang Central"),
+      ],
     },
   ],
   "18309": [
@@ -196,11 +212,29 @@ const mockArrivalsByStop: Record<string, BusArrivalService[]> = {
   "18321": [
     {
       serviceNo: "95",
-      buses: [arrival("AV-095-01", "95", "NEXT_BUS", 360, true, "Kent Ridge Terminal")],
+      buses: [
+        arrival(
+          "AV-095-01",
+          "95",
+          "NEXT_BUS",
+          360,
+          true,
+          "Kent Ridge Terminal",
+        ),
+      ],
     },
     {
       serviceNo: "151",
-      buses: [arrival("AV-151-01", "151", "NEXT_BUS", 540, true, "Kent Ridge Terminal")],
+      buses: [
+        arrival(
+          "AV-151-01",
+          "151",
+          "NEXT_BUS",
+          540,
+          true,
+          "Kent Ridge Terminal",
+        ),
+      ],
     },
   ],
   "18341": [
@@ -213,7 +247,16 @@ const mockArrivalsByStop: Record<string, BusArrivalService[]> = {
     {
       serviceNo: "95",
       destination: "Kent Ridge Terminal",
-      buses: [arrival("AV-095-01", "95", "NEXT_BUS", 300, true, "Kent Ridge Terminal")],
+      buses: [
+        arrival(
+          "AV-095-01",
+          "95",
+          "NEXT_BUS",
+          300,
+          true,
+          "Kent Ridge Terminal",
+        ),
+      ],
     },
   ],
   "18139": [
@@ -240,8 +283,22 @@ const mockArrivalsByStop: Record<string, BusArrivalService[]> = {
     {
       serviceNo: "191",
       buses: [
-        arrival("AV-191-03", "191", "NEXT_BUS", 125, true, "Kent Ridge Terminal"),
-        arrival("AV-191-04", "191", "NEXT_BUS_2", 520, true, "Kent Ridge Terminal"),
+        arrival(
+          "AV-191-03",
+          "191",
+          "NEXT_BUS",
+          125,
+          true,
+          "Kent Ridge Terminal",
+        ),
+        arrival(
+          "AV-191-04",
+          "191",
+          "NEXT_BUS_2",
+          520,
+          true,
+          "Kent Ridge Terminal",
+        ),
       ],
     },
     {
@@ -252,25 +309,47 @@ const mockArrivalsByStop: Record<string, BusArrivalService[]> = {
   "19019": [
     {
       serviceNo: "191",
-      buses: [arrival("AV-191-05", "191", "NEXT_BUS", 210, true, "Buona Vista")],
+      buses: [
+        arrival("AV-191-05", "191", "NEXT_BUS", 210, true, "Buona Vista"),
+      ],
     },
   ],
   "95029": [
     {
       serviceNo: "191",
-      buses: [arrival("SBS-191-001", "191", "NEXT_BUS", 120, true, "Changi Airport Terminal 2")],
+      buses: [
+        arrival(
+          "SBS-191-001",
+          "191",
+          "NEXT_BUS",
+          120,
+          true,
+          "Changi Airport Terminal 2",
+        ),
+      ],
     },
   ],
   "95019": [
     {
       serviceNo: "191",
-      buses: [arrival("SBS-191-001", "191", "NEXT_BUS", 240, true, "Changi Airport Terminal 1")],
+      buses: [
+        arrival(
+          "SBS-191-001",
+          "191",
+          "NEXT_BUS",
+          240,
+          true,
+          "Changi Airport Terminal 1",
+        ),
+      ],
     },
   ],
   "01012": [
     {
       serviceNo: "191",
-      buses: [arrival("AV-191-03", "191", "NEXT_BUS", 125, true, "Buona Vista")],
+      buses: [
+        arrival("AV-191-03", "191", "NEXT_BUS", 125, true, "Buona Vista"),
+      ],
     },
     {
       serviceNo: "7",
@@ -289,7 +368,7 @@ function arrival(
   arrivalSlot: ArrivalBus["arrivalSlot"],
   etaSeconds: number,
   wheelchairAccessible: boolean,
-  destination: string
+  destination: string,
 ): ArrivalBus {
   return {
     busId,
@@ -314,19 +393,26 @@ export function findNearestBusStops(
   latitude: number,
   longitude: number,
   limit = 3,
-  maxDistanceMeters = 150
+  maxDistanceMeters = 150,
 ): NearbyBusStop[] {
   return mockBusStops
     .map((stop) => ({
       ...stop,
-      distanceMeters: Math.round(distanceMeters(latitude, longitude, stop.latitude, stop.longitude)),
+      distanceMeters: Math.round(
+        distanceMeters(latitude, longitude, stop.latitude, stop.longitude),
+      ),
     }))
     .filter((stop) => stop.distanceMeters <= maxDistanceMeters)
     .sort((a, b) => a.distanceMeters - b.distanceMeters)
     .slice(0, limit);
 }
 
-function distanceMeters(lat1: number, lon1: number, lat2: number, lon2: number) {
+function distanceMeters(
+  lat1: number,
+  lon1: number,
+  lat2: number,
+  lon2: number,
+) {
   const earthRadiusMeters = 6371000;
   const dLat = toRadians(lat2 - lat1);
   const dLon = toRadians(lon2 - lon1);

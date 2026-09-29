@@ -5,7 +5,10 @@ import {
   Response,
   Router,
 } from "express";
-import { BusOperationsValidationError } from "../busOperations/busOperationsService";
+import {
+  BusOperationsConflictError,
+  BusOperationsValidationError,
+} from "../busOperations/busOperationsService";
 import { getBusOperations } from "../busOperations/composition";
 import { getRequest, processSimulatorCommand } from "../services/aviator";
 import { requireOperator, verifyDeviceRequest } from "./auth";
@@ -23,6 +26,10 @@ function handle(
     work(req, res).catch((error: unknown) => {
       if (error instanceof BusOperationsValidationError) {
         res.status(400).json({ error: error.message });
+        return;
+      }
+      if (error instanceof BusOperationsConflictError) {
+        res.status(409).json({ error: error.message });
         return;
       }
       next(error);
@@ -99,5 +106,21 @@ router.get(
       limit: requested,
     });
     res.json({ count: statuses.length, statuses });
+  }),
+);
+
+router.get(
+  "/bays/:stopCode",
+  requireOperator,
+  handle(async (req, res) => {
+    res.json(await getBusOperations().getBay(req.params.stopCode));
+  }),
+);
+
+router.post(
+  "/bays/:stopCode/proceed",
+  requireOperator,
+  handle(async (req, res) => {
+    res.json(await getBusOperations().grantBayEntry(req.params.stopCode));
   }),
 );

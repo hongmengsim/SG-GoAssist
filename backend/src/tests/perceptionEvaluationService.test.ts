@@ -13,7 +13,9 @@ import { configureOperationsStore } from "../services/operationsStore";
 let dataDirectory = "";
 
 beforeEach(() => {
-  dataDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "goassist-perception-"));
+  dataDirectory = fs.mkdtempSync(
+    path.join(os.tmpdir(), "goassist-perception-"),
+  );
   configureOperationsStore(dataDirectory);
 });
 
