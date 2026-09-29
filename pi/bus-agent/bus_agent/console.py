@@ -15,7 +15,7 @@ if TYPE_CHECKING:  # pragma: no cover
 
 HELP = (
     "commands: arrive <stop> | depart | travel [stop] | place <class> [confidence] | clear | "
-    "cover on|off | block on|off | dropout on|off | frames on|off | halt on|off | status"
+    "cover on|off | block on|off | dropout on|off | frames on|off | halt on|off | calibrate | status"
 )
 
 
@@ -42,6 +42,14 @@ def apply_command(rig: "SimulatedRig", line: str) -> str:
     if name == "travel" and len(args) <= 1:
         agent.start_travel(args[0] if args else None)
         return f"{agent.movement}"
+    if name == "calibrate" and not args:
+        try:
+            return f"beam reference taken at {rig.beam.calibrate()} mm (path must be empty)"
+        except ValueError as error:
+            return str(error)
+    scene = {"place", "clear", "cover", "frames", "block", "dropout"}
+    if name in scene and getattr(rig, "beam_source", None) is None:
+        return "scene controls are not available with real sensors"
     if name == "place" and 1 <= len(args) <= 2:
         try:
             confidence = float(args[1]) if len(args) == 2 else 0.9
@@ -55,13 +63,16 @@ def apply_command(rig: "SimulatedRig", line: str) -> str:
     if name == "status" and not args:
         return _status(rig)
 
-    switches = {
-        "cover": rig.camera.cover_lens,
-        "frames": lambda on: rig.camera.stop_frames(not on),
-        "block": rig.beam_source.set_blocked,
-        "dropout": rig.beam_source.set_dropout,
-        "halt": agent.set_operator_halt,
-    }
+    switches = {"halt": agent.set_operator_halt}
+    if getattr(rig, "beam_source", None) is not None:
+        switches.update(
+            {
+                "cover": rig.camera.cover_lens,
+                "frames": lambda on: rig.camera.stop_frames(not on),
+                "block": rig.beam_source.set_blocked,
+                "dropout": rig.beam_source.set_dropout,
+            }
+        )
     if name in switches and len(args) == 1:
         state = _switch(args[0].lower())
         if state is None:
@@ -77,6 +88,6 @@ def _status(rig: "SimulatedRig") -> str:
     permission = decision.permission if decision else "none yet"
     reasons = ", ".join(decision.reasons) if decision and decision.reasons else "none"
     return (
-        f"{agent.bus_id} (simulated): movement {agent.movement}, ramp {agent.ramp.state} "
+        f"{agent.bus_id}{' (simulated)' if agent._simulated else ''}: movement {agent.movement}, ramp {agent.ramp.state} "
         f"({agent.ramp.progress:.0%}), gate {permission}, reasons: {reasons}"
     )

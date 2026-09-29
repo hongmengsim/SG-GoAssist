@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import queue
+from pathlib import Path
 import threading
 import time
 from dataclasses import dataclass
@@ -11,10 +12,16 @@ from datetime import datetime, timezone
 from typing import Callable, Optional
 
 from beam_reading import BeamReader, SimulatedBeamSource
+from safety_gate import GateConfig
 
 from .agent import BusAgent
 from .backend import Backend, BackendError
+from .config import AgentSettings
 from .console import apply_command
+from .perception_worker import PerceptionWorker
+from .recording import RecordingLineSource, RecordingPerception, ReplayLineSource, ReplayPerception
+from .real_mode import RealSensors
+from .sensors_real import ModelDetector, RealCamera
 from .status_page import StatusBoard, snapshot
 from .sim_sensors import SimulatedCamera
 
@@ -77,6 +84,82 @@ def build_simulated_rig(
     return SimulatedRig(agent, camera, beam_source, beam)
 
 
+@dataclass
+class RealRig:
+    """One bus on real sensors. There is no scene to change, and the beam is never calibrated
+    automatically: an operator confirms the path is empty and runs ``calibrate``."""
+
+    agent: BusAgent
+    beam: BeamReader
+    worker: PerceptionWorker
+    camera: RealCamera
+    recorders: tuple = ()
+
+
+def build_real_rig(
+    settings: AgentSettings,
+    sensors: RealSensors,
+    backend: Backend,
+    clock: Callable[[], float] = time.monotonic,
+    start_worker: bool = True,
+    record_dir: Optional[Path] = None,
+) -> RealRig:
+    from .agent import AgentConfig  # noqa: PLC0415 - avoids a cycle at import time
+
+    camera = RealCamera(sensors.grabber, clock)
+    detector = ModelDetector(sensors.runner, settings.min_detection_confidence)
+    worker = PerceptionWorker(camera, detector, settings.ramp_polygon, clock=clock)
+    beam_source, perception, recorders = sensors.beam_source, worker, ()
+    if record_dir is not None:
+        # What is recorded: the ESP32's lines and the perception results. Never frames.
+        beam_source = RecordingLineSource(beam_source, Path(record_dir) / "beam.jsonl", clock)
+        perception = RecordingPerception(worker, Path(record_dir) / "perception.jsonl", clock)
+        recorders = (beam_source, perception)
+    beam = BeamReader(beam_source, clock=clock, simulated=False)
+    agent = BusAgent(
+        bus_id=settings.bus_id,
+        bus_service=settings.bus_service,
+        backend=backend,
+        camera=perception,
+        detector=detector,
+        beam_reader=beam,
+        clock=clock,
+        config=AgentConfig(
+            heartbeat_seconds=settings.heartbeat_seconds,
+            deploy_seconds=settings.deploy_seconds,
+            ramp_polygon=settings.ramp_polygon,
+        ),
+        gate_config=GateConfig(max_camera_age_seconds=settings.max_camera_age_seconds),
+    )
+    if start_worker:
+        worker.start()
+    return RealRig(agent, beam, worker, camera, recorders)
+
+
+@dataclass
+class ReplayRig:
+    """One bus fed from a recording. Everything it reports says it is not live."""
+
+    agent: BusAgent
+    beam: BeamReader
+
+
+def build_replay_rig(
+    bus_id: str,
+    bus_service: str,
+    backend: Backend,
+    directory: Path,
+    clock: Callable[[], float] = time.monotonic,
+) -> ReplayRig:
+    beam = BeamReader(ReplayLineSource(Path(directory) / "beam.jsonl", clock), clock=clock, simulated=True)
+    perception = ReplayPerception(Path(directory) / "perception.jsonl", clock)
+    agent = BusAgent(
+        bus_id=bus_id, bus_service=bus_service, backend=backend, camera=perception, detector=None,
+        beam_reader=beam, clock=clock,
+    )
+    return ReplayRig(agent, beam)
+
+
 class Runner:
     def __init__(
         self,
@@ -86,7 +169,9 @@ class Runner:
         clock: Callable[[], float] = time.monotonic,
         board: Optional[StatusBoard] = None,
         controls: bool = True,
+        auto_calibrate: bool = True,
     ) -> None:
+        self._auto_calibrate = auto_calibrate
         self._board = board
         self._controls = controls
         self._rig = rig
@@ -123,6 +208,9 @@ class Runner:
         for _ in range(WARM_UP_TICKS):
             self.step()
             time.sleep(TICK_SECONDS)
+        if not self._auto_calibrate:
+            log.info("The beam is NOT calibrated: run the calibrate command with the path empty")
+            return
         try:
             reference = self._rig.beam.calibrate()
             log.info("Simulated beam calibrated at %s mm", reference)

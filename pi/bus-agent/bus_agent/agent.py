@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from typing import Callable, Optional
 
 from beam_reading import BeamReader
-from perception import DEFAULT_POLICY, Policy, analyse
+from perception import DEFAULT_POLICY, PerceptionResult, Policy, analyse
 from safety_gate import BusContext, Decision, GateConfig, decide
 
 from . import ramp as ramp_sim
@@ -173,15 +173,26 @@ class BusAgent:
     def _decide(self, now: float) -> Decision:
         reading = self._beam.poll()
         self.last_beam = reading
-        capture = self._camera.capture()
-        result = analyse(
-            capture.frame,
-            self._detector,
-            self._config.ramp_polygon,
-            self._policy,
-            clock=self._iso,
-        )
-        camera = camera_input(result, max(0.0, now - capture.captured_at), self._simulated)
+        latest = getattr(self._camera, "latest_perception", None)
+        if latest is not None:
+            # A worker thread runs the camera and detector; read its newest result and its age.
+            newest = latest()
+            if newest is None:
+                result, age = PerceptionResult(None, False, "no_frame", self._iso()), float("inf")
+            else:
+                result, captured_at = newest
+                age = max(0.0, now - captured_at)
+        else:
+            capture = self._camera.capture()
+            result = analyse(
+                capture.frame,
+                self._detector,
+                self._config.ramp_polygon,
+                self._policy,
+                clock=self._iso,
+            )
+            age = max(0.0, now - capture.captured_at)
+        camera = camera_input(result, age, self._simulated)
         context = BusContext(
             movement=self.movement,
             has_accepted_request=bool(self._accepted),

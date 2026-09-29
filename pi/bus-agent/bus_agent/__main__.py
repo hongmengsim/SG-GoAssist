@@ -17,10 +17,15 @@ import sys
 import threading
 
 from .async_backend import AsyncBackend
+from pathlib import Path
+
+from .config import ConfigError, load_config
 from .console import HELP
 from .event_listener import EventListener
 from .http_backend import HttpBackend
-from .runner import Runner, build_simulated_rig
+from .recording import ReplayError
+from .real_mode import PreflightFailed, build_real_sensors, default_factories
+from .runner import Runner, build_real_rig, build_replay_rig, build_simulated_rig
 from .status_page import StatusBoard, StatusServer
 
 log = logging.getLogger("bus_agent")
@@ -38,9 +43,13 @@ def _read_commands(commands: "queue.Queue[str]", stop: threading.Event) -> None:
 
 
 def main(argv: "list[str] | None" = None) -> int:
-    parser = argparse.ArgumentParser(description="Bus agent (simulated sensors only for now)")
+    parser = argparse.ArgumentParser(description="Bus agent: simulated sensors, or real sensors from a config file")
     parser.add_argument("--simulate", action="store_true", help="use simulated camera and ToF")
-    parser.add_argument("--bus-id", required=True)
+    parser.add_argument("--real", action="store_true", help="use the real ToF, camera and model named in --config")
+    parser.add_argument("--config", help="agent configuration file (required with --real)")
+    parser.add_argument("--record", help="with --real: write the ESP32 lines and perception results to this directory (never frames)")
+    parser.add_argument("--replay", help="feed the agent from a recording directory instead of live sensors (reports say not live)")
+    parser.add_argument("--bus-id")
     parser.add_argument("--bus-service", default="95")
     parser.add_argument("--backend", default="http://localhost:3000")
     parser.add_argument("--no-events", action="store_true", help="poll only; no WebSocket push")
@@ -49,22 +58,54 @@ def main(argv: "list[str] | None" = None) -> int:
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
-    if not args.simulate:
-        parser.error("real sensors are not wired in yet; run with --simulate")
+    if sum(bool(mode) for mode in (args.simulate, args.real, args.replay)) != 1:
+        parser.error("choose exactly one of --simulate, --real or --replay DIR")
+    if args.record and not args.real:
+        parser.error("--record is only for --real")
+    settings = None
+    sensors = None
+    if args.real:
+        if not args.config:
+            parser.error("--real needs --config")
+        try:
+            settings = load_config(Path(args.config))
+            sensors = build_real_sensors(settings, default_factories())
+        except ConfigError as error:
+            print(f"Configuration error: {error}", file=sys.stderr)
+            return 2
+        except PreflightFailed as failure:
+            # Fail-safe: a bus with a missing sensor must not start half real.
+            print("Refusing to start with real sensors:", file=sys.stderr)
+            for problem in failure.problems:
+                print(f"  - {problem}", file=sys.stderr)
+            return 2
+        args.bus_id, args.bus_service, args.backend = settings.bus_id, settings.bus_service, settings.backend_url
+    elif not args.bus_id:
+        parser.error("--simulate and --replay need --bus-id")
 
     secret = os.environ.get("DEVICE_SHARED_SECRET") or None
     token = os.environ.get("OPERATOR_API_TOKEN") or None
     # Every network call runs on a worker thread so a stuck connection cannot delay the safety loop.
     backend = AsyncBackend(HttpBackend(args.backend, args.bus_id, secret=secret))
-    rig = build_simulated_rig(args.bus_id, args.bus_service, backend)
+    try:
+        if args.real:
+            rig = build_real_rig(settings, sensors, backend, record_dir=args.record)
+        elif args.replay:
+            rig = build_replay_rig(args.bus_id, args.bus_service, backend, Path(args.replay))
+        else:
+            rig = build_simulated_rig(args.bus_id, args.bus_service, backend)
+    except ReplayError as error:
+        print(f"Recording error: {error}", file=sys.stderr)
+        backend.stop()
+        return 2
     events: "queue.Queue[dict]" = queue.Queue()
     commands: "queue.Queue[str]" = queue.Queue()
     board = StatusBoard()
-    runner = Runner(rig, events, commands, board=board, controls=True)
+    runner = Runner(rig, events, commands, board=board, controls=args.simulate, auto_calibrate=not args.real)
     status_server = None
     if args.status_port:
         code = secrets.token_hex(16)
-        status_server = StatusServer(board, commands, code, args.status_listen, args.status_port, controls=True)
+        status_server = StatusServer(board, commands, code, args.status_listen, args.status_port, controls=args.simulate)
         status_server.start()
         # The code is printed once and never logged elsewhere; keep the #code in the link.
         print(f"Status page: http://localhost:{status_server.port}/#{code}", flush=True)
@@ -77,7 +118,7 @@ def main(argv: "list[str] | None" = None) -> int:
 
     stop = threading.Event()
     threading.Thread(target=_read_commands, args=(commands, stop), daemon=True).start()
-    log.info("%s running with SIMULATED sensors. %s", args.bus_id, HELP)
+    log.info("%s running with %s sensors. %s", args.bus_id, "REAL" if args.real else "REPLAYED" if args.replay else "SIMULATED", HELP)
     try:
         runner.start_up(backend)
         runner.run(stop)
@@ -89,6 +130,10 @@ def main(argv: "list[str] | None" = None) -> int:
             listener.stop()
         if status_server is not None:
             status_server.stop()
+        if args.real:
+            rig.worker.stop()
+            for recorder in rig.recorders:
+                recorder.close()
         backend.stop()
     return 0
 
