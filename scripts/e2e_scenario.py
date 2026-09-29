@@ -12,7 +12,8 @@ and walks the agreed sequence, asserting each step through the backend's own end
   3. An unsafe object in the ramp zone keeps Bus 1's ramp stowed; once removed the bus, not
      the backend, acknowledges and the ramp deploys.
   4. An unsafe object appearing mid-deployment halts the ramp; removing it lets it finish.
-  5. A ToF sensor dropout halts; recovery clears it.
+  5. A ToF sensor dropout halts; recovery clears it. An operator halt pushed to the bus halts its
+     gate, and releasing it lets the gate continue.
   6. Completing the case while a person is on the ramp is refused; after they leave the ramp
      retracts and the case completes.
   7. Bus 1 departs. Bus 2, waiting, did not deploy. The controller grants the bay; only then
@@ -343,6 +344,26 @@ class Scenario:
         wait_until(lambda: (self.decision(BUS_1) or {}).get("zoneState") == "CLEAR", 15, "the sensor to recover")
         passed("the sensor recovers and the zone reads clear again")
 
+    def step_5b_operator_halt(self) -> None:
+        status, _ = self.api.call(
+            "POST", f"/api/operations/vehicles/{BUS_1}/operator-halt", {"halted": True, "reason": "e2e halt"}
+        )
+        assert status == 200, f"operator halt returned {status}"
+        wait_until(
+            lambda: "OPERATOR_HALT" in ((self.decision(BUS_1) or {}).get("reasons") or []),
+            15,
+            "Bus 1's gate to halt on the operator's request (pushed to the bus)",
+        )
+        assert self.decision(BUS_1)["permission"] == "HALT"
+        passed("an operator halt reaches the bus and its gate halts (OPERATOR_HALT)")
+        self.api.call("POST", f"/api/operations/vehicles/{BUS_1}/operator-halt", {"halted": False})
+        wait_until(
+            lambda: (self.decision(BUS_1) or {}).get("permission") == "CONTINUE",
+            15,
+            "the gate to continue once the halt is released",
+        )
+        passed("releasing the halt lets the gate continue")
+
     def step_6_retract_only_when_the_ramp_is_clear(self, request_id: str) -> None:
         case = self.case_of(request_id)
         self.bus1.do("place person 0.95")
@@ -428,6 +449,7 @@ def main() -> int:
         request_id = scenario.step_3_unsafe_object_blocks_then_bus_acknowledges()
         scenario.step_4_deploy_with_a_mid_deployment_halt()
         scenario.step_5_sensor_dropout()
+        scenario.step_5b_operator_halt()
         scenario.step_6_retract_only_when_the_ramp_is_clear(request_id)
         scenario.step_7_bay_release_and_grant()
         scenario.step_8_audit()

@@ -76,6 +76,12 @@ class HttpBackend:
         result = self._call("GET", f"/api/operations/actuators/pending?{query}")
         return self._list(result, "commands")
 
+    def pending_operator_halt(self) -> Optional[dict]:
+        result = self._call("GET", self._vehicle_path("operator-halt"))
+        if not isinstance(result, dict) or not isinstance(result.get("halted"), bool):
+            raise BackendError("unexpected response: no halted flag")
+        return result
+
     def report_actuator(self, command_id: str, body: dict) -> None:
         self._call("POST", f"/api/operations/actuators/{quote(command_id, safe='')}/status", body)
 

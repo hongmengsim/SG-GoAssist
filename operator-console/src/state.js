@@ -89,6 +89,13 @@ export function reduce(state, message) {
         return state;
       return withBus(state, help.busId, { help });
     }
+    case "OPERATOR_HALT": {
+      const halt = message.halt;
+      if (!isRecord(halt) || !isId(halt.busId)) return state;
+      if (!newer(state.buses[halt.busId]?.operatorHalt, halt, "setAt"))
+        return state;
+      return withBus(state, halt.busId, { operatorHalt: halt });
+    }
     case "BAY_STATUS": {
       const bay = message.bay;
       if (!isRecord(bay) || !isId(bay.stopCode)) return state;

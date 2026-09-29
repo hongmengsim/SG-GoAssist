@@ -16,6 +16,7 @@ import {
   flushBusOperationsAudit,
   getBusOperations,
   getBusReports,
+  getOperatorHalts,
 } from "../busOperations/composition";
 import {
   getAllRequests,
@@ -237,3 +238,35 @@ for (const { kind, one, many } of REPORT_ROUTES) {
     }),
   );
 }
+
+/**
+ * Operator halt on one bus. An operator sets or releases it; the bus reads it (signed) after a
+ * reconnect and is also pushed changes. Operators can list which buses are halted.
+ */
+router.post(
+  "/vehicles/:busId/operator-halt",
+  requireOperator,
+  handle(async (req, res) => {
+    res.json(await getOperatorHalts().set(req.body, req.params.busId));
+  }),
+);
+
+router.get(
+  "/vehicles/:busId/operator-halt",
+  verifyDeviceRequest,
+  handle(async (req, res) => {
+    res.json(await getOperatorHalts().get(req.params.busId));
+  }),
+);
+
+router.get(
+  "/operator-halts",
+  requireOperator,
+  handle(async (req, res) => {
+    const requested = Number(queryText(req.query.limit));
+    const records = await getOperatorHalts().list(
+      Number.isFinite(requested) ? requested : undefined,
+    );
+    res.json({ count: records.length, records });
+  }),
+);

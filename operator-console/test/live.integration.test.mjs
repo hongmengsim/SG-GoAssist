@@ -222,7 +222,7 @@ test(
           "cancel to become available",
         );
         assert.equal(source.actionsFor(B1, STOP).deploy.enabled, false);
-        assert.equal(source.actionsFor(B1, STOP).halt.enabled, false);
+        assert.equal(source.actionsFor(B1, STOP).halt.enabled, true);
 
         const result = await source.perform("cancel", { busId: B1 });
         assert.equal(result.ok, true, result.message);

@@ -23,7 +23,7 @@ from websockets.sync.client import connect
 
 log = logging.getLogger(__name__)
 
-FORWARDED_TYPES = frozenset({"ASSIST_REQUESTED", "BAY_STATUS"})
+FORWARDED_TYPES = frozenset({"ASSIST_REQUESTED", "BAY_STATUS", "OPERATOR_HALT"})
 
 
 class EventListener:

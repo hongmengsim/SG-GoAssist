@@ -349,6 +349,57 @@ class PostingTests(unittest.TestCase):
         self.assertIn("POSITIONED_AT_STOP", moves)
 
 
+class OperatorHaltTests(unittest.TestCase):
+    def halt_event(self, bus=BUS, halted=True):
+        return {
+            "type": "OPERATOR_HALT",
+            "halt": {"busId": bus, "halted": halted, "setAt": "2026-09-30T00:00:00.000Z"},
+            "timestamp": "2026-09-30T00:00:00.000Z",
+        }
+
+    def test_a_pushed_halt_stops_the_ramp_and_release_lets_it_continue(self) -> None:
+        world = World()
+        world.positioned_with_request()
+        world.deploy(4)
+        world.agent.handle_event(self.halt_event())
+        world.tick(2)
+        self.assertEqual("HALTED", world.agent.ramp.state)
+        self.assertIn("OPERATOR_HALT", world.agent.last_decision.reasons)
+        world.agent.handle_event(self.halt_event(halted=False))
+        world.tick(40)
+        self.assertEqual("DEPLOYED", world.agent.ramp.state)
+
+    def test_a_halt_for_another_bus_is_ignored(self) -> None:
+        world = World()
+        world.positioned_with_request()
+        world.agent.handle_event(self.halt_event(bus="AV-095-02"))
+        world.tick()
+        self.assertNotIn("OPERATOR_HALT", world.agent.last_decision.reasons)
+
+    def test_a_halt_set_while_the_bus_was_offline_is_found_by_the_poll(self) -> None:
+        world = World()
+        world.positioned_with_request()
+        world.backend.operator_halt = {"halted": True}
+        world.tick(40)  # longer than the request poll interval
+        self.assertIn("OPERATOR_HALT", world.agent.last_decision.reasons)
+
+    def test_a_failed_poll_never_releases_a_halt(self) -> None:
+        world = World()
+        world.positioned_with_request()
+        world.agent.handle_event(self.halt_event())
+        world.backend.fail_all = True
+        world.tick(40)
+        self.assertIn("OPERATOR_HALT", world.agent.last_decision.reasons)
+
+    def test_the_poll_can_release_a_halt_the_backend_no_longer_holds(self) -> None:
+        world = World()
+        world.positioned_with_request()
+        world.agent.handle_event(self.halt_event())
+        world.backend.operator_halt = {"halted": False}
+        world.tick(40)
+        self.assertNotIn("OPERATOR_HALT", world.agent.last_decision.reasons)
+
+
 class LoopTimingTests(unittest.TestCase):
     def test_a_long_gap_between_ticks_cannot_make_the_ramp_jump(self) -> None:
         world = World()

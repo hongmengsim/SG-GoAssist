@@ -2,6 +2,9 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "anyOf": [
     {
+      "$ref": "#/definitions/OperatorHaltMessage"
+    },
+    {
       "$ref": "#/definitions/AssistRequestedMessage"
     },
     {
@@ -21,6 +24,52 @@
     }
   ],
   "definitions": {
+    "OperatorHaltMessage": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "OPERATOR_HALT"
+        },
+        "halt": {
+          "$ref": "#/definitions/OperatorHalt"
+        },
+        "timestamp": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "halt",
+        "timestamp"
+      ],
+      "additionalProperties": false,
+      "description": "Pushed to the halted bus (its own subscription) and to operators."
+    },
+    "OperatorHalt": {
+      "type": "object",
+      "properties": {
+        "busId": {
+          "type": "string"
+        },
+        "halted": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "setAt": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "busId",
+        "halted",
+        "setAt"
+      ],
+      "additionalProperties": false,
+      "description": "An operator halt on one bus. While on, the bus gate halts with OPERATOR_HALT and the simulated ramp will not move. It can only ever add a halt, never remove a safety reason."
+    },
     "AssistRequestedMessage": {
       "type": "object",
       "properties": {

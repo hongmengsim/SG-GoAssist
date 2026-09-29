@@ -129,6 +129,18 @@ class AsyncBackendTests(unittest.TestCase):
         self.assertTrue(wait_for(lambda: backend.pending_requests() == [{"requestId": "R1"}]))
         self.assertTrue(wait_for(lambda: backend.pending_actuator_commands() == [{"commandId": "C1"}]))
 
+    def test_the_operator_halt_is_cached_and_refreshed_in_the_background(self) -> None:
+        inner = FakeBackend()
+        inner.operator_halt = {"halted": True}
+        backend = self.make(inner)
+        self.assertIsNone(backend.pending_operator_halt())
+        self.assertTrue(wait_for(lambda: backend.pending_operator_halt() == {"halted": True}))
+        inner.fail_all = True
+        inner.operator_halt = {"halted": False}
+        backend.pending_operator_halt()
+        time.sleep(0.2)
+        self.assertEqual({"halted": True}, backend.pending_operator_halt(), "a failed poll keeps what was known")
+
     def test_a_failed_poll_keeps_the_previous_answer(self) -> None:
         inner = FakeBackend()
         inner.commands = [{"commandId": "C1"}]

@@ -174,6 +174,10 @@ It does not change the app, `RampPosition`, request statuses, the autonomy/docki
 
 Timeout value for `DEPLOYMENT_TIMEOUT`; service-to-bus assignment (today the app picks a bus id); whether the backend also keeps its `LIGHT_DEBRIS` thresholds as an extra check; staleness limit for Pi decisions (the backend already treats telemetry older than `GOASSIST_TELEMETRY_FRESHNESS_MS`, default 5 s, as stale).
 
+## Operator halt
+
+`POST /api/operations/vehicles/:busId/operator-halt` `{ halted, reason? }` (operator token) sets or releases a halt on one bus; `GET` on the same path (device-signed) returns `{ busId, halted, reason?, setAt }` (not halted if never set); `GET /api/operations/operator-halts` (operator) lists them. A change is stored one row per bus, audited as `OPERATOR_HALT_SET` (actor `OPERATOR`) and pushed as `OPERATOR_HALT` to that bus and to scoped operators, never to passengers. The bus adds `OPERATOR_HALT` to its gate reasons; it never removes a safety reason, and a failed read never releases a halt.
+
 ## Bus subscription
 
 A bus subscribes to its own events with `SUBSCRIBE_DEVICE` `{ busId, deviceId, timestamp, signature }`, where `deviceId` equals `busId` and `signature` is the device HMAC (the same rule as signed requests, 60-second window) over the fixed body `SUBSCRIBE_DEVICE`. It is answered with `SUBSCRIBED_DEVICE`, or `AUTH_REQUIRED` for a bad signature, stale time or mismatched id. It receives only its own bus's `ASSIST_REQUESTED` and `BAY_STATUS`, and needs no operator token. With no `DEVICE_SHARED_SECRET` set (development) the signature is not required.

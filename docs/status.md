@@ -57,6 +57,10 @@ Legend: `[x]` built and verified by a test or a run (evidence given), `[ ]` not 
 - [x] `Cache-Control` and ETag on bus-stop reference data (304 on repeat); `/ready` (store checks) and `/admin/metrics` (counts, latency percentiles, in-flight, subscribers); bounded in-memory log.
 - [x] Load-test harness (`npm run load:test`, `load:overload`) with measured results in the scalability document, and a measured fix: batched audit writes (cold start p95 1.6 s to 7.6 ms; sustained rate about 1,000 to about 2,000 per second on this laptop).
 
+### Operator halt
+
+- [x] An operator halts or releases one bus (`POST /api/operations/vehicles/:busId/operator-halt`, operator token; the bus reads it signed at `GET` and is pushed `OPERATOR_HALT`); the bus gate adds `OPERATOR_HALT` to its reasons, so it can only make the bus safer; changes are audited and pushed once; the console's Halt bus / Release halt works in live mode; the end-to-end scenario checks it. Deploy stays a backend action.
+
 ### App check (R2)
 
 - [x] R2 The passenger app's full journey passes with the backend's acknowledgement timer off and a bus-only responder acknowledging (`npm run test:e2e:journey-bus-ack`; both requests were acknowledged by the responder, two cases completed).
@@ -76,7 +80,6 @@ Legend: `[x]` built and verified by a test or a run (evidence given), `[ ]` not 
 - [~] **R4 Documentation:** runbook, endpoint reference and module READMEs done. Still to write: a hardware bring-up runbook, and an update to `CLAUDE.md`-style project notes.
 - [ ] **R5 CI:** per-module jobs; needs a push to try.
 - [ ] **R6 Safe-object policy constants agreed with the team** (0.92 is in code; the size limit is open; the agent and backend must mirror the final values).
-- [ ] **Operator halt channel** to the bus (the console's Halt is shown disabled in live mode); deploy is issued by the backend, not the operator.
 - [~] **Scale items:** done: SC2 role mounting (`passenger`, `operations`), SC4 rate limiting with priority and load shedding, SC5 cache headers on bus-stop data, SC7 `/admin/metrics` and `/ready`, SC8 load-test harness, bounded in-memory log and batched audit writes (part of SC6). Not done: retention of completed cases (rest of SC6), SC9 cursor-based command polling and store-and-forward, SC10 move existing cases and telemetry off the whole-state document (touches the teammate's backend), splitting the fleet role from the operator role, and the 3,000 messages per second target (measured about 2,000 per second on one process).
 - [ ] **Update the teammate:** contract additions, `packages/*` rename, lockfile churn (about 150 lines), the audit-index addition to their store, the `/operator` removal, and how to refresh their checkout (decision 0003).
 - [ ] Update the local `CLAUDE.md` to the current state.

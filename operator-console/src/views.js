@@ -240,7 +240,7 @@ function action(actions, id, label, cls, extra = "") {
     !state.enabled && state.reason
       ? `<span class="why">${esc(state.reason)}</span>`
       : "";
-  return `<button class="${cls}" data-act="${id}" ${extra} ${state.enabled ? "" : "disabled"}>${esc(label)}</button>${reason}`;
+  return `<button class="${cls}" data-act="${id}" ${extra} ${state.enabled ? "" : "disabled"}>${esc(state.label ?? label)}</button>${reason}`;
 }
 
 export function stopPage(state, stopCode, ui, actions) {
@@ -331,9 +331,14 @@ function zonePanel(state, busId) {
 export function busPage(state, busId, ui, actions) {
   const bus = state.buses[busId] ?? {};
   const alert = helpAlerts(state).find((item) => item.busId === busId);
-  const banner = alert
-    ? `<div class="banner" role="alert"><span>HELP REQUIRED · ${esc(alert.text)}. Inspect the bus; halt or cancel if needed.</span></div>`
+  const halted = bus.operatorHalt?.halted
+    ? `<div class="banner" role="alert"><span>Operator halt is on${bus.operatorHalt.reason ? `: ${esc(bus.operatorHalt.reason)}` : ""}. The bus will not move its ramp until it is released.</span></div>`
     : "";
+  const banner =
+    halted +
+    (alert
+      ? `<div class="banner" role="alert"><span>HELP REQUIRED · ${esc(alert.text)}. Inspect the bus; halt or cancel if needed.</span></div>`
+      : "");
   const location = stopStatus(state, busId);
   const [request] = requestsForBus(state, busId);
   const flag = bus.status?.simulated

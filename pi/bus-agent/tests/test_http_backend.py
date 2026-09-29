@@ -133,6 +133,13 @@ class OtherCallsTests(unittest.TestCase):
         self.assertEqual(f"{BASE}/api/operations/actuators/CMD-1/status", call["url"])
         self.assertEqual({"state": "ACCEPTED"}, json.loads(call["body"]))
 
+    def test_the_operator_halt_is_read_from_the_bus_endpoint(self) -> None:
+        transport = FakeTransport(200, {"busId": BUS, "halted": True, "setAt": "t"})
+        self.assertEqual(True, backend(transport).pending_operator_halt()["halted"])
+        self.assertEqual(f"{BASE}/api/operations/vehicles/{BUS}/operator-halt", transport.calls[0]["url"])
+        with self.assertRaises(BackendError):
+            backend(FakeTransport(200, ["nope"])).pending_operator_halt()
+
     def test_ids_are_url_encoded(self) -> None:
         transport = FakeTransport(202, {"case": {}})
         backend(transport).report_actuator("CMD/../1", {"state": "ACCEPTED"})

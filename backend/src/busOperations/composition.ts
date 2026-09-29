@@ -3,6 +3,7 @@ import fs from "fs";
 import path from "path";
 import { publishEvent } from "../events/eventHub";
 import { logger } from "../services/logger";
+import { OperatorHaltService, type StoredHalt } from "./operatorHalt";
 import { AuditBatcher } from "./auditBatcher";
 import {
   getOperationsStore,
@@ -53,6 +54,7 @@ export interface BusOperationsOptions {
 export interface BusOperations {
   service: BusOperationsService;
   reports: BusReportsService;
+  halts: OperatorHaltService;
   driver: StorageDriver;
   close: () => void;
   /** Writes any audit events still waiting to be batched. */
@@ -140,9 +142,18 @@ export function createBusOperations(
     audit,
     now: options.now ?? Date.now,
   });
+  const halts = new OperatorHaltService({
+    repository: (database
+      ? new SqliteBusRecordRepository<StoredHalt>(database, "operator_halt")
+      : new MemoryBusRecordRepository<StoredHalt>()) as BusRecordRepository<StoredHalt>,
+    publish,
+    audit,
+    now: options.now ?? Date.now,
+  });
   return {
     service,
     reports,
+    halts,
     driver,
     flushAudit: () => batcher.flush(),
     close: () => {
@@ -176,6 +187,11 @@ export function getBusReports(): BusReportsService {
   return current.reports;
 }
 
+export function getOperatorHalts(): OperatorHaltService {
+  current ??= createBusOperations(defaultOptions());
+  return current.halts;
+}
+
 export function getBusOperations(): BusOperationsService {
   current ??= createBusOperations(defaultOptions());
   return current.service;
@@ -196,4 +212,5 @@ export function resetBusOperations(): void {
 export async function clearBusOperationsData(): Promise<void> {
   await getBusOperations().clearAll();
   await getBusReports().clearAll();
+  await getOperatorHalts().clearAll();
 }

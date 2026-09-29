@@ -393,7 +393,7 @@ test("a backend that is down is reported, not thrown", async () => {
   assert.match(source.connection.detail, /fetch failed/);
 });
 
-test("actions: proceed needs someone waiting and a free bay; cancel needs a request with a case; deploy and halt are unavailable with reasons", async () => {
+test("actions: proceed needs someone waiting and a free bay; cancel needs a request with a case; deploy is unavailable with a reason and halt is offered", async () => {
   const t = make();
   t.source.start();
   await t.settle();
@@ -411,8 +411,8 @@ test("actions: proceed needs someone waiting and a free bay; cancel needs a requ
   const { deploy, halt } = t.source.actionsFor(B1, STOP);
   assert.equal(deploy.enabled, false);
   assert.match(deploy.reason, /automatic|no operator deploy/i);
-  assert.equal(halt.enabled, false);
-  assert.match(halt.reason, /no operator halt/i);
+  assert.equal(halt.enabled, true);
+  assert.match(halt.label, /Halt bus/);
   t.socket().open();
   t.socket().push({
     type: "BAY_STATUS",
@@ -477,8 +477,8 @@ test("a refused action returns the backend's reason instead of throwing", async 
   const result = await t.source.perform("proceed", { stopCode: STOP });
   assert.equal(result.ok, false);
   assert.match(result.message, /occupied/);
-  const unavailable = await t.source.perform("halt", { busId: B1 });
-  assert.equal(unavailable.ok, false);
+  const noBus = await t.source.perform("halt", {});
+  assert.equal(noBus.ok, false, "halting needs a bus");
 });
 
 test("stop closes the socket and cancels timers", async () => {

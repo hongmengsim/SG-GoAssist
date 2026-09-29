@@ -28,7 +28,7 @@ const AUTONOMY_ACTIONS = new Set(["STOP", "MANUAL", "RESUME"]);
 
 const DEPLOY_UNAVAILABLE =
   "The backend issues the deploy command itself once the case is cleared; there is no operator deploy.";
-const HALT_UNAVAILABLE = "There is no operator halt channel to the bus yet.";
+const HALT_REASON = "Halted by operator from the console";
 
 const defaultSchedule = (fn, ms) => {
   const id = setTimeout(fn, ms);
@@ -184,6 +184,7 @@ export function createLiveSource({
     ];
     const vehicle = (id, suffix) =>
       optional(`/api/operations/vehicles/${encodeURIComponent(id)}/${suffix}`);
+    const halts = await optional("/api/operations/operator-halts?limit=500");
     const [telemetry, autonomy, metrics, devices, perception] =
       await Promise.all([
         Promise.all(busIdsWithCases.map((id) => vehicle(id, "telemetry"))),
@@ -193,6 +194,7 @@ export function createLiveSource({
         optional("/api/operations/perception/metrics"),
       ]);
     return {
+      halts: halts?.records ?? [],
       cases: cases.cases,
       telemetry,
       autonomy,
@@ -206,6 +208,8 @@ export function createLiveSource({
     let next = start;
     for (const item of data.cases)
       next = reduce(next, { type: "CASE_SNAPSHOT", case: item });
+    for (const item of data.halts)
+      next = reduce(next, { type: "OPERATOR_HALT", halt: item });
     for (const item of data.telemetry)
       if (item)
         next = reduce(next, { type: "TELEMETRY_SNAPSHOT", telemetry: item });
@@ -310,7 +314,10 @@ export function createLiveSource({
     return {
       proceed: { enabled: bays.some((bay) => canProceedNow(bay)) },
       deploy: { enabled: false, reason: DEPLOY_UNAVAILABLE },
-      halt: { enabled: false, reason: HALT_UNAVAILABLE },
+      halt:
+        busId && state.buses[busId]?.operatorHalt?.halted
+          ? { enabled: true, label: "Release halt" }
+          : { enabled: Boolean(busId), label: "Halt bus" },
       cancel: request?.caseId
         ? { enabled: true }
         : {
@@ -320,6 +327,26 @@ export function createLiveSource({
               : undefined,
           },
     };
+  }
+
+  /** Halts the bus, or releases the halt if it is already on. The bus adds it to its own reasons. */
+  async function toggleHalt(busId) {
+    if (!busId) return { ok: false, message: "Open a bus to halt it." };
+    const halted = Boolean(state.buses[busId]?.operatorHalt?.halted);
+    try {
+      await request(
+        "POST",
+        `/api/operations/vehicles/${encodeURIComponent(busId)}/operator-halt`,
+        halted ? { halted: false } : { halted: true, reason: HALT_REASON },
+      );
+    } catch (error) {
+      return {
+        ok: false,
+        message: error instanceof Error ? error.message : String(error),
+      };
+    }
+    loadSnapshot();
+    return { ok: true, message: "Done." };
   }
 
   async function performCaseAction(kind, { caseId, busId, action }) {
@@ -376,6 +403,7 @@ export function createLiveSource({
     // are refused here.
     if (action === "case" || action === "autonomy")
       return performCaseAction(action, context);
+    if (action === "halt") return toggleHalt(busId);
     if (action !== "proceed" && action !== "cancel") {
       return {
         ok: false,

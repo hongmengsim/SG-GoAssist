@@ -113,6 +113,11 @@ const valid = {
     request,
     timestamp: T,
   },
+  "OperatorStatusUpdateMessage.operator_halt": {
+    type: "OPERATOR_HALT",
+    halt: { busId: "AV-095-01", halted: true, reason: "Inspect the ramp", setAt: T },
+    timestamp: T,
+  },
   "OperatorStatusUpdateMessage.ramp": {
     type: "RAMP_SIMULATION",
     ramp: { busId: "AV-095-01", ...ramp },
@@ -161,6 +166,11 @@ const invalid = {
   },
   "AssistRequestForBus.passenger_identity": { ...request, sessionId: "secret" },
   "BayStatus.queue_not_a_list": { ...bay, waitingBusIds: "AV-095-02" },
+  "OperatorStatusUpdateMessage.halt_not_a_boolean": {
+    type: "OPERATOR_HALT",
+    halt: { busId: "AV-095-01", halted: "yes", setAt: T },
+    timestamp: T,
+  },
   "OperatorStatusUpdateMessage.unknown_type": {
     type: "NOT_A_MESSAGE",
     timestamp: T,

@@ -25,6 +25,7 @@ const NESTED_CONTAINERS = [
   "ramp",
   "decision",
   "help",
+  "halt",
   "telemetry",
   "vehicle",
   "autonomy",

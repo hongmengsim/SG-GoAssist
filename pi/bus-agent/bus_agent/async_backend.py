@@ -59,7 +59,9 @@ class AsyncBackend:
         self._commands: list = []
         self._want_requests = False
         self._want_commands = False
-        self._last_poll = {"requests": 0.0, "commands": 0.0}
+        self._want_halt = False
+        self._halt: Optional[dict] = None
+        self._last_poll = {"requests": 0.0, "commands": 0.0, "halt": 0.0}
         self.last_error: Optional[str] = None
         self._thread = threading.Thread(target=self._run, name="backend-io", daemon=True)
         self._thread.start()
@@ -121,6 +123,12 @@ class AsyncBackend:
             self._cond.notify_all()
             return list(self._commands)
 
+    def pending_operator_halt(self) -> Optional[dict]:
+        with self._cond:
+            self._want_halt = True
+            self._cond.notify_all()
+            return None if self._halt is None else dict(self._halt)
+
     def register_capability(self, capability: dict) -> None:
         with self._cond:
             self._capability = capability
@@ -151,6 +159,7 @@ class AsyncBackend:
             or self._posts
             or (self._want_requests and now - self._last_poll["requests"] >= self._poll)
             or (self._want_commands and now - self._last_poll["commands"] >= self._poll)
+            or (self._want_halt and now - self._last_poll["halt"] >= self._poll)
         )
 
     def _succeeded(self) -> None:
@@ -270,6 +279,7 @@ class AsyncBackend:
         for name, fetch, want_attr, cache_attr in (
             ("requests", self._inner.pending_requests, "_want_requests", "_requests"),
             ("commands", self._inner.pending_actuator_commands, "_want_commands", "_commands"),
+            ("halt", self._inner.pending_operator_halt, "_want_halt", "_halt"),
         ):
             with self._cond:
                 wanted = getattr(self, want_attr)
@@ -286,6 +296,6 @@ class AsyncBackend:
                 failed = True
                 continue
             with self._cond:
-                setattr(self, cache_attr, list(items))
+                setattr(self, cache_attr, items if name == "halt" else list(items))
             self._succeeded()
         return failed

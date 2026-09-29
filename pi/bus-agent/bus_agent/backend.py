@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Protocol
+from typing import Optional, Protocol
 
 # Endpoint suffixes under /api/operations/vehicles/:busId/ for each kind of report.
 KINDS = ("bus-status", "ramp-simulation", "safety-decision", "help-required", "telemetry")
@@ -27,6 +27,10 @@ class Backend(Protocol):
 
     def pending_actuator_commands(self) -> list: ...
 
+    def pending_operator_halt(self) -> Optional[dict]:
+        """The operator halt on this bus, or None if it could not be read."""
+        ...
+
     def report_actuator(self, command_id: str, body: dict) -> None: ...
 
 
@@ -39,6 +43,7 @@ class FakeBackend:
         self.actuator_reports: list[tuple[str, dict]] = []
         self.requests: list[dict] = []
         self.commands: list[dict] = []
+        self.operator_halt: Optional[dict] = None
         self.fail_all = False
         self.refuse_positioned = False
 
@@ -66,6 +71,10 @@ class FakeBackend:
     def pending_actuator_commands(self) -> list:
         self._check()
         return list(self.commands)
+
+    def pending_operator_halt(self) -> Optional[dict]:
+        self._check()
+        return self.operator_halt
 
     def report_actuator(self, command_id: str, body: dict) -> None:
         self._check()

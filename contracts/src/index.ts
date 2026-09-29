@@ -775,6 +775,24 @@ export interface HelpRequiredMessage {
   timestamp: string;
 }
 
+/**
+ * An operator halt on one bus. While on, the bus gate halts with OPERATOR_HALT and the
+ * simulated ramp will not move. It can only ever add a halt, never remove a safety reason.
+ */
+export interface OperatorHalt {
+  busId: string;
+  halted: boolean;
+  reason?: string;
+  setAt: string;
+}
+
+/** Pushed to the halted bus (its own subscription) and to operators. */
+export interface OperatorHaltMessage {
+  type: "OPERATOR_HALT";
+  halt: OperatorHalt;
+  timestamp: string;
+}
+
 export interface RequestStatusUpdateMessage {
   type: "REQUEST_STATUS";
   requestId: string;
@@ -939,6 +957,7 @@ export type HelpRequiredReport = Omit<HelpRequired, "busId">;
 export type SafetyTelemetryReport = Omit<SafetyTelemetry, "busId">;
 
 export type OperatorStatusUpdateMessage =
+  | OperatorHaltMessage
   | AssistRequestedMessage
   | BusStatusUpdateMessage
   | BayStatusUpdateMessage

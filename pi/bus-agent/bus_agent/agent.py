@@ -150,6 +150,10 @@ class BusAgent:
             self._on_request(message.get("request") or {})
         elif kind == "BAY_STATUS":
             self._on_bay(message.get("bay") or {})
+        elif kind == "OPERATOR_HALT":
+            halt = message.get("halt") or {}
+            if halt.get("busId") == self.bus_id and isinstance(halt.get("halted"), bool):
+                self.set_operator_halt(halt["halted"])
 
     # ---- the loop ---------------------------------------------------------------------------
 
@@ -228,6 +232,7 @@ class BusAgent:
         if now >= self._next_request_poll:
             self._next_request_poll = now + self._config.request_poll_seconds
             self._pull(self._backend.pending_requests, self._on_request)
+            self._pull_halt()
         if now >= self._next_command_poll:
             self._next_command_poll = now + self._config.command_poll_seconds
             self._pull(self._backend.pending_actuator_commands, self._on_command)
@@ -241,6 +246,16 @@ class BusAgent:
             return
         for item in items:
             handle(item)
+
+    def _pull_halt(self) -> None:
+        """Adopt the backend's operator-halt state. A failed read changes nothing (never releases)."""
+        try:
+            halt = self._backend.pending_operator_halt()
+        except BackendError as error:
+            log.warning("Could not read the operator halt: %s", error)
+            return
+        if isinstance(halt, dict) and isinstance(halt.get("halted"), bool):
+            self.set_operator_halt(halt["halted"])
 
     def _on_command(self, command: dict) -> None:
         command_id = command.get("commandId")
