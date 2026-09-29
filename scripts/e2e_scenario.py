@@ -100,7 +100,10 @@ class Api:
         return body
 
     def get_or_none(self, path: str) -> "dict | None":
-        status, body = self.call("GET", path)
+        try:
+            status, body = self.call("GET", path)
+        except urllib.error.URLError:  # the server is not accepting connections yet
+            return None
         return body if status == 200 else None
 
 
