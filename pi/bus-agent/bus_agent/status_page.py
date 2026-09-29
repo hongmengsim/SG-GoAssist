@@ -223,25 +223,24 @@ class StatusServer:
                     self.reply(404, {"error": "Not found"})
 
             def do_POST(self) -> None:
+                # Always read (a bounded amount of) the body first, so the client receives our
+                # answer instead of a reset connection whatever the answer is.
+                try:
+                    length = int(self.headers.get("Content-Length", "0"))
+                except ValueError:
+                    length = -1
+                raw = self.rfile.read(min(length, MAX_DRAIN_BYTES)) if length > 0 else b""
                 if self.path != "/api/control":
                     self.reply(404, {"error": "Not found"})
                     return
                 if not self.authorised() or not server._controls:
                     self.reply(403, {"error": "Controls need the start-up code and simulate mode."})
                     return
-                try:
-                    length = int(self.headers.get("Content-Length", "0"))
-                except ValueError:
-                    length = -1
                 if not 0 <= length <= MAX_BODY_BYTES:
-                    # Read (and discard) a bounded amount so the client can receive the refusal
-                    # instead of a reset connection; anything larger is simply cut off.
-                    if length > 0:
-                        self.rfile.read(min(length, MAX_DRAIN_BYTES))
                     self.reply(413, {"error": "Request too large"})
                     return
                 try:
-                    line = parse_control(json.loads(self.rfile.read(length) or b"null"))
+                    line = parse_control(json.loads(raw or b"null"))
                 except ValueError as error:
                     self.reply(400, {"error": str(error)})
                     return

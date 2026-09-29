@@ -46,6 +46,7 @@ Legend: `[x]` built and verified by a test or a run (evidence given), `[ ]` not 
 - [x] T1 `pi/tof-link/beam_reading.py`: `BeamReading` over the teammate's `BeamState` (their code untouched) with fake, simulated and serial line sources.
 - [x] A1 `pi/bus-agent` core: ramp state machine, decision loop, backend interface, on-change plus 5 s heartbeat posting, signing that matches the backend.
 - [x] A2 Agent against the real backend: HTTP client, WebSocket listener, simulated-bus runner and console commands.
+- [x] Hardware preparation, no hardware needed: strict config file, real-sensor adapters, a start-up check that refuses to start half real, a perception worker thread (a stalled worker halts through result age), record and replay of ESP32 lines and perception results (never frames), and a bring-up runbook `docs/runbooks/hardware-bring-up.md`. Tested with fakes; the Pi camera, OpenCV and model loaders are unverified until run on hardware.
 - [x] A3 Local status page (`--status-port`): movement, simulated ramp, Pi decision with reasons, beam, camera health and backend link in words and marks, guarded by a start-up code, no image data; simulation-only scene controls.
 - [x] **Safety-loop isolation (found during A3):** every network call now runs on a worker thread (`async_backend.py`). Before, a blocked connection could stall a tick for many seconds and the ramp would act on a stale decision. A tick now also counts for at most 1 s of ramp movement. Tests include 50 ticks against a stuck backend finishing in under a second and still halting on a person.
 
@@ -76,7 +77,7 @@ Legend: `[x]` built and verified by a test or a run (evidence given), `[ ]` not 
 ### Needs hardware (deferred by scope)
 
 - [ ] Flash and test the ESP32 sketches; read the ToF through `SerialLineSource`; take the reference; confirm on the device whether readings need the handshake and keepalive (`beam_reading` is read-only).
-- [ ] Pi bring-up: camera capture, serial permissions, a `--real` start mode, deployment as a service.
+- [ ] Pi bring-up: follow `docs/runbooks/hardware-bring-up.md` (the `--real` mode, config and recording exist; camera capture, serial permissions and a service definition remain to be done on the Pi).
 - [ ] Aim and align the beam, camera view and ramp polygon; tune the health thresholds on real frames.
 - [ ] Two Pis on a network with synchronised clocks (signatures allow 60 s).
 - [ ] Run the scenario by hand on real Bus 1 and record the results and latencies.
