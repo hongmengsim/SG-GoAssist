@@ -110,7 +110,8 @@ test(
           `/api/operations/vehicles/${B1}/ramp-simulation`,
           { state: "STOWED", simulated: true, observedAt: now() },
         );
-        assert.equal(rampReply.status, 202, await rampReply.text());
+        const rampBody = await rampReply.text();
+        assert.equal(rampReply.status, 202, rampBody);
         await post(base, `/api/operations/vehicles/${B1}/safety-decision`, {
           zoneState: "CLEAR",
           permission: "CONTINUE",
@@ -133,7 +134,7 @@ test(
         assert.deepEqual(source.state.bays[STOP].waitingBusIds, [B2]);
         await until(
           () => source.state.buses[B1].decision && source.state.buses[B1].ramp,
-          "the decision and the ramp state to arrive",
+          `the decision and the ramp state to arrive (ramp reply ${rampBody}; bus has ${Object.keys(source.state.buses[B1] ?? {})}; connection ${source.connection.status})`,
         );
 
         const cats = busCategories(source.state, B1);
