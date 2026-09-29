@@ -49,6 +49,7 @@ REASON_WORDS = {
     "NO_ACCEPTED_REQUEST": "No accepted request",
     "OPERATOR_HALT": "Operator halt",
     "DEPLOYMENT_TIMEOUT": "Deployment timed out",
+    "BACKEND_LINK_LOST": "Backend link lost",
 }
 
 

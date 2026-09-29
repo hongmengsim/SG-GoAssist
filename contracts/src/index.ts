@@ -676,6 +676,7 @@ export const HALT_REASONS = [
   "NO_ACCEPTED_REQUEST",
   "OPERATOR_HALT",
   "DEPLOYMENT_TIMEOUT",
+  "BACKEND_LINK_LOST",
 ] as const;
 export type HaltReason = (typeof HALT_REASONS)[number];
 

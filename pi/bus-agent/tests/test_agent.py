@@ -400,6 +400,115 @@ class OperatorHaltTests(unittest.TestCase):
         self.assertNotIn("OPERATOR_HALT", world.agent.last_decision.reasons)
 
 
+class TimeoutAndLinkTests(unittest.TestCase):
+    """R1: a stalled deployment and a lost backend link. Both are off unless configured, because
+    the values have not been agreed and are not invented here."""
+
+    def start_deploying_with_a_person(self, config):
+        world = World(config=config)
+        world.positioned_with_request()
+        world.backend.commands = [command()]
+        world.tick(2)
+        world.camera.place("person")
+        world.tick(2)
+        return world
+
+    def test_with_no_timeout_configured_a_stalled_deployment_is_never_reported(self) -> None:
+        world = self.start_deploying_with_a_person(AgentConfig())
+        world.tick(200)  # forty seconds
+        self.assertEqual([], world.backend.posted("help-required"))
+        self.assertNotIn("DEPLOYMENT_TIMEOUT", world.agent.last_decision.reasons)
+
+    def test_a_configured_timeout_raises_help_once_halts_and_fails_the_command(self) -> None:
+        world = self.start_deploying_with_a_person(AgentConfig(deployment_timeout_seconds=5.0))
+        self.assertEqual([], world.backend.posted("help-required"))
+        world.tick(40)  # eight seconds
+        [help_body] = world.backend.posted("help-required")
+        self.assertEqual("DEPLOYMENT_TIMEOUT", help_body["reason"])
+        self.assertIn(help_body["state"], ("HALTED", "DEPLOYING"))
+        self.assertIn("DEPLOYMENT_TIMEOUT", world.agent.last_decision.reasons)
+        self.assertEqual("HALT", world.agent.last_decision.permission)
+        self.assertEqual("FAILED", world.statuses()[-1])
+        world.tick(40)
+        self.assertEqual(1, len(world.backend.posted("help-required")), "raised once, not repeatedly")
+
+    def test_a_deployment_that_finishes_in_time_never_times_out(self) -> None:
+        world = World(config=AgentConfig(deployment_timeout_seconds=30.0))
+        world.positioned_with_request()
+        world.deploy(40)
+        self.assertEqual("DEPLOYED", world.agent.ramp.state)
+        world.tick(200)
+        self.assertEqual([], world.backend.posted("help-required"))
+        self.assertNotIn("DEPLOYMENT_TIMEOUT", world.agent.last_decision.reasons)
+
+    def test_a_lost_link_halts_a_deployment_only_when_configured(self) -> None:
+        world = World(config=AgentConfig(link_loss_halt_seconds=3.0))
+        world.positioned_with_request()
+        world.deploy(4)
+        self.assertEqual("DEPLOYING", world.agent.ramp.state)
+        world.backend.fail_all = True
+        world.tick(25)  # five seconds without reaching the backend
+        self.assertIn("BACKEND_LINK_LOST", world.agent.last_decision.reasons)
+        self.assertEqual("HALTED", world.agent.ramp.state)
+        world.backend.fail_all = False
+        world.tick(40)
+        self.assertNotIn("BACKEND_LINK_LOST", world.agent.last_decision.reasons)
+        self.assertEqual("DEPLOYED", world.agent.ramp.state)
+
+    def test_link_loss_is_seen_through_the_non_blocking_backend_too(self) -> None:
+        import time
+
+        from bus_agent.async_backend import AsyncBackend
+        from bus_agent.backend import FakeBackend
+
+        inner = FakeBackend()
+        backend = AsyncBackend(inner, retry_seconds=0.02, poll_seconds=0.0)
+        try:
+            world = World(config=AgentConfig(link_loss_halt_seconds=1.0), backend=backend)
+            world.agent.arrive(STOP)
+            inner.fail_all = True
+            for _ in range(40):
+                world.tick()
+                time.sleep(0.01)  # let the worker notice the failures
+            self.assertIn("BACKEND_LINK_LOST", world.agent.last_decision.reasons)
+            inner.fail_all = False
+            for _ in range(60):
+                world.tick()
+                time.sleep(0.01)
+            self.assertNotIn("BACKEND_LINK_LOST", world.agent.last_decision.reasons)
+        finally:
+            backend.stop()
+
+    def test_without_the_setting_a_lost_link_adds_no_reason(self) -> None:
+        world = World()
+        world.positioned_with_request()
+        world.backend.fail_all = True
+        world.tick(200)
+        self.assertNotIn("BACKEND_LINK_LOST", world.agent.last_decision.reasons)
+
+    def test_a_healthy_quiet_backend_never_counts_as_lost(self) -> None:
+        world = World(config=AgentConfig(link_loss_halt_seconds=3.0))
+        world.positioned_with_request()
+        world.tick(250)  # fifty seconds with nothing changing
+        self.assertNotIn("BACKEND_LINK_LOST", world.agent.last_decision.reasons)
+
+    def test_the_new_reasons_still_make_valid_reports(self) -> None:
+        world = self.start_deploying_with_a_person(AgentConfig(deployment_timeout_seconds=3.0, link_loss_halt_seconds=3.0))
+        world.backend.fail_all = True
+        world.tick(30)
+        world.backend.fail_all = False
+        world.tick(10)
+        validator = Draft7Validator(
+            json.loads((SCHEMAS / "RampSafetyReport.schema.json").read_text(encoding="utf-8"))
+        )
+        reasons = set()
+        for body in world.backend.posted("safety-decision"):
+            self.assertEqual([], [e.message for e in validator.iter_errors(body)], body)
+            reasons.update(body["reasons"])
+        self.assertIn("DEPLOYMENT_TIMEOUT", reasons)
+        self.assertIn("BACKEND_LINK_LOST", reasons)
+
+
 class LoopTimingTests(unittest.TestCase):
     def test_a_long_gap_between_ticks_cannot_make_the_ramp_jump(self) -> None:
         world = World()

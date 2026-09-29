@@ -42,7 +42,7 @@ The ramp is simulated only. States are `STOWED`, `DEPLOYMENT_REQUESTED`, `DEPLOY
 ## Not done yet
 
 - The repeatable end-to-end scenario script (roadmap E1).
-- Help-required and deployment timeouts (R1); the timeout value is not agreed and will not be invented.
+- Agreed values for the deployment timeout and the link-loss halt (below). The mechanisms are built and **off** until configured: `deploymentTimeoutSeconds` (a deployment unfinished after this long raises help-required, fails its actuator command and halts with `DEPLOYMENT_TIMEOUT`) and `linkLossHaltSeconds` (a backend that has not been reached for this long halts the ramp with `BACKEND_LINK_LOST`). Both can only add a halt.
 - Running any of the real-sensor code on hardware (the loaders for the Pi camera, OpenCV and the model are unverified).
 
 ## Run it alone

@@ -119,7 +119,8 @@
         "WAITING_FOR_BAY",
         "NO_ACCEPTED_REQUEST",
         "OPERATOR_HALT",
-        "DEPLOYMENT_TIMEOUT"
+        "DEPLOYMENT_TIMEOUT",
+        "BACKEND_LINK_LOST"
       ]
     },
     "TofBeamState": {

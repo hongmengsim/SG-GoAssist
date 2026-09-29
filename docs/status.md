@@ -67,7 +67,7 @@ Legend: `[x]` built and verified by a test or a run (evidence given), `[ ]` not 
 
 ### End to end and operator console (E1, O1 to O4)
 
-- [x] E1 `scripts/e2e_scenario.py` (in the full verify) plus the runbook `docs/runbooks/run-everything-on-one-laptop.md`.
+- [x] E1 `scripts/e2e_scenario.py` (in the full verify; now also covers an operator halt pushed to a bus and a stalled deployment raising help-required with a configured test timeout) plus the runbook `docs/runbooks/run-everything-on-one-laptop.md`.
 - [x] O1 to O4 `operator-console/`: overview, stop, bus, filterable audit log, playground, live mode, case queue and case actions, autonomy panel, decision reasons in words, camera-view placeholder. Status is never colour alone (words, shape marks, border styles; tests enforce it).
 - [x] The built-in `/operator` page was removed once the console covered it.
 
@@ -75,7 +75,7 @@ Legend: `[x]` built and verified by a test or a run (evidence given), `[ ]` not 
 
 ### Software, no hardware needed
 
-- [ ] **R1 Timeouts, help-required behaviour, lost-agent handling.** Blocked on an agreed deployment timeout; the report endpoint and the console alert exist, nothing raises help-required in the agent, and a stalled deployment is not detected.
+- [~] **R1 Timeouts, help-required, link loss:** built and tested but **off by default**: `deploymentTimeoutSeconds` and `linkLossHaltSeconds` in the agent config (a stalled deployment raises help-required, fails its command and halts; a lost backend link halts the ramp). Still to do: the team must agree the values, and the backend-side lost-agent detection (heartbeat loss) is not built.
 - [~] **R3 Security parity:** signed requests from Python, the operator token in the console, and signed per-bus WebSocket subscription (`SUBSCRIBE_DEVICE`; the Pi holds no operator token) are done. Per-device secrets (today one shared secret) and rotation are not.
 - [~] **R4 Documentation:** runbook, endpoint reference and module READMEs done. Still to write: a hardware bring-up runbook, and an update to `CLAUDE.md`-style project notes.
 - [ ] **R5 CI:** per-module jobs; needs a push to try.
@@ -101,8 +101,8 @@ Legend: `[x]` built and verified by a test or a run (evidence given), `[ ]` not 
 ## Known gaps and risks
 
 - **Nothing has run on hardware.** Every "real" claim above means "the real backend and the real code paths", with simulated sensors and a simulated ramp, labelled as such in every report.
-- **A lost backend link does not halt an in-progress deployment** (the loop itself now keeps running on its own; halting on link loss is still R1). The local gate keeps running and halts on an obstruction, but nothing halts on link loss alone (R1).
-- **No timeouts:** a stalled deployment is never detected. Placeholders that must not be mistaken for agreed values: simulated deployment time 4 s, poll intervals, camera freshness 1.0 s, the placeholder ramp polygon, image-health thresholds, the mock console's 8 s stall timeout.
+- **A lost backend link halts an in-progress deployment only if `linkLossHaltSeconds` is set** (off by default until the value is agreed); the loop itself keeps running on its own either way. The local gate keeps running and halts on an obstruction, but nothing halts on link loss alone (R1).
+- **No timeouts unless configured:** a stalled deployment is only detected if `deploymentTimeoutSeconds` is set. Placeholders that must not be mistaken for agreed values: simulated deployment time 4 s, poll intervals, camera freshness 1.0 s, the placeholder ramp polygon, image-health thresholds, the mock console's 8 s stall timeout.
 - **The existing cases and telemetry still use the whole-state store** (the measured bottleneck). New entities do not, but the case path does until SC10.
 - **The mock console's gate rules are stand-ins** for `pi/safety-gate`.
 - **Cancelling a request only starts a safe stow;** the request keeps showing "Confirmed by bus" until the case finishes.

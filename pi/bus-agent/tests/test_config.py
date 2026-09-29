@@ -44,6 +44,19 @@ class ParseTests(unittest.TestCase):
         self.assertEqual(0.8, config.max_camera_age_seconds)
         self.assertEqual(0.3, config.min_detection_confidence)
 
+    def test_the_timeouts_are_off_unless_set_and_must_be_positive_numbers(self) -> None:
+        config = parse_config(valid())
+        self.assertIsNone(config.deployment_timeout_seconds)
+        self.assertIsNone(config.link_loss_halt_seconds)
+        config = parse_config(valid(deploymentTimeoutSeconds=30, linkLossHaltSeconds=6.5))
+        self.assertEqual(30.0, config.deployment_timeout_seconds)
+        self.assertEqual(6.5, config.link_loss_halt_seconds)
+        for bad in ({"deploymentTimeoutSeconds": 0}, {"deploymentTimeoutSeconds": -5},
+                    {"linkLossHaltSeconds": "soon"}, {"linkLossHaltSeconds": 0}):
+            with self.subTest(bad=bad):
+                with self.assertRaises(ConfigError):
+                    parse_config(valid(**bad))
+
     def test_a_misspelt_key_is_an_error_not_silently_ignored(self) -> None:
         with self.assertRaisesRegex(ConfigError, "rampPolygone"):
             parse_config(valid(rampPolygone=[]))

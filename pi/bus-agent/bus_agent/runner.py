@@ -14,7 +14,7 @@ from typing import Callable, Optional
 from beam_reading import BeamReader, SimulatedBeamSource
 from safety_gate import GateConfig
 
-from .agent import BusAgent
+from .agent import AgentConfig, BusAgent
 from .backend import Backend, BackendError
 from .config import AgentSettings
 from .console import apply_command
@@ -68,6 +68,7 @@ def build_simulated_rig(
     bus_service: str,
     backend: Backend,
     clock: Callable[[], float] = time.monotonic,
+    agent_config: Optional[AgentConfig] = None,
 ) -> SimulatedRig:
     camera = SimulatedCamera(clock)
     beam_source = SimulatedBeamSource()
@@ -80,6 +81,7 @@ def build_simulated_rig(
         detector=camera,
         beam_reader=beam,
         clock=clock,
+        **({} if agent_config is None else {"config": agent_config}),
     )
     return SimulatedRig(agent, camera, beam_source, beam)
 
@@ -128,6 +130,8 @@ def build_real_rig(
             heartbeat_seconds=settings.heartbeat_seconds,
             deploy_seconds=settings.deploy_seconds,
             ramp_polygon=settings.ramp_polygon,
+            deployment_timeout_seconds=settings.deployment_timeout_seconds,
+            link_loss_halt_seconds=settings.link_loss_halt_seconds,
         ),
         gate_config=GateConfig(max_camera_age_seconds=settings.max_camera_age_seconds),
     )

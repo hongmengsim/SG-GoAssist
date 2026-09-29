@@ -18,7 +18,9 @@ and walks the agreed sequence, asserting each step through the backend's own end
      retracts and the case completes.
   7. Bus 1 departs. Bus 2, waiting, did not deploy. The controller grants the bay; only then
      does Bus 2 enter and deploy.
-  8. The audit trail records the sequence in order.
+  8. A separate bus whose deployment cannot finish (a person stays in the zone) raises
+     help-required after a configured test timeout, halts, and remains visible to the operator.
+  9. The audit trail records the sequence in order.
 
 Everything is simulated: no camera, ESP32, Pi or physical ramp is involved. Output is plain
 text (PASS or FAIL per step), never colour. Exit code 0 only if every step held.
@@ -43,6 +45,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "pi" / "bus-agent"))
 
+from bus_agent.agent import AgentConfig  # noqa: E402
 from bus_agent.async_backend import AsyncBackend  # noqa: E402
 from bus_agent.event_listener import EventListener  # noqa: E402
 from bus_agent.http_backend import HttpBackend  # noqa: E402
@@ -163,12 +166,12 @@ class Backend:
 class Bus:
     """One simulated bus agent running on its own thread, driven by console commands."""
 
-    def __init__(self, bus_id: str, base: str) -> None:
+    def __init__(self, bus_id: str, base: str, service: str = "95", agent_config=None) -> None:
         self.bus_id = bus_id
         # A signed client of its own for the scenario's checks, and the non-blocking one the agent uses.
         self.backend = HttpBackend(base, bus_id, secret=SECRET)
         self.agent_backend = AsyncBackend(HttpBackend(base, bus_id, secret=SECRET))
-        self.rig = build_simulated_rig(bus_id, "95", self.agent_backend)
+        self.rig = build_simulated_rig(bus_id, service, self.agent_backend, agent_config=agent_config)
         self.events: "queue.Queue[dict]" = queue.Queue()
         self.commands: "queue.Queue[str]" = queue.Queue()
         self.runner = Runner(self.rig, self.events, self.commands)
@@ -231,7 +234,7 @@ class Scenario:
         case_id = self.api.get(f"/api/assistance/{request_id}")["caseId"]
         return self.api.get(f"/api/operations/cases/{case_id}")
 
-    def new_request(self, bus: str, service: str = "95") -> str:
+    def new_request(self, bus: str, service: str = "95", stop: str = STOP) -> str:
         status, body = self.api.call(
             "POST",
             "/api/assistance/request",
@@ -240,7 +243,7 @@ class Scenario:
                 "busService": service,
                 "busId": bus,
                 "boardingStop": "18301",
-                "stopCode": STOP,
+                "stopCode": stop,
                 "assistanceTypes": ["WHEELCHAIR_RAMP"],
                 "source": "MOBILE_APP",
                 "boardingOrAlighting": "BOARDING",
@@ -408,6 +411,34 @@ class Scenario:
         wait_until(lambda: (self.ramp(BUS_2) or {}).get("state") == "DEPLOYED", 40, "Bus 2's ramp to deploy")
         passed("the controller grants the bay; Bus 2 enters, then deploys")
 
+    def step_9_stalled_deployment_raises_help(self, backend_base: str) -> None:
+        """A third bus, at its own stop, with a deployment timeout configured (the timeout value here
+        is a test value, not an agreed one). A person stays in its ramp zone; the deployment cannot
+        finish, so it raises help-required, halts, and the operator can see it."""
+        stall_bus, stall_stop = "AV-151-01", "18301"
+        bus = Bus(stall_bus, backend_base, "151", AgentConfig(deployment_timeout_seconds=6.0))
+        bus.start()
+        try:
+            wait_until(lambda: any(c["busId"] == stall_bus for c in self.api.get("/api/operations/vehicles/capabilities")["capabilities"]), 20, "the third bus to register")
+            bus.do(f"arrive {stall_stop}")
+            wait_until(lambda: (self.bus_status(stall_bus) or {}).get("movement") == "POSITIONED_AT_STOP", 10, "the third bus to be positioned")
+            request_id = self.new_request(stall_bus, "151", stall_stop)
+            wait_until(lambda: self.request_status(request_id) == "ACKNOWLEDGED", 10, "the third bus to acknowledge")
+            wait_until(lambda: (self.decision(stall_bus) or {}).get("permission") == "CONTINUE", 15, "its gate to read clear")
+            wait_until(lambda: (self.ramp(stall_bus) or {}).get("state") == "DEPLOYING", 20, "its ramp to start deploying")
+            bus.do("place person 0.95")
+            help_record = wait_until(
+                lambda: self.api.get_or_none(f"/api/operations/vehicles/{stall_bus}/help-required"),
+                30,
+                "help-required after the deployment timeout",
+            )
+            assert help_record["reason"] == "DEPLOYMENT_TIMEOUT", help_record
+            assert "DEPLOYMENT_TIMEOUT" in (self.decision(stall_bus) or {}).get("reasons", []), self.decision(stall_bus)
+            assert (self.ramp(stall_bus) or {}).get("state") != "DEPLOYED"
+            passed("a deployment that cannot finish raises help-required, halts, and stays visible to the operator")
+        finally:
+            bus.stop()
+
     def step_8_audit(self) -> None:
         events = self.api.get("/api/operations/audit?limit=500")["events"]
         events.reverse()  # oldest first
@@ -452,6 +483,7 @@ def main() -> int:
         scenario.step_5b_operator_halt()
         scenario.step_6_retract_only_when_the_ramp_is_clear(request_id)
         scenario.step_7_bay_release_and_grant()
+        scenario.step_9_stalled_deployment_raises_help(backend.base)
         scenario.step_8_audit()
         say("RESULT: every step held (all sensors and the ramp simulated)")
         return 0

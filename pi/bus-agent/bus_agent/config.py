@@ -37,12 +37,15 @@ class AgentSettings:
     deploy_seconds: float = 4.0
     max_camera_age_seconds: float = 1.0
     min_detection_confidence: float = 0.25
+    # Both are off (None) until the team agrees values; nothing here invents a default.
+    deployment_timeout_seconds: Optional[float] = None
+    link_loss_halt_seconds: Optional[float] = None
 
 
 _KEYS = {
     "busId", "busService", "backendUrl", "serialPort", "cameraIndex", "modelPath",
     "rampPolygon", "heartbeatSeconds", "deploySeconds", "maxCameraAgeSeconds",
-    "minDetectionConfidence",
+    "minDetectionConfidence", "deploymentTimeoutSeconds", "linkLossHaltSeconds",
 }
 _SECRET_WORDS = ("secret", "token", "password", "credential")
 
@@ -116,6 +119,14 @@ def parse_config(data: object) -> AgentSettings:
         deploy_seconds=_number(data, "deploySeconds", 4.0, 0, 600, low_open=True),
         max_camera_age_seconds=_number(data, "maxCameraAgeSeconds", 1.0, 0, 60, low_open=True),
         min_detection_confidence=_number(data, "minDetectionConfidence", 0.25, 0.0, 1.0),
+        deployment_timeout_seconds=(
+            _number(data, "deploymentTimeoutSeconds", 0, 0, 3600, low_open=True)
+            if "deploymentTimeoutSeconds" in data else None
+        ),
+        link_loss_halt_seconds=(
+            _number(data, "linkLossHaltSeconds", 0, 0, 3600, low_open=True)
+            if "linkLossHaltSeconds" in data else None
+        ),
     )
 
 

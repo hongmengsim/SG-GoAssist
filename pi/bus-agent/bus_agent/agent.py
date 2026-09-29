@@ -9,13 +9,14 @@ from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Callable, Optional
 
 from beam_reading import BeamReader
 from perception import DEFAULT_POLICY, PerceptionResult, Policy, analyse
 from safety_gate import BusContext, Decision, GateConfig, decide
+from safety_gate.models import BACKEND_LINK_LOST, DEPLOYMENT_TIMEOUT, REASON_ORDER
 
 from . import ramp as ramp_sim
 from .adapters import beam_input, camera_input
@@ -61,6 +62,11 @@ class AgentConfig:
     deploy_seconds: float = ramp_sim.DEFAULT_DEPLOY_SECONDS
     # ASSUMPTION: how long to wait for the backend's verdict on entering the bay (placeholder).
     entry_timeout_seconds: float = 2.0
+    # Off (None) until the team agrees values. A deployment that has not finished this long after
+    # it started raises help-required and halts; a backend that has not answered for this long
+    # halts the ramp.
+    deployment_timeout_seconds: Optional[float] = None
+    link_loss_halt_seconds: Optional[float] = None
     ramp_polygon: tuple = DEFAULT_RAMP_POLYGON
 
 
@@ -112,6 +118,9 @@ class BusAgent:
         # Whether the last report reached the backend, for the local status page.
         self.link: dict = {"ok": True, "error": None}
         self.last_beam = None  # the latest BeamReading, for the status page
+        self._deploy_started: Optional[float] = None
+        self._help_raised = False
+        self._link_ok_at = self._clock()
 
     # ---- controls the scenario, the status page and the backend link call -------------------
 
@@ -162,7 +171,7 @@ class BusAgent:
         dt = 0.0 if self._last_tick is None else min(MAX_TICK_SECONDS, max(0.0, now - self._last_tick))
         self._last_tick = now
 
-        decision = self._decide(now)
+        decision = self._add_time_and_link_reasons(self._decide(now), now)
         self.last_decision = decision
         self._poll_backend(now)
         self._retry_acks()
@@ -170,6 +179,7 @@ class BusAgent:
             self.ramp, decision.permission, decision.reasons, dt, self._config.deploy_seconds
         )
         self._report_actuator()
+        self._raise_timeout_help(decision, now)
         self._post_reports(decision)
 
     # ---- decision ---------------------------------------------------------------------------
@@ -204,6 +214,54 @@ class BusAgent:
         )
         return decide(camera, beam_input(reading), context, self._gate_config)
 
+    # ---- timeout and link loss (R1; both off unless configured) ------------------------------------
+
+    def _note_link_ok(self) -> None:
+        # A non-blocking backend answers polls from its cache, so its own view of the last delivery
+        # decides whether the link is really working.
+        if getattr(self._backend, "last_error", None) is None:
+            self._link_ok_at = self._clock()
+
+    def _deployment_timed_out(self, now: float) -> bool:
+        limit = self._config.deployment_timeout_seconds
+        return (
+            limit is not None
+            and self._deploy_started is not None
+            and self.ramp.state not in (ramp_sim.DEPLOYED, ramp_sim.STOWED)
+            and now - self._deploy_started > limit
+        )
+
+    def _link_lost(self, now: float) -> bool:
+        limit = self._config.link_loss_halt_seconds
+        return limit is not None and now - self._link_ok_at > limit
+
+    def _add_time_and_link_reasons(self, decision: Decision, now: float) -> Decision:
+        """These can only add a halt, never take one away."""
+        extra = []
+        if self._deployment_timed_out(now):
+            extra.append(DEPLOYMENT_TIMEOUT)
+        if self._link_lost(now):
+            extra.append(BACKEND_LINK_LOST)
+        if not extra:
+            return decision
+        reasons = tuple(r for r in REASON_ORDER if r in set(decision.reasons) | set(extra))
+        return replace(decision, permission="HALT", reasons=reasons)
+
+    def _raise_timeout_help(self, decision: Decision, now: float) -> None:
+        if DEPLOYMENT_TIMEOUT not in decision.reasons or self._help_raised:
+            return
+        self._help_raised = True
+        detail = f"Deployment not finished after {self._config.deployment_timeout_seconds:g} s"
+        if self.ramp.halt_reasons:
+            detail += f"; halted: {', '.join(self.ramp.halt_reasons)}"
+        self._post_safely(
+            "help-required",
+            {"reason": "DEPLOYMENT_TIMEOUT", "state": self.ramp.state, "detail": detail, "observedAt": self._iso()},
+        )
+        if self._active_command is not None:
+            self._send_actuator(self._commands[self._active_command], "FAILED", "Deployment timed out")
+            self._active_command = None
+
     # ---- requests and commands --------------------------------------------------------------
 
     def _on_request(self, request: dict) -> None:
@@ -237,13 +295,13 @@ class BusAgent:
             self._next_command_poll = now + self._config.command_poll_seconds
             self._pull(self._backend.pending_actuator_commands, self._on_command)
 
-    @staticmethod
-    def _pull(fetch: Callable[[], list], handle: Callable[[dict], None]) -> None:
+    def _pull(self, fetch: Callable[[], list], handle: Callable[[dict], None]) -> None:
         try:
             items = fetch()
         except BackendError as error:
             log.warning("Backend poll failed: %s", error)
             return
+        self._note_link_ok()
         for item in items:
             handle(item)
 
@@ -254,6 +312,7 @@ class BusAgent:
         except BackendError as error:
             log.warning("Could not read the operator halt: %s", error)
             return
+        self._note_link_ok()
         if isinstance(halt, dict) and isinstance(halt.get("halted"), bool):
             self.set_operator_halt(halt["halted"])
 
@@ -269,6 +328,8 @@ class BusAgent:
         kind = command.get("command")
         if kind == "DEPLOY_RAMP":
             self.ramp = ramp_sim.request_deployment(self.ramp)
+            self._deploy_started = self._clock()
+            self._help_raised = False
             self._active_command = command_id
             self._send_actuator(command, "ACCEPTED", "Deployment requested (simulated ramp)")
         elif kind == "RETRACT_RAMP":
@@ -371,6 +432,7 @@ class BusAgent:
     def _post(self, kind: str, body: dict) -> None:
         self._backend.post(kind, body)
         self._gate.sent(kind, body)
+        self._note_link_ok()
         self.link = {"ok": True, "error": None}
 
     def _post_now(self, kind: str, body: dict) -> None:
