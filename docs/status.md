@@ -8,13 +8,13 @@ Legend: `[x]` built and verified by a test or a run (evidence given), `[ ]` not 
 
 | Check                                                      | Result on 30 Sep 2026                                                                                               |
 | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `npm run verify` (full)                                    | 12 of 12 passed, including the passenger app and the end-to-end scenario                                            |
+| `npm run verify` (full)                                    | 13 of 13 passed, including the passenger app and the end-to-end scenario                                            |
 | `npm run verify:fast`                                      | 11 of 11 passed (last run after the final commit)                                                                   |
-| Backend                                                    | 273 tests                                                                                                           |
+| Backend                                                    | 284 tests                                                                                                           |
 | Passenger app                                              | 420 tests (last full run; unchanged code)                                                                           |
 | Contracts                                                  | 4 (TypeScript, schema drift and fixtures) + 3 (Python, fixtures)                                                    |
-| `pi/tof-link` / `perception` / `safety-gate` / `bus-agent` | 28 / 33 / 29 / 153 tests, no hardware                                                                               |
-| `operator-console`                                         | 89 tests, including an integration test against the real built backend                                              |
+| `pi/tof-link` / `perception` / `safety-gate` / `bus-agent` | 28 / 33 / 29 / 170 tests, no hardware                                                                               |
+| `operator-console`                                         | 100 tests, including an integration test against the real built backend                                             |
 | Module checker and verify runner                           | 18 tests                                                                                                            |
 | `npm run e2e:scenario`                                     | 4 consecutive passes, about 40 s each: real backend, two simulated buses, signed requests, bus-only acknowledgement |
 | Browser checks                                             | Console mock and live modes opened in the browser pane; no console errors                                           |
