@@ -123,10 +123,7 @@ router.get("/bounds", (req: Request, res: Response) => {
     1,
     MAX_BOUNDS_LIMIT,
   );
-  const result = busStopRepository.bounds(
-    { north, south, east, west },
-    limit,
-  );
+  const result = busStopRepository.bounds({ north, south, east, west }, limit);
   if (process.env.NODE_ENV !== "production") {
     console.debug(`[BusStops] Loaded ${result.stops.length} stops for bounds`, {
       endpoint: req.path,
@@ -179,12 +176,7 @@ router.get("/:code", (req: Request, res: Response) => {
 });
 
 router.use(
-  (
-    error: unknown,
-    req: Request,
-    res: Response,
-    _next: NextFunction,
-  ) => {
+  (error: unknown, req: Request, res: Response, _next: NextFunction) => {
     const operation = req.path === "/bounds" ? "Bounds query" : "Stop query";
     console.error(`[BusStops] ${operation} failed`, {
       endpoint: req.originalUrl,

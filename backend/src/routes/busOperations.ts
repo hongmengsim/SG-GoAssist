@@ -7,6 +7,7 @@ import {
 } from "express";
 import { BusOperationsValidationError } from "../busOperations/busOperationsService";
 import { getBusOperations } from "../busOperations/composition";
+import { getRequest, processSimulatorCommand } from "../services/aviator";
 import { requireOperator, verifyDeviceRequest } from "./auth";
 
 /**
@@ -39,6 +40,35 @@ router.post(
     );
     res.status(202).json({ outcome: result.outcome });
   }),
+);
+
+router.post(
+  "/vehicles/:busId/assist-ack",
+  verifyDeviceRequest,
+  (req: Request, res: Response) => {
+    const requestId = req.body?.requestId;
+    if (typeof requestId !== "string" || !requestId) {
+      res.status(400).json({ error: "requestId is required" });
+      return;
+    }
+    const request = getRequest(requestId);
+    if (!request) {
+      res.status(404).json({ error: "Request not found" });
+      return;
+    }
+    if (request.busId !== req.params.busId) {
+      res.status(409).json({ error: "Request belongs to a different bus" });
+      return;
+    }
+    const result = processSimulatorCommand({
+      requestId,
+      command: "ACKNOWLEDGE",
+    });
+    res.status(result.success ? 200 : 409).json({
+      success: result.success,
+      status: result.request?.status,
+    });
+  },
 );
 
 router.get(

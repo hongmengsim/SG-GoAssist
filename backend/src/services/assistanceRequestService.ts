@@ -8,6 +8,7 @@ import crypto from "crypto";
 import { getBusById } from "../data/buses.mock";
 import { createRequest, processSimulatorCommand } from "./aviator";
 import { logger } from "./logger";
+import { isAutoAcknowledgeEnabled } from "./autoAcknowledge";
 import { recordPassengerRequest } from "./assistanceCaseService";
 
 const defaultBoardingStop = "Changi Airport Terminal 1";
@@ -113,7 +114,11 @@ export function createStandardizedAssistanceRequestBundle(
     },
   );
 
-  if (!duplicateOfRequestId && options.autoAcknowledge !== false) {
+  if (
+    !duplicateOfRequestId &&
+    options.autoAcknowledge !== false &&
+    isAutoAcknowledgeEnabled()
+  ) {
     setTimeout(() => {
       processSimulatorCommand({
         requestId: savedRequest.requestId,

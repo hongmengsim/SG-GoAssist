@@ -24,6 +24,7 @@ import {
   supportedAssistanceTypes,
 } from "../services/assistanceRequestService";
 import { logger } from "../services/logger";
+import { isAutoAcknowledgeEnabled } from "../services/autoAcknowledge";
 import { getBusesByService, mockBuses } from "../data/buses.mock";
 
 export const router = Router();
@@ -47,6 +48,11 @@ router.get("/simulator/announcements", (req: Request, res: Response) => {
 });
 
 router.post("/simulator/command", (req: Request, res: Response) => {
+  if (!isAutoAcknowledgeEnabled() && req.body?.command === "ACKNOWLEDGE") {
+    return res.status(403).json({
+      error: "Acknowledgement must come from the bus",
+    });
+  }
   const result = processSimulatorCommand(req.body);
   res.status(result.success ? 200 : 400).json(result);
 });
