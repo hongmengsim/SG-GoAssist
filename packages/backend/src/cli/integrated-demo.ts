@@ -101,7 +101,7 @@ async function sendTelemetry(rampPosition: "STOWED" | "DEPLOYED" | "RETRACTING")
   });
 }
 
-async function get(path: string) {
+async function get(path: string): Promise<any> {
   const response = await fetch(`${baseUrl}${path}`);
   if (!response.ok) throw new Error(`${response.status} ${await response.text()}`);
   return response.json();
@@ -115,7 +115,7 @@ async function put(path: string, body: unknown) {
   return request(path, "PUT", body);
 }
 
-async function request(path: string, method: string, body: unknown) {
+async function request(path: string, method: string, body: unknown): Promise<any> {
   const response = await fetch(`${baseUrl}${path}`, {
     method,
     headers: { "Content-Type": "application/json" },
