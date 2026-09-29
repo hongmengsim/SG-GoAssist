@@ -52,7 +52,7 @@ perception metrics without physical hardware.
 The portable stop, mock-bus firmware, wiring, safety demonstration, contracts,
 and API reference are documented in:
 
-- `hardware/INTEGRATED_PROTOTYPE.md`
+- `archive/legacy-hardware/INTEGRATED_PROTOTYPE.md`
 - `docs/grand-challenge-integrated-prototype.md`
 - `docs/task-requirements-traceability.md`
 

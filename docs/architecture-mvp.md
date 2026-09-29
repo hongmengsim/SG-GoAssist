@@ -98,7 +98,7 @@ Development physical button endpoint:
 
 `POST /api/assistance/hardware/physical-button/wheelchair-ramp`
 
-The ESP32 prototype in `hardware/esp32-physical-button` calls this endpoint when its physical button is pressed. The backend waits briefly for the simulated bus acknowledgement before returning confirmation feedback instructions for LED/buzzer output.
+The ESP32 prototype in `archive/legacy-hardware/esp32-physical-button` calls this endpoint when its physical button is pressed. The backend waits briefly for the simulated bus acknowledgement before returning confirmation feedback instructions for LED/buzzer output.
 
 Current duplicate consolidation is prototype request de-duplication, not passenger counting:
 

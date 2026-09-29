@@ -1,5 +1,7 @@
 # APAS three-laser tabletop demo
 
+> **Layout note (30 Sep 2026):** the Pi-side Python for this demo (`pi_web_demo.py`, `pi_demo.py`, `demo_state.py`, `web_demo.html` and their unit tests) now lives in [`pi/tof-link/`](../../pi/tof-link/). Where the text below says "this folder" for those files, use that folder. The ESP32 sketch, wiring notes and `Test-Lasers.ps1` stay here.
+
 Prepared for the ESP32-S3, confirmed VL53L0X breakout, three RYS1230 line lasers,
 and a Raspberry Pi, with either a desktop display or browser access over the LAN.
 The Pi camera is connected; camera operation still needs verification.

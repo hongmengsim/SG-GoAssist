@@ -13,7 +13,7 @@ passenger-app/android/
 passenger-app/ios/
 __pycache__/
 *.py[cod]
-hardware/edge-observer/ml1/runs/
-hardware/edge-observer/ml1/ml1-evaluation.json
-hardware/edge-observer/ml1/ml1-evaluation-data.yaml
+archive/legacy-hardware/edge-observer/ml1/runs/
+archive/legacy-hardware/edge-observer/ml1/ml1-evaluation.json
+archive/legacy-hardware/edge-observer/ml1/ml1-evaluation-data.yaml
 /artifacts/e2e/
