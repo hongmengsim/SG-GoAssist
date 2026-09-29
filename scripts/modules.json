@@ -91,10 +91,18 @@
       "name": "bus-agent",
       "path": "pi/bus-agent",
       "kind": "python",
-      "status": "planned",
+      "status": "active",
       "pythonModules": ["bus_agent"],
       "readme": "strict",
-      "allowedDependencies": ["tof-link", "perception", "safety-gate"]
+      "allowedDependencies": [
+        "tof-link",
+        "perception",
+        "safety-gate",
+        "contracts"
+      ],
+      "manifest": "requirements.txt",
+      "verify": "python -m unittest",
+      "verifyCwd": "pi/bus-agent"
     },
     {
       "name": "operator-console",
