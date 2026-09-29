@@ -6,12 +6,13 @@ import {
   Router,
 } from "express";
 import { AssistanceRequestStatus } from "@buspass/shared";
+import type { ReportKind } from "../busOperations/busReports";
 import {
   BusOperationsConflictError,
   BusOperationsValidationError,
 } from "../busOperations/busOperationsService";
 import { getOperationsStore } from "../services/operationsStore";
-import { getBusOperations } from "../busOperations/composition";
+import { getBusOperations, getBusReports } from "../busOperations/composition";
 import {
   getAllRequests,
   getRequest,
@@ -176,3 +177,58 @@ router.get("/audit", requireOperator, (req: Request, res: Response) => {
   });
   res.json({ count: events.length, events });
 });
+
+/**
+ * The bus posts each of these as a device-signed request; an operator reads the latest
+ * per bus or a bounded list. Ramp state is always a simulation.
+ */
+const REPORT_ROUTES: Array<{
+  kind: ReportKind;
+  one: string;
+  many: string;
+}> = [
+  { kind: "RAMP_SIMULATION", one: "ramp-simulation", many: "ramp-simulations" },
+  { kind: "RAMP_SAFETY", one: "safety-decision", many: "safety-decisions" },
+  { kind: "HELP_REQUIRED", one: "help-required", many: "help-required" },
+];
+
+for (const { kind, one, many } of REPORT_ROUTES) {
+  router.post(
+    `/vehicles/:busId/${one}`,
+    verifyDeviceRequest,
+    handle(async (req, res) => {
+      const result = await getBusReports().report(
+        kind,
+        req.body,
+        req.params.busId,
+      );
+      res.status(202).json({ outcome: result.outcome });
+    }),
+  );
+
+  router.get(
+    `/vehicles/:busId/${one}`,
+    requireOperator,
+    handle(async (req, res) => {
+      const record = await getBusReports().get(kind, req.params.busId);
+      if (!record) {
+        res.status(404).json({ error: "Not found" });
+        return;
+      }
+      res.json(record);
+    }),
+  );
+
+  router.get(
+    `/${many}`,
+    requireOperator,
+    handle(async (req, res) => {
+      const requested = Number(queryText(req.query.limit));
+      const records = await getBusReports().list(
+        kind,
+        Number.isFinite(requested) ? requested : undefined,
+      );
+      res.json({ count: records.length, records });
+    }),
+  );
+}

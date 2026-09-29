@@ -53,28 +53,28 @@ WebSocket clients can subscribe with `SUBSCRIBE_CASE` or `SUBSCRIBE_OPERATIONS`.
 
 ## Portable build
 
-| Module | Core parts | Purpose |
-|---|---|---|
-| Accessible stop | ESP32, 3 tactile buttons, MFRC522, HC-SR04, LED, buzzer, vibration motor | Explicit multimodal intent, anonymous zone sensing, feedback, offline queue |
-| Edge observer | USB/CSI camera and local compute | In-memory wheelchair, walking-aid, stroller, and luggage classification |
-| Mock bus | ESP32, low-voltage servo, VL53L5CX 8×8 laser ranging sensor, four safety switches, two ramp limit switches, speaker/display | Ramp-envelope sensing, capabilities, fresh telemetry, fail-safe actuation and verification |
-| Operator console | Laptop/tablet browser | Multi-bus case queue, safety checklist, confirmation, escalation, retry, completion |
+| Module           | Core parts                                                                                                                  | Purpose                                                                                    |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| Accessible stop  | ESP32, 3 tactile buttons, MFRC522, HC-SR04, LED, buzzer, vibration motor                                                    | Explicit multimodal intent, anonymous zone sensing, feedback, offline queue                |
+| Edge observer    | USB/CSI camera and local compute                                                                                            | In-memory wheelchair, walking-aid, stroller, and luggage classification                    |
+| Mock bus         | ESP32, low-voltage servo, VL53L5CX 8×8 laser ranging sensor, four safety switches, two ramp limit switches, speaker/display | Ramp-envelope sensing, capabilities, fresh telemetry, fail-safe actuation and verification |
+| Operator console | Laptop/tablet browser                                                                                                       | Multi-bus case queue, safety checklist, confirmation, escalation, retry, completion        |
 
 Do not attach this prototype controller to a passenger vehicle. A production ramp controller requires certified automotive hardware, safety engineering, independent emergency-stop circuitry, formal hazard analysis, and operator approval.
 
 ## Hazard controls
 
-| Hazard | Prevention / detection | System response |
-|---|---|---|
-| Wrong bus or stop | Vehicle and stop match in case + telemetry | Confirmation or block |
-| Vehicle moves during deployment | stopped + parking brake inputs | No command; local stop if signal changes |
-| Door closed | door interlock | No command / immediate block |
-| Person or object in path | obstruction input | Stop movement and escalate |
-| Stale or lost telemetry | five-second freshness window | Block and alert operator |
-| Ramp position disagreement | deployed/stowed limit switches | Never show ready; fault escalation |
-| Occupied wheelchair space | occupancy telemetry and capacity | Operator escalation |
-| Duplicate requests | individual intents + idempotent action key | Preserve passenger count; one actuator action |
-| Network loss | NVS store-and-forward + idempotency | Retry without duplicate movement |
+| Hazard                          | Prevention / detection                     | System response                               |
+| ------------------------------- | ------------------------------------------ | --------------------------------------------- |
+| Wrong bus or stop               | Vehicle and stop match in case + telemetry | Confirmation or block                         |
+| Vehicle moves during deployment | stopped + parking brake inputs             | No command; local stop if signal changes      |
+| Door closed                     | door interlock                             | No command / immediate block                  |
+| Person or object in path        | obstruction input                          | Stop movement and escalate                    |
+| Stale or lost telemetry         | five-second freshness window               | Block and alert operator                      |
+| Ramp position disagreement      | deployed/stowed limit switches             | Never show ready; fault escalation            |
+| Occupied wheelchair space       | occupancy telemetry and capacity           | Operator escalation                           |
+| Duplicate requests              | individual intents + idempotent action key | Preserve passenger count; one actuator action |
+| Network loss                    | NVS store-and-forward + idempotency        | Retry without duplicate movement              |
 
 ## Evidence workflow
 

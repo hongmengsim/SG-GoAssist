@@ -31,3 +31,22 @@ export interface BayRepository {
   count(): Promise<number>;
   clear(): Promise<void>;
 }
+
+/** A latest-state record kept once per bus. */
+export interface BusRecord {
+  busId: string;
+  observedAt: string;
+}
+
+/**
+ * Latest record per bus for one kind of report (ramp state, safety decision, help
+ * required). Same contract as BusStatusRepository: one record per bus, constant write
+ * cost, bounded list.
+ */
+export interface BusRecordRepository<T extends BusRecord = BusRecord> {
+  get(busId: string): Promise<T | undefined>;
+  upsert(record: T): Promise<void>;
+  list(limit: number): Promise<T[]>;
+  count(): Promise<number>;
+  clear(): Promise<void>;
+}

@@ -23,11 +23,11 @@ SG GoAssist demonstrates how passenger requests, onboard sensing and an automate
 
 The proposal now focuses on three objectives:
 
-| Objective | Agreed focus |
-| --- | --- |
+| Objective   | Agreed focus                                                                                                                                    |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
 | Recognition | Interpret explicit passenger requests and use camera ML and ToF distance information to assess relevant environmental conditions and obstacles. |
-| Response | Acknowledge requests, issue appropriate assistance commands, apply decision rules and handle exceptions. |
-| Integration | Connect the passenger app, cloud, automated central controller and two simulated buses into a coordinated workflow. |
+| Response    | Acknowledge requests, issue appropriate assistance commands, apply decision rules and handle exceptions.                                        |
+| Integration | Connect the passenger app, cloud, automated central controller and two simulated buses into a coordinated workflow.                             |
 
 The project does not construct or physically actuate a ramp. It assumes that a real bus would already have a ramp and its actuation equipment. The prototype represents ramp commands and movement states on the UI.
 
@@ -37,14 +37,14 @@ Explicit passenger requests remain authoritative for assistance intent. A camera
 
 The prototype uses two Raspberry Pis, representing two autonomous buses, and a host computer running the central controller.
 
-| Component | Agreed responsibility |
-| --- | --- |
-| Passenger app | Submit boarding assistance requests and display request submission and bus confirmation. Retain existing app functions subject to the boarding-only clarification. |
-| Cloud | Receive passenger requests and updates, make them available to the central controller, and relay confirmations or relevant exceptions to the app. |
-| Central controller on the host computer | Automatically process requests, coordinate buses, issue commands, monitor operational states and expose an interface for exceptional human intervention. |
-| Raspberry Pi #1 / Bus 1 | Connect to the side-door camera and ToF sensor, assess obstacles locally and provide continue/halt permission for simulated ramp deployment. |
-| Raspberry Pi #2 / Bus 2 | Represent a second bus and demonstrate waiting for an occupied boarding bay. Equivalent obstacle-sensing inputs are simulated. |
-| Controller dashboard | Display bus, request, ramp simulation and fault information; provide live camera access and remote intervention when needed. |
+| Component                               | Agreed responsibility                                                                                                                                              |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Passenger app                           | Submit boarding assistance requests and display request submission and bus confirmation. Retain existing app functions subject to the boarding-only clarification. |
+| Cloud                                   | Receive passenger requests and updates, make them available to the central controller, and relay confirmations or relevant exceptions to the app.                  |
+| Central controller on the host computer | Automatically process requests, coordinate buses, issue commands, monitor operational states and expose an interface for exceptional human intervention.           |
+| Raspberry Pi #1 / Bus 1                 | Connect to the side-door camera and ToF sensor, assess obstacles locally and provide continue/halt permission for simulated ramp deployment.                       |
+| Raspberry Pi #2 / Bus 2                 | Represent a second bus and demonstrate waiting for an occupied boarding bay. Equivalent obstacle-sensing inputs are simulated.                                     |
+| Controller dashboard                    | Display bus, request, ramp simulation and fault information; provide live camera access and remote intervention when needed.                                       |
 
 Normal request path: **App → cloud → automated central controller → assigned bus.**
 
@@ -72,10 +72,10 @@ The existing app's other functions are retained in principle, but were not exhau
 
 Keep routine passenger status information simple:
 
-| Status | Meaning |
-| --- | --- |
-| Request submitted | The cloud has successfully received the request. This does not mean that a bus has accepted it. |
-| Confirmed by bus | The assigned bus has acknowledged and accepted the assistance request. This does not mean that deployment is complete. |
+| Status            | Meaning                                                                                                                |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| Request submitted | The cloud has successfully received the request. This does not mean that a bus has accepted it.                        |
+| Confirmed by bus  | The assigned bus has acknowledged and accepted the assistance request. This does not mean that deployment is complete. |
 
 Confirmation must originate from the bus and return through the controller and cloud. The app must not claim bus confirmation merely because it sent a request or because the cloud received it.
 
@@ -177,11 +177,11 @@ The timeout value has not been selected. Do not invent a numerical threshold or 
 
 Keep categories separate so concurrent facts can be represented accurately:
 
-| Category | Example states or information |
-| --- | --- |
-| Bus movement | Travelling to stop; waiting for bay; positioned at stop; departing. |
-| Assistance request | Received; accepted; pending; completed; cancelled. |
-| Ramp simulation | Stowed; deployment requested; deploying; deployed; halted. |
+| Category           | Example states or information                                                |
+| ------------------ | ---------------------------------------------------------------------------- |
+| Bus movement       | Travelling to stop; waiting for bay; positioned at stop; departing.          |
+| Assistance request | Received; accepted; pending; completed; cancelled.                           |
+| Ramp simulation    | Stowed; deployment requested; deploying; deployed; halted.                   |
 | Sensors and faults | Obstruction detected; sensor unavailable; deployment timeout; help required. |
 
 For example, Bus 2 can be **waiting for the bay with an accepted ramp request**. Request confirmation must not be confused with deployment, and bus movement must not be collapsed into assistance status.
@@ -217,13 +217,13 @@ The owner wants the proposal to translate the deliverables into **how they could
 
 Use an **Expected Benefits and Future Evaluation** section instead of unfinished measured-results sections. Distinguish intended benefits and possible future metrics from achieved results.
 
-| Deliverable | Expected route to improvement | Possible future metric, not a current result |
-| --- | --- | --- |
-| Passenger request interface | Communicates boarding assistance needs directly to the system. | Request success rate; acknowledgement time. |
-| Bus confirmation | Gives the passenger confirmation that the assigned bus has accepted the request. | Confirmation delivery rate; confirmation latency. |
-| Camera and ToF obstacle checks | Supply information for blocking deployment when an obstruction is detected. | Missed-obstruction rate; false-blocking rate. |
-| Integrated assistance workflow | Coordinates requests, bus state and assistance decisions. | Task completion rate; unnecessary waiting; manual intervention frequency. |
-| Passenger information | Reduces uncertainty about whether a request has been accepted. | Passenger satisfaction in a future study. |
+| Deliverable                    | Expected route to improvement                                                    | Possible future metric, not a current result                              |
+| ------------------------------ | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| Passenger request interface    | Communicates boarding assistance needs directly to the system.                   | Request success rate; acknowledgement time.                               |
+| Bus confirmation               | Gives the passenger confirmation that the assigned bus has accepted the request. | Confirmation delivery rate; confirmation latency.                         |
+| Camera and ToF obstacle checks | Supply information for blocking deployment when an obstruction is detected.      | Missed-obstruction rate; false-blocking rate.                             |
+| Integrated assistance workflow | Coordinates requests, bus state and assistance decisions.                        | Task completion rate; unnecessary waiting; manual intervention frequency. |
+| Passenger information          | Reduces uncertainty about whether a request has been accepted.                   | Passenger satisfaction in a future study.                                 |
 
 An assistance-cue detector could be assessed using precision and recall if that older module is retained; its continued scope is not yet confirmed.
 

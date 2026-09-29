@@ -14,8 +14,22 @@ import {
   MemoryBayRepository,
   MemoryBusStatusRepository,
 } from "./memoryRepositories";
+import {
+  BusReportsService,
+  REPORT_KINDS,
+  type AnyReport,
+  type ReportKind,
+} from "./busReports";
+import {
+  MemoryBusRecordRepository,
+  SqliteBusRecordRepository,
+} from "./busRecordRepositories";
 import { bridgeMovementToVehicleEvents } from "./movementBridge";
-import type { BayRepository, BusStatusRepository } from "./ports";
+import type {
+  BayRepository,
+  BusRecordRepository,
+  BusStatusRepository,
+} from "./ports";
 import {
   SqliteBayRepository,
   SqliteBusStatusRepository,
@@ -34,6 +48,7 @@ export interface BusOperationsOptions {
 
 export interface BusOperations {
   service: BusOperationsService;
+  reports: BusReportsService;
   driver: StorageDriver;
   close: () => void;
 }
@@ -92,8 +107,33 @@ export function createBusOperations(
     now: options.now ?? Date.now,
     onMovement: options.onMovement ?? bridgeMovementToVehicleEvents,
   });
-  return { service, driver, close: () => database?.close() };
+  const publish = options.publish ?? publishEvent;
+  const audit = options.audit ?? auditToOperationsStore;
+  const repositories = Object.fromEntries(
+    REPORT_KINDS.map((kind) => [
+      kind,
+      database
+        ? new SqliteBusRecordRepository<AnyReport>(
+            database,
+            REPORT_TABLES[kind],
+          )
+        : new MemoryBusRecordRepository<AnyReport>(),
+    ]),
+  ) as unknown as Record<ReportKind, BusRecordRepository<AnyReport>>;
+  const reports = new BusReportsService({
+    repositories,
+    publish,
+    audit,
+    now: options.now ?? Date.now,
+  });
+  return { service, reports, driver, close: () => database?.close() };
 }
+
+const REPORT_TABLES: Record<ReportKind, string> = {
+  RAMP_SIMULATION: "ramp_simulation",
+  RAMP_SAFETY: "ramp_safety",
+  HELP_REQUIRED: "help_required",
+};
 
 let current: BusOperations | undefined;
 
@@ -106,6 +146,11 @@ function defaultOptions(): BusOperationsOptions {
         ? "memory"
         : "sqlite";
   return { driver, dataDirectory: process.env.GOASSIST_DATA_DIR };
+}
+
+export function getBusReports(): BusReportsService {
+  current ??= createBusOperations(defaultOptions());
+  return current.reports;
 }
 
 export function getBusOperations(): BusOperationsService {
@@ -122,4 +167,5 @@ export function resetBusOperations(): void {
 /** Removes all stored bus-operations data, for the admin reset endpoint. */
 export async function clearBusOperationsData(): Promise<void> {
   await getBusOperations().clearAll();
+  await getBusReports().clearAll();
 }
