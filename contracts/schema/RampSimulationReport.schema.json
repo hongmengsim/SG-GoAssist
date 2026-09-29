@@ -1,0 +1,60 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "caseId": {
+      "type": "string"
+    },
+    "state": {
+      "$ref": "#/definitions/SimulatedRampState"
+    },
+    "simulated": {
+      "type": "boolean",
+      "const": true,
+      "description": "Literal true: this project never claims physical ramp verification."
+    },
+    "haltReasons": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/HaltReason"
+      }
+    },
+    "observedAt": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "state",
+    "simulated",
+    "observedAt"
+  ],
+  "additionalProperties": false,
+  "definitions": {
+    "SimulatedRampState": {
+      "type": "string",
+      "enum": [
+        "STOWED",
+        "DEPLOYMENT_REQUESTED",
+        "DEPLOYING",
+        "DEPLOYED",
+        "HALTED"
+      ]
+    },
+    "HaltReason": {
+      "type": "string",
+      "enum": [
+        "OBJECT_IN_ZONE",
+        "TOF_BLOCKED",
+        "TOF_UNAVAILABLE",
+        "TOF_NOT_CALIBRATED",
+        "CAMERA_DEGRADED",
+        "SENSORS_DISAGREE",
+        "BUS_NOT_AT_BOARDING_POSITION",
+        "WAITING_FOR_BAY",
+        "NO_ACCEPTED_REQUEST",
+        "OPERATOR_HALT",
+        "DEPLOYMENT_TIMEOUT"
+      ]
+    }
+  }
+}

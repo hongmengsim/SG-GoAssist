@@ -928,6 +928,16 @@ export interface AssistRequestedMessage {
   timestamp: string;
 }
 
+/**
+ * Bodies a bus posts. The bus id travels in the URL path, so the body omits it; these are
+ * what the JSON Schemas in contracts/schema describe and what the Pi agent must emit.
+ */
+export type BusStatusReport = Omit<BusStatus, "busId">;
+export type RampSimulationReport = Omit<RampSimulationStatus, "busId">;
+export type RampSafetyReport = Omit<RampSafetyDecision, "busId">;
+export type HelpRequiredReport = Omit<HelpRequired, "busId">;
+export type SafetyTelemetryReport = Omit<SafetyTelemetry, "busId">;
+
 export type OperatorStatusUpdateMessage =
   | AssistRequestedMessage
   | BusStatusUpdateMessage

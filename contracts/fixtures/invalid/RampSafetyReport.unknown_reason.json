@@ -1,0 +1,24 @@
+{
+  "zoneState": "OCCUPIED",
+  "permission": "HALT",
+  "reasons": [
+    "BORED"
+  ],
+  "tof": {
+    "state": "BLOCKED",
+    "distanceMm": 340,
+    "simulated": true
+  },
+  "camera": {
+    "imageOk": true
+  },
+  "objectsInZone": [
+    {
+      "className": "person",
+      "safety": "UNSAFE",
+      "confidence": 0.93
+    }
+  ],
+  "simulated": true,
+  "observedAt": "2026-09-30T00:00:00.000Z"
+}

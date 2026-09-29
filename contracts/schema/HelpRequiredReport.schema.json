@@ -1,0 +1,48 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "caseId": {
+      "type": "string"
+    },
+    "reason": {
+      "$ref": "#/definitions/HelpReason"
+    },
+    "state": {
+      "$ref": "#/definitions/SimulatedRampState"
+    },
+    "detail": {
+      "type": "string"
+    },
+    "observedAt": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "reason",
+    "state",
+    "observedAt"
+  ],
+  "additionalProperties": false,
+  "definitions": {
+    "HelpReason": {
+      "type": "string",
+      "enum": [
+        "DEPLOYMENT_TIMEOUT",
+        "OBSTRUCTION_PERSISTENT",
+        "SENSOR_UNAVAILABLE",
+        "OTHER"
+      ]
+    },
+    "SimulatedRampState": {
+      "type": "string",
+      "enum": [
+        "STOWED",
+        "DEPLOYMENT_REQUESTED",
+        "DEPLOYING",
+        "DEPLOYED",
+        "HALTED"
+      ]
+    }
+  }
+}

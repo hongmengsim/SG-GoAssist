@@ -1,0 +1,68 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "requestId": {
+      "type": "string"
+    },
+    "caseId": {
+      "type": "string"
+    },
+    "busId": {
+      "type": "string"
+    },
+    "busService": {
+      "type": "string"
+    },
+    "boardingStop": {
+      "type": "string"
+    },
+    "stopCode": {
+      "type": "string"
+    },
+    "destination": {
+      "type": "string"
+    },
+    "assistanceTypes": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/AssistanceType"
+      }
+    },
+    "boardingOrAlighting": {
+      "$ref": "#/definitions/AssistancePhase"
+    },
+    "createdAt": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "requestId",
+    "busId",
+    "busService",
+    "boardingStop",
+    "assistanceTypes",
+    "boardingOrAlighting",
+    "createdAt"
+  ],
+  "additionalProperties": false,
+  "description": "What a bus needs to know about a passenger request. No session id or other passenger identity is included.",
+  "definitions": {
+    "AssistanceType": {
+      "type": "string",
+      "enum": [
+        "WHEELCHAIR_RAMP",
+        "BUS_AUDIO_IDENTIFICATION",
+        "EXTENDED_DWELL_TIME"
+      ],
+      "description": "Shared contracts for the BUSPASS passenger assistance MVP.\n\nThe passenger app communicates assistance intent. Autonomous bus hardware and controller software remain responsible for vehicle positioning, ramp safety, external announcements, and physical actuation."
+    },
+    "AssistancePhase": {
+      "type": "string",
+      "enum": [
+        "BOARDING",
+        "ALIGHTING"
+      ]
+    }
+  }
+}

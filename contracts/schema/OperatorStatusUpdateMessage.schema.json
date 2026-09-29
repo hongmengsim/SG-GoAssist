@@ -1,0 +1,535 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "anyOf": [
+    {
+      "$ref": "#/definitions/AssistRequestedMessage"
+    },
+    {
+      "$ref": "#/definitions/BusStatusUpdateMessage"
+    },
+    {
+      "$ref": "#/definitions/BayStatusUpdateMessage"
+    },
+    {
+      "$ref": "#/definitions/RampSimulationUpdateMessage"
+    },
+    {
+      "$ref": "#/definitions/RampSafetyUpdateMessage"
+    },
+    {
+      "$ref": "#/definitions/HelpRequiredMessage"
+    }
+  ],
+  "definitions": {
+    "AssistRequestedMessage": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "ASSIST_REQUESTED"
+        },
+        "request": {
+          "$ref": "#/definitions/AssistRequestForBus"
+        },
+        "timestamp": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "request",
+        "timestamp"
+      ],
+      "additionalProperties": false,
+      "description": "Pushed to the addressed bus (operator-style scoped subscription); never to passengers."
+    },
+    "AssistRequestForBus": {
+      "type": "object",
+      "properties": {
+        "requestId": {
+          "type": "string"
+        },
+        "caseId": {
+          "type": "string"
+        },
+        "busId": {
+          "type": "string"
+        },
+        "busService": {
+          "type": "string"
+        },
+        "boardingStop": {
+          "type": "string"
+        },
+        "stopCode": {
+          "type": "string"
+        },
+        "destination": {
+          "type": "string"
+        },
+        "assistanceTypes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/AssistanceType"
+          }
+        },
+        "boardingOrAlighting": {
+          "$ref": "#/definitions/AssistancePhase"
+        },
+        "createdAt": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "requestId",
+        "busId",
+        "busService",
+        "boardingStop",
+        "assistanceTypes",
+        "boardingOrAlighting",
+        "createdAt"
+      ],
+      "additionalProperties": false,
+      "description": "What a bus needs to know about a passenger request. No session id or other passenger identity is included."
+    },
+    "AssistanceType": {
+      "type": "string",
+      "enum": [
+        "WHEELCHAIR_RAMP",
+        "BUS_AUDIO_IDENTIFICATION",
+        "EXTENDED_DWELL_TIME"
+      ],
+      "description": "Shared contracts for the BUSPASS passenger assistance MVP.\n\nThe passenger app communicates assistance intent. Autonomous bus hardware and controller software remain responsible for vehicle positioning, ramp safety, external announcements, and physical actuation."
+    },
+    "AssistancePhase": {
+      "type": "string",
+      "enum": [
+        "BOARDING",
+        "ALIGHTING"
+      ]
+    },
+    "BusStatusUpdateMessage": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "BUS_STATUS"
+        },
+        "status": {
+          "$ref": "#/definitions/BusStatus"
+        },
+        "timestamp": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "status",
+        "timestamp"
+      ],
+      "additionalProperties": false
+    },
+    "BusStatus": {
+      "type": "object",
+      "properties": {
+        "busId": {
+          "type": "string"
+        },
+        "busService": {
+          "type": "string"
+        },
+        "stopCode": {
+          "type": "string"
+        },
+        "bayId": {
+          "type": "string"
+        },
+        "movement": {
+          "$ref": "#/definitions/BusMovementState"
+        },
+        "simulated": {
+          "type": "boolean",
+          "description": "True when this bus's movement or sensors are simulated (for example Bus 2)."
+        },
+        "observedAt": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "busId",
+        "busService",
+        "movement",
+        "simulated",
+        "observedAt"
+      ],
+      "additionalProperties": false,
+      "description": "Movement only; request status, ramp state and faults are separate."
+    },
+    "BusMovementState": {
+      "type": "string",
+      "enum": [
+        "TRAVELLING_TO_STOP",
+        "WAITING_FOR_BAY",
+        "POSITIONED_AT_STOP",
+        "DEPARTING"
+      ]
+    },
+    "BayStatusUpdateMessage": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "BAY_STATUS"
+        },
+        "bay": {
+          "$ref": "#/definitions/BayStatus"
+        },
+        "timestamp": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "bay",
+        "timestamp"
+      ],
+      "additionalProperties": false
+    },
+    "BayStatus": {
+      "type": "object",
+      "properties": {
+        "stopCode": {
+          "type": "string"
+        },
+        "bayId": {
+          "type": "string"
+        },
+        "occupantBusId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "waitingBusIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "First in, first out."
+        },
+        "grantedBusId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Bus the controller has told to enter the now-free bay; null when none."
+        },
+        "updatedAt": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "stopCode",
+        "bayId",
+        "occupantBusId",
+        "waitingBusIds",
+        "grantedBusId",
+        "updatedAt"
+      ],
+      "additionalProperties": false,
+      "description": "One bay per stop. A waiting bus may enter only after the controller grants it."
+    },
+    "RampSimulationUpdateMessage": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "RAMP_SIMULATION"
+        },
+        "ramp": {
+          "$ref": "#/definitions/RampSimulationStatus"
+        },
+        "timestamp": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "ramp",
+        "timestamp"
+      ],
+      "additionalProperties": false
+    },
+    "RampSimulationStatus": {
+      "type": "object",
+      "properties": {
+        "busId": {
+          "type": "string"
+        },
+        "caseId": {
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/definitions/SimulatedRampState"
+        },
+        "simulated": {
+          "type": "boolean",
+          "const": true,
+          "description": "Literal true: this project never claims physical ramp verification."
+        },
+        "haltReasons": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/HaltReason"
+          }
+        },
+        "observedAt": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "busId",
+        "state",
+        "simulated",
+        "observedAt"
+      ],
+      "additionalProperties": false
+    },
+    "SimulatedRampState": {
+      "type": "string",
+      "enum": [
+        "STOWED",
+        "DEPLOYMENT_REQUESTED",
+        "DEPLOYING",
+        "DEPLOYED",
+        "HALTED"
+      ]
+    },
+    "HaltReason": {
+      "type": "string",
+      "enum": [
+        "OBJECT_IN_ZONE",
+        "TOF_BLOCKED",
+        "TOF_UNAVAILABLE",
+        "TOF_NOT_CALIBRATED",
+        "CAMERA_DEGRADED",
+        "SENSORS_DISAGREE",
+        "BUS_NOT_AT_BOARDING_POSITION",
+        "WAITING_FOR_BAY",
+        "NO_ACCEPTED_REQUEST",
+        "OPERATOR_HALT",
+        "DEPLOYMENT_TIMEOUT"
+      ]
+    },
+    "RampSafetyUpdateMessage": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "RAMP_SAFETY"
+        },
+        "decision": {
+          "$ref": "#/definitions/RampSafetyDecision"
+        },
+        "timestamp": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "decision",
+        "timestamp"
+      ],
+      "additionalProperties": false
+    },
+    "RampSafetyDecision": {
+      "type": "object",
+      "properties": {
+        "busId": {
+          "type": "string"
+        },
+        "zoneState": {
+          "$ref": "#/definitions/ZoneState"
+        },
+        "permission": {
+          "$ref": "#/definitions/RampPermission"
+        },
+        "reasons": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/HaltReason"
+          }
+        },
+        "tof": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "$ref": "#/definitions/TofBeamState"
+            },
+            "distanceMm": {
+              "type": "number"
+            },
+            "simulated": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "state",
+            "simulated"
+          ],
+          "additionalProperties": false
+        },
+        "camera": {
+          "type": "object",
+          "properties": {
+            "imageOk": {
+              "type": "boolean"
+            },
+            "degradedReason": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "imageOk"
+          ],
+          "additionalProperties": false
+        },
+        "objectsInZone": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "className": {
+                "type": "string"
+              },
+              "safety": {
+                "$ref": "#/definitions/ObjectSafety"
+              },
+              "confidence": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "className",
+              "safety",
+              "confidence"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "simulated": {
+          "type": "boolean",
+          "description": "True when any input on this bus is simulated."
+        },
+        "observedAt": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "busId",
+        "zoneState",
+        "permission",
+        "reasons",
+        "tof",
+        "camera",
+        "objectsInZone",
+        "simulated",
+        "observedAt"
+      ],
+      "additionalProperties": false,
+      "description": "The Pi's local decision. CONTINUE only when zoneState is CLEAR and every check passed. Missing, stale or invalid sensor data is never CLEAR."
+    },
+    "ZoneState": {
+      "type": "string",
+      "enum": [
+        "CLEAR",
+        "OCCUPIED",
+        "UNCERTAIN"
+      ]
+    },
+    "RampPermission": {
+      "type": "string",
+      "enum": [
+        "CONTINUE",
+        "HALT"
+      ]
+    },
+    "TofBeamState": {
+      "type": "string",
+      "enum": [
+        "BEAM_CLEAR",
+        "BLOCKED",
+        "CHECKING",
+        "UNCALIBRATED",
+        "UNKNOWN"
+      ]
+    },
+    "ObjectSafety": {
+      "type": "string",
+      "enum": [
+        "SAFE",
+        "UNSAFE"
+      ]
+    },
+    "HelpRequiredMessage": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "HELP_REQUIRED"
+        },
+        "help": {
+          "$ref": "#/definitions/HelpRequired"
+        },
+        "timestamp": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "help",
+        "timestamp"
+      ],
+      "additionalProperties": false
+    },
+    "HelpRequired": {
+      "type": "object",
+      "properties": {
+        "busId": {
+          "type": "string"
+        },
+        "caseId": {
+          "type": "string"
+        },
+        "reason": {
+          "$ref": "#/definitions/HelpReason"
+        },
+        "state": {
+          "$ref": "#/definitions/SimulatedRampState"
+        },
+        "detail": {
+          "type": "string"
+        },
+        "observedAt": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "busId",
+        "reason",
+        "state",
+        "observedAt"
+      ],
+      "additionalProperties": false
+    },
+    "HelpReason": {
+      "type": "string",
+      "enum": [
+        "DEPLOYMENT_TIMEOUT",
+        "OBSTRUCTION_PERSISTENT",
+        "SENSOR_UNAVAILABLE",
+        "OTHER"
+      ]
+    }
+  }
+}

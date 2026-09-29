@@ -1,0 +1,10 @@
+{
+  "stopCode": "18331",
+  "vehicleStopped": true,
+  "parkingBrakeActive": true,
+  "doorOpen": true,
+  "deploymentPathClear": false,
+  "rampPosition": "STOWED",
+  "networkOnline": true,
+  "observedAt": "2026-09-30T00:00:00.000Z"
+}

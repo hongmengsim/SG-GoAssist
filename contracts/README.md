@@ -38,3 +38,15 @@ npm.cmd run typecheck                                # this package plus backend
 ## Depends on
 
 Nothing. Changes here need review from both the passenger-app/backend side and the Pi/operator-console side (see `.github/CODEOWNERS`).
+
+## JSON Schema and shared fixtures
+
+The bodies a bus agent posts (`BusStatusReport`, `RampSimulationReport`, `RampSafetyReport`, `HelpRequiredReport`, `SafetyTelemetryReport`) and the operator-facing messages are published as JSON Schema in `schema/`, generated from `src/index.ts` (`npm run schema --workspace @buspass/shared`). Unknown fields are rejected, so a misspelt or renamed field fails instead of being ignored.
+
+`fixtures/valid` and `fixtures/invalid` hold example messages named `<Type>.<label>.json`. Three checks read them:
+
+- `scripts/schemas.test.mjs` (TypeScript): the committed schemas equal what the types generate, valid fixtures pass, invalid fixtures fail.
+- `python/test_schemas.py` (`python -m unittest discover -s contracts/python`, needs `jsonschema`): the same fixtures for the Pi agent's side.
+- `backend/src/tests/contractFixtures.test.ts`: every valid report fixture is accepted by the backend's own validation.
+
+Rules a schema cannot express (a `CONTINUE` decision needs a `CLEAR` zone and no halt reasons; a `HALT` needs a reason; the ramp is always `simulated: true`) are enforced by the backend and tested there.

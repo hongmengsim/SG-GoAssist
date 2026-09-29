@@ -1,0 +1,129 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "stopCode": {
+      "type": "string"
+    },
+    "vehicleStopped": {
+      "type": "boolean"
+    },
+    "parkingBrakeActive": {
+      "type": "boolean"
+    },
+    "doorOpen": {
+      "type": "boolean"
+    },
+    "deploymentPathClear": {
+      "type": "boolean"
+    },
+    "rampObstacle": {
+      "$ref": "#/definitions/RampObstacleAssessment"
+    },
+    "rampPosition": {
+      "$ref": "#/definitions/RampPosition"
+    },
+    "wheelchairSpaceOccupied": {
+      "type": "boolean"
+    },
+    "prioritySeatOccupied": {
+      "type": "boolean"
+    },
+    "passengerSeated": {
+      "type": "boolean"
+    },
+    "boardingComplete": {
+      "type": "boolean"
+    },
+    "networkOnline": {
+      "type": "boolean"
+    },
+    "observedAt": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "vehicleStopped",
+    "parkingBrakeActive",
+    "doorOpen",
+    "deploymentPathClear",
+    "rampPosition",
+    "observedAt"
+  ],
+  "additionalProperties": false,
+  "definitions": {
+    "RampObstacleAssessment": {
+      "type": "object",
+      "properties": {
+        "laserHealthy": {
+          "type": "boolean"
+        },
+        "objectDetected": {
+          "type": "boolean"
+        },
+        "nearestDistanceMm": {
+          "type": "number"
+        },
+        "occupiedZoneCount": {
+          "type": "number"
+        },
+        "criticalZoneOccupied": {
+          "type": "boolean"
+        },
+        "observedAt": {
+          "type": "string"
+        },
+        "classification": {
+          "$ref": "#/definitions/RampObstacleClass"
+        },
+        "classificationConfidence": {
+          "type": "number"
+        },
+        "classificationObservedAt": {
+          "type": "string"
+        },
+        "blocksDeployment": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "blocksDeployment",
+        "classification",
+        "classificationConfidence",
+        "criticalZoneOccupied",
+        "laserHealthy",
+        "objectDetected",
+        "observedAt",
+        "occupiedZoneCount",
+        "reason"
+      ],
+      "additionalProperties": false
+    },
+    "RampObstacleClass": {
+      "type": "string",
+      "enum": [
+        "NONE",
+        "LIGHT_DEBRIS",
+        "PERSON",
+        "MOBILITY_DEVICE",
+        "LUGGAGE",
+        "ANIMAL",
+        "UNKNOWN"
+      ]
+    },
+    "RampPosition": {
+      "type": "string",
+      "enum": [
+        "STOWED",
+        "DEPLOYING",
+        "DEPLOYED",
+        "RETRACTING",
+        "FAULT",
+        "UNKNOWN"
+      ]
+    }
+  }
+}

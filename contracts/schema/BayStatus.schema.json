@@ -1,0 +1,46 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "stopCode": {
+      "type": "string"
+    },
+    "bayId": {
+      "type": "string"
+    },
+    "occupantBusId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "waitingBusIds": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "First in, first out."
+    },
+    "grantedBusId": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Bus the controller has told to enter the now-free bay; null when none."
+    },
+    "updatedAt": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "stopCode",
+    "bayId",
+    "occupantBusId",
+    "waitingBusIds",
+    "grantedBusId",
+    "updatedAt"
+  ],
+  "additionalProperties": false,
+  "description": "One bay per stop. A waiting bus may enter only after the controller grants it.",
+  "definitions": {}
+}

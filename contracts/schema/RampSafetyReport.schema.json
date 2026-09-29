@@ -1,0 +1,143 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "zoneState": {
+      "$ref": "#/definitions/ZoneState"
+    },
+    "permission": {
+      "$ref": "#/definitions/RampPermission"
+    },
+    "reasons": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/HaltReason"
+      }
+    },
+    "tof": {
+      "type": "object",
+      "properties": {
+        "state": {
+          "$ref": "#/definitions/TofBeamState"
+        },
+        "distanceMm": {
+          "type": "number"
+        },
+        "simulated": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "state",
+        "simulated"
+      ],
+      "additionalProperties": false
+    },
+    "camera": {
+      "type": "object",
+      "properties": {
+        "imageOk": {
+          "type": "boolean"
+        },
+        "degradedReason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "imageOk"
+      ],
+      "additionalProperties": false
+    },
+    "objectsInZone": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "className": {
+            "type": "string"
+          },
+          "safety": {
+            "$ref": "#/definitions/ObjectSafety"
+          },
+          "confidence": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "className",
+          "safety",
+          "confidence"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "simulated": {
+      "type": "boolean",
+      "description": "True when any input on this bus is simulated."
+    },
+    "observedAt": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "zoneState",
+    "permission",
+    "reasons",
+    "tof",
+    "camera",
+    "objectsInZone",
+    "simulated",
+    "observedAt"
+  ],
+  "additionalProperties": false,
+  "definitions": {
+    "ZoneState": {
+      "type": "string",
+      "enum": [
+        "CLEAR",
+        "OCCUPIED",
+        "UNCERTAIN"
+      ]
+    },
+    "RampPermission": {
+      "type": "string",
+      "enum": [
+        "CONTINUE",
+        "HALT"
+      ]
+    },
+    "HaltReason": {
+      "type": "string",
+      "enum": [
+        "OBJECT_IN_ZONE",
+        "TOF_BLOCKED",
+        "TOF_UNAVAILABLE",
+        "TOF_NOT_CALIBRATED",
+        "CAMERA_DEGRADED",
+        "SENSORS_DISAGREE",
+        "BUS_NOT_AT_BOARDING_POSITION",
+        "WAITING_FOR_BAY",
+        "NO_ACCEPTED_REQUEST",
+        "OPERATOR_HALT",
+        "DEPLOYMENT_TIMEOUT"
+      ]
+    },
+    "TofBeamState": {
+      "type": "string",
+      "enum": [
+        "BEAM_CLEAR",
+        "BLOCKED",
+        "CHECKING",
+        "UNCALIBRATED",
+        "UNKNOWN"
+      ]
+    },
+    "ObjectSafety": {
+      "type": "string",
+      "enum": [
+        "SAFE",
+        "UNSAFE"
+      ]
+    }
+  }
+}

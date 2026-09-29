@@ -1,0 +1,13 @@
+{
+  "type": "BUS_STATUS",
+  "status": {
+    "busId": "AV-095-01",
+    "busService": "95",
+    "stopCode": "18331",
+    "bayId": "BAY-1",
+    "movement": "POSITIONED_AT_STOP",
+    "simulated": true,
+    "observedAt": "2026-09-30T00:00:00.000Z"
+  },
+  "timestamp": "2026-09-30T00:00:00.000Z"
+}

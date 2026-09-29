@@ -1,0 +1,15 @@
+{
+  "zoneState": "CLEAR",
+  "permission": "CONTINUE",
+  "reasons": [],
+  "tof": {
+    "state": "BEAM_CLEAR",
+    "simulated": true
+  },
+  "camera": {
+    "imageOk": true
+  },
+  "objectsInZone": [],
+  "simulated": true,
+  "observedAt": "2026-09-30T00:00:00.000Z"
+}

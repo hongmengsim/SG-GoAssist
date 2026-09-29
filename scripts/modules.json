@@ -8,7 +8,7 @@
       "packageName": "@buspass/shared",
       "readme": "strict",
       "manifest": "package.json",
-      "verify": "npm run typecheck --workspace @buspass/shared",
+      "verify": "npm run typecheck --workspace @buspass/shared && npm test --workspace @buspass/shared && python -m unittest discover -s contracts/python",
       "allowedDependencies": []
     },
     {

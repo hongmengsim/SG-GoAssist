@@ -8,9 +8,14 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "lint": "npm run typecheck",
-    "dev": "tsc --watch"
+    "dev": "tsc --watch",
+    "schema": "node scripts/generate-schemas.mjs",
+    "schema:check": "node scripts/generate-schemas.mjs --check",
+    "test": "node --test scripts/schemas.test.mjs"
   },
   "devDependencies": {
+    "ajv": "^8.20.0",
+    "ts-json-schema-generator": "^2.9.0",
     "typescript": "^5.2.0"
   }
 }

@@ -1,0 +1,6 @@
+{
+  "reason": "DEPLOYMENT_TIMEOUT",
+  "state": "DEPLOYING",
+  "detail": "Ramp did not finish",
+  "observedAt": "2026-09-30T00:00:00.000Z"
+}

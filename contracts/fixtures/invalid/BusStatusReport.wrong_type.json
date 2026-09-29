@@ -1,0 +1,8 @@
+{
+  "busService": "95",
+  "stopCode": "18331",
+  "bayId": "BAY-1",
+  "movement": "POSITIONED_AT_STOP",
+  "simulated": "yes",
+  "observedAt": "2026-09-30T00:00:00.000Z"
+}

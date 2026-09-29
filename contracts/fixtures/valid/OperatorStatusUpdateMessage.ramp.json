@@ -1,0 +1,10 @@
+{
+  "type": "RAMP_SIMULATION",
+  "ramp": {
+    "busId": "AV-095-01",
+    "state": "DEPLOYING",
+    "simulated": true,
+    "observedAt": "2026-09-30T00:00:00.000Z"
+  },
+  "timestamp": "2026-09-30T00:00:00.000Z"
+}

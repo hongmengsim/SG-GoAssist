@@ -1,0 +1,44 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "busService": {
+      "type": "string"
+    },
+    "stopCode": {
+      "type": "string"
+    },
+    "bayId": {
+      "type": "string"
+    },
+    "movement": {
+      "$ref": "#/definitions/BusMovementState"
+    },
+    "simulated": {
+      "type": "boolean",
+      "description": "True when this bus's movement or sensors are simulated (for example Bus 2)."
+    },
+    "observedAt": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "busService",
+    "movement",
+    "simulated",
+    "observedAt"
+  ],
+  "additionalProperties": false,
+  "description": "Bodies a bus posts. The bus id travels in the URL path, so the body omits it; these are what the JSON Schemas in contracts/schema describe and what the Pi agent must emit.",
+  "definitions": {
+    "BusMovementState": {
+      "type": "string",
+      "enum": [
+        "TRAVELLING_TO_STOP",
+        "WAITING_FOR_BAY",
+        "POSITIONED_AT_STOP",
+        "DEPARTING"
+      ]
+    }
+  }
+}

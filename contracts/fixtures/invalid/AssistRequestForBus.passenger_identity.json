@@ -1,0 +1,12 @@
+{
+  "requestId": "REQ-20260930-ABC123",
+  "busId": "AV-095-01",
+  "busService": "95",
+  "boardingStop": "18301",
+  "assistanceTypes": [
+    "WHEELCHAIR_RAMP"
+  ],
+  "boardingOrAlighting": "BOARDING",
+  "createdAt": "2026-09-30T00:00:00.000Z",
+  "sessionId": "secret"
+}
