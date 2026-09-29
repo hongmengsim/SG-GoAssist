@@ -9,6 +9,8 @@ Read in this order when you are new to the project.
 | [`architecture/`](architecture/) | How the system works: MVP architecture, the integrated prototype and its safety policy, requirements traceability, feature readiness, the on-device assistant | [`mvp.md`](architecture/mvp.md)                                                                                                                                            |
 | [`interfaces/`](interfaces/)     | Message and endpoint definitions between the parts, and proposed additions                                                                                    | [`message-additions.md`](interfaces/message-additions.md)                                                                                                                  |
 
+What is still missing and in what order: [`roadmap.md`](roadmap.md).
+
 The message contract itself is code: [`contracts/src/index.ts`](../contracts/src/index.ts).
 
 Runbooks (how to run and demo each part) will live in `docs/runbooks/` once the module READMEs exist. Each module documents how to run and test itself in its own README.
