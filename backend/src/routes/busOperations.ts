@@ -12,7 +12,11 @@ import {
   BusOperationsValidationError,
 } from "../busOperations/busOperationsService";
 import { getOperationsStore } from "../services/operationsStore";
-import { getBusOperations, getBusReports } from "../busOperations/composition";
+import {
+  flushBusOperationsAudit,
+  getBusOperations,
+  getBusReports,
+} from "../busOperations/composition";
 import {
   getAllRequests,
   getRequest,
@@ -170,6 +174,7 @@ router.get("/audit", requireOperator, (req: Request, res: Response) => {
     Number.isFinite(requested) && requested >= 1
       ? Math.min(Math.trunc(requested), MAX_AUDIT_LIMIT)
       : DEFAULT_AUDIT_LIMIT;
+  flushBusOperationsAudit();
   const events = getOperationsStore().readAudit({
     limit,
     caseId: queryText(req.query.caseId),

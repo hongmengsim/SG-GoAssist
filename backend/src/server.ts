@@ -16,6 +16,7 @@ import {
 } from "./services/websocket";
 import { logger } from "./services/logger";
 import { createApp } from "./app";
+import { flushBusOperationsAudit } from "./busOperations/composition";
 import { busStopRepository } from "./bus-stops/repository";
 
 // Load environment variables
@@ -55,8 +56,15 @@ httpServer.listen(PORT, () => {
 // Graceful shutdown
 process.on("SIGTERM", () => {
   logger.info("SIGTERM signal received: closing HTTP server");
+  flushBusOperationsAudit();
   httpServer.close(() => {
     logger.info("HTTP server closed");
     process.exit(0);
   });
+});
+
+// Ctrl+C: write any audit events still waiting to be batched before exiting.
+process.on("SIGINT", () => {
+  flushBusOperationsAudit();
+  process.exit(0);
 });

@@ -114,6 +114,47 @@ export class OperationsStore {
   }
 
   /**
+   * Writes several events in one transaction (one flush to disk) and one file append. The
+   * events keep their order; an empty batch does nothing.
+   */
+  appendAuditBatch(events: OperationsAuditEvent[]): void {
+    if (events.length === 0) return;
+    if (this.database) {
+      const insert = this.database.prepare(
+        "INSERT INTO audit_events (event_id, event_type, case_id, bus_id, actor, timestamp, detail_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      );
+      this.database.exec("BEGIN");
+      try {
+        for (const event of events) {
+          insert.run(
+            event.eventId,
+            event.eventType,
+            event.caseId ?? null,
+            event.busId ?? null,
+            event.actor,
+            event.timestamp,
+            JSON.stringify(event.detail ?? {}),
+          );
+        }
+        this.database.exec("COMMIT");
+      } catch (error) {
+        this.database.exec("ROLLBACK");
+        throw error;
+      }
+    }
+    fs.appendFileSync(
+      this.auditPath,
+      events
+        .map(
+          (event) => `${JSON.stringify(event)}
+`,
+        )
+        .join(""),
+      "utf8",
+    );
+  }
+
+  /**
    * Newest events first. SQLite answers from indexes and reads only `limit` rows; the
    * ndjson fallback has to read the whole file, which is acceptable for a demo-sized log
    * and is the reason the SQLite driver is the default outside tests.

@@ -40,6 +40,8 @@
     "test:modules": "node --test scripts/check-modules.test.mjs scripts/verify.test.mjs",
     "verify": "node scripts/verify.mjs",
     "verify:fast": "node scripts/verify.mjs --fast",
+    "load:test": "node scripts/load-test.mjs",
+    "load:overload": "node scripts/load-test.mjs --overload",
     "bench:store": "node --no-warnings scripts/bench-operations-store.mjs",
     "lint": "npm run typecheck && npm run format:check",
     "format": "prettier --write package.json contracts/package.json backend/package.json passenger-app/package.json scripts README.md",

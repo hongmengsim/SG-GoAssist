@@ -15,11 +15,13 @@ export interface TestServer {
   close: () => Promise<void>;
 }
 
-export async function startTestServer(): Promise<TestServer> {
+export async function startTestServer(
+  options: Parameters<typeof createApp>[0] = {},
+): Promise<TestServer> {
   clearAllRequests();
   clearOperations();
   resetBusOperations();
-  const server = http.createServer(createApp());
+  const server = http.createServer(createApp(options));
   initializeWebSocketServer(server, 0);
   setupStateChangeListener();
 

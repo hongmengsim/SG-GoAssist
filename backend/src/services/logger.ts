@@ -15,15 +15,19 @@ interface LogEntry {
   data?: Record<string, any>;
 }
 
+/** The in-memory log keeps only the newest entries, so it cannot grow without bound. */
+export const MAX_LOG_ENTRIES = 2000;
+
 class Logger {
   private logs: LogEntry[] = [];
 
-  log(
+  /** Keeps an entry in memory without printing it. */
+  record(
     level: "INFO" | "WARN" | "ERROR" | "DEBUG",
     message: string,
     requestId?: string,
     data?: Record<string, any>,
-  ) {
+  ): LogEntry {
     const entry: LogEntry = {
       timestamp: new Date().toISOString(),
       level,
@@ -31,8 +35,20 @@ class Logger {
       requestId,
       data,
     };
-
     this.logs.push(entry);
+    if (this.logs.length > MAX_LOG_ENTRIES) {
+      this.logs.splice(0, this.logs.length - MAX_LOG_ENTRIES);
+    }
+    return entry;
+  }
+
+  log(
+    level: "INFO" | "WARN" | "ERROR" | "DEBUG",
+    message: string,
+    requestId?: string,
+    data?: Record<string, any>,
+  ) {
+    const entry = this.record(level, message, requestId, data);
     console.log(
       `[${entry.timestamp}] [${level}] ${requestId ? `[${requestId}] ` : ""}${message}`,
       data || "",

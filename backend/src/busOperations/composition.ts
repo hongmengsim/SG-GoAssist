@@ -3,7 +3,11 @@ import fs from "fs";
 import path from "path";
 import { publishEvent } from "../events/eventHub";
 import { logger } from "../services/logger";
-import { getOperationsStore } from "../services/operationsStore";
+import { AuditBatcher } from "./auditBatcher";
+import {
+  getOperationsStore,
+  type OperationsAuditEvent,
+} from "../services/operationsStore";
 import { openSqliteDatabase, type SqliteDatabase } from "../storage/sqlite";
 import {
   BusOperationsService,
@@ -51,11 +55,16 @@ export interface BusOperations {
   reports: BusReportsService;
   driver: StorageDriver;
   close: () => void;
+  /** Writes any audit events still waiting to be batched. */
+  flushAudit: () => void;
 }
 
-/** Writes to the same append-only audit log the case service uses. */
-function auditToOperationsStore(event: AuditEventInput): void {
-  getOperationsStore().appendAudit({
+/**
+ * Bus-operations audit events go to the same append-only log the case service uses, but in
+ * short batches (see AuditBatcher for the trade-off).
+ */
+function toAuditEvent(event: AuditEventInput): OperationsAuditEvent {
+  return {
     eventId: `EVENT-${crypto.randomUUID()}`,
     eventType: event.eventType,
     caseId: event.caseId,
@@ -63,7 +72,7 @@ function auditToOperationsStore(event: AuditEventInput): void {
     actor: event.actor,
     timestamp: new Date().toISOString(),
     detail: event.detail,
-  });
+  };
 }
 
 /**
@@ -74,6 +83,9 @@ function auditToOperationsStore(event: AuditEventInput): void {
 export function createBusOperations(
   options: BusOperationsOptions,
 ): BusOperations {
+  const batcher = new AuditBatcher((events) =>
+    getOperationsStore().appendAuditBatch(events),
+  );
   let repository: BusStatusRepository | undefined;
   let bays: BayRepository | undefined;
   let database: SqliteDatabase | undefined;
@@ -103,12 +115,14 @@ export function createBusOperations(
     busStatus: repository,
     bays,
     publish: options.publish ?? publishEvent,
-    audit: options.audit ?? auditToOperationsStore,
+    audit: options.audit ?? ((event) => batcher.add(toAuditEvent(event))),
     now: options.now ?? Date.now,
     onMovement: options.onMovement ?? bridgeMovementToVehicleEvents,
   });
   const publish = options.publish ?? publishEvent;
-  const audit = options.audit ?? auditToOperationsStore;
+  const audit =
+    options.audit ??
+    ((event: AuditEventInput) => batcher.add(toAuditEvent(event)));
   const repositories = Object.fromEntries(
     REPORT_KINDS.map((kind) => [
       kind,
@@ -126,7 +140,16 @@ export function createBusOperations(
     audit,
     now: options.now ?? Date.now,
   });
-  return { service, reports, driver, close: () => database?.close() };
+  return {
+    service,
+    reports,
+    driver,
+    flushAudit: () => batcher.flush(),
+    close: () => {
+      batcher.flush();
+      database?.close();
+    },
+  };
 }
 
 const REPORT_TABLES: Record<ReportKind, string> = {
@@ -156,6 +179,11 @@ export function getBusReports(): BusReportsService {
 export function getBusOperations(): BusOperationsService {
   current ??= createBusOperations(defaultOptions());
   return current.service;
+}
+
+/** Writes audit events that are still waiting, for example before the audit log is read. */
+export function flushBusOperationsAudit(): void {
+  current?.flushAudit();
 }
 
 /** Drops the current instance (closing its database) so the next use starts fresh. */

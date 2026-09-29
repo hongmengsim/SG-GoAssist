@@ -13,7 +13,7 @@ Legend: `[x]` built and verified by a test or a run (evidence given), `[ ]` not 
 | Backend                                                    | 244 tests                                                                                                           |
 | Passenger app                                              | 420 tests (last full run; unchanged code)                                                                           |
 | Contracts                                                  | 4 (TypeScript, schema drift and fixtures) + 3 (Python, fixtures)                                                    |
-| `pi/tof-link` / `perception` / `safety-gate` / `bus-agent` | 28 / 33 / 29 / 77 tests, no hardware                                                                                |
+| `pi/tof-link` / `perception` / `safety-gate` / `bus-agent` | 28 / 33 / 29 / 153 tests, no hardware                                                                               |
 | `operator-console`                                         | 89 tests, including an integration test against the real built backend                                              |
 | Module checker and verify runner                           | 18 tests                                                                                                            |
 | `npm run e2e:scenario`                                     | 4 consecutive passes, about 40 s each: real backend, two simulated buses, signed requests, bus-only acknowledgement |
@@ -50,6 +50,13 @@ Legend: `[x]` built and verified by a test or a run (evidence given), `[ ]` not 
 - [x] A3 Local status page (`--status-port`): movement, simulated ramp, Pi decision with reasons, beam, camera health and backend link in words and marks, guarded by a start-up code, no image data; simulation-only scene controls.
 - [x] **Safety-loop isolation (found during A3):** every network call now runs on a worker thread (`async_backend.py`). Before, a blocked connection could stall a tick for many seconds and the ramp would act on a stale decision. A tick now also counts for at most 1 s of ramp movement. Tests include 50 ticks against a stuck backend finishing in under a second and still halting on a person.
 
+### Platform and scale (SC2, SC4, SC5, SC7, SC8, part of SC6)
+
+- [x] Roles: `GOASSIST_ROLES` mounts `passenger` and/or `operations`; a process with one role returns 404 for the other's routes (tests).
+- [x] Rate limiting per class and key with priority shedding: safety traffic (buses) is never shed, browsing is shed first; 429 with `Retry-After`; off in tests unless asked for; limits are placeholders.
+- [x] `Cache-Control` and ETag on bus-stop reference data (304 on repeat); `/ready` (store checks) and `/admin/metrics` (counts, latency percentiles, in-flight, subscribers); bounded in-memory log.
+- [x] Load-test harness (`npm run load:test`, `load:overload`) with measured results in the scalability document, and a measured fix: batched audit writes (cold start p95 1.6 s to 7.6 ms; sustained rate about 1,000 to about 2,000 per second on this laptop).
+
 ### App check (R2)
 
 - [x] R2 The passenger app's full journey passes with the backend's acknowledgement timer off and a bus-only responder acknowledging (`npm run test:e2e:journey-bus-ack`; both requests were acknowledged by the responder, two cases completed).
@@ -70,7 +77,7 @@ Legend: `[x]` built and verified by a test or a run (evidence given), `[ ]` not 
 - [ ] **R5 CI:** per-module jobs; needs a push to try.
 - [ ] **R6 Safe-object policy constants agreed with the team** (0.92 is in code; the size limit is open; the agent and backend must mirror the final values).
 - [ ] **Operator halt channel** to the bus (the console's Halt is shown disabled in live mode); deploy is issued by the backend, not the operator.
-- [ ] **Scale items:** SC2 role mounting, SC4 rate limiting with priority, SC5 cache headers, SC6 retention and bounded logger, SC7 metrics and readiness, SC8 load-test harness, SC9 cursor-based command polling and store-and-forward, SC10 move existing cases and telemetry off the whole-state document (touches the teammate's backend; needs agreement).
+- [~] **Scale items:** done: SC2 role mounting (`passenger`, `operations`), SC4 rate limiting with priority and load shedding, SC5 cache headers on bus-stop data, SC7 `/admin/metrics` and `/ready`, SC8 load-test harness, bounded in-memory log and batched audit writes (part of SC6). Not done: retention of completed cases (rest of SC6), SC9 cursor-based command polling and store-and-forward, SC10 move existing cases and telemetry off the whole-state document (touches the teammate's backend), splitting the fleet role from the operator role, and the 3,000 messages per second target (measured about 2,000 per second on one process).
 - [ ] **Update the teammate:** contract additions, `packages/*` rename, lockfile churn (about 150 lines), the audit-index addition to their store, the `/operator` removal, and how to refresh their checkout (decision 0003).
 - [ ] Update the local `CLAUDE.md` to the current state.
 

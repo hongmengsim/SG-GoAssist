@@ -13,8 +13,41 @@ import { getConnectedClientCount } from "./services/websocket";
 import { logger } from "./services/logger";
 import { clearAllRequests, getAllRequests } from "./services/aviator";
 import { clearOperations, listCases } from "./services/assistanceCaseService";
+import { getEventHub } from "./events/eventHub";
+import { getOperationsStore } from "./services/operationsStore";
+import { getBusOperations } from "./busOperations/composition";
+import { Metrics } from "./platform/metrics";
+import {
+  DEFAULT_LIMITS,
+  RateLimiter,
+  classifyRequest,
+  type LimitConfig,
+} from "./platform/rateLimit";
+import { parseRoles } from "./platform/roles";
 
-export function createApp() {
+export interface AppOptions {
+  /** Which workloads this process serves (default: GOASSIST_ROLES, else all). */
+  roles?: string;
+  /** Limits per request class, or false to switch rate limiting off. */
+  rateLimit?: LimitConfig | false;
+}
+
+/** Off in tests unless asked for, so rapid test traffic is never throttled by accident. */
+function defaultRateLimit(): LimitConfig | false {
+  if (process.env.GOASSIST_RATE_LIMIT === "off") return false;
+  if (process.env.NODE_TEST_CONTEXT && process.env.GOASSIST_RATE_LIMIT !== "on")
+    return false;
+  return DEFAULT_LIMITS;
+}
+
+const READ_ONLY_CACHE_SECONDS = 300;
+
+export function createApp(options: AppOptions = {}) {
+  const roles = parseRoles(options.roles ?? process.env.GOASSIST_ROLES);
+  const limits =
+    options.rateLimit === undefined ? defaultRateLimit() : options.rateLimit;
+  const metrics = new Metrics();
+  const limiter = limits ? new RateLimiter(limits) : undefined;
   const NODE_ENV = process.env.NODE_ENV || "development";
   const ALLOWED_ORIGINS = (
     process.env.ALLOWED_ORIGINS || "http://localhost:8081,http://localhost:3000"
@@ -50,14 +83,58 @@ export function createApp() {
     }),
   );
 
-  app.use("/api/assistance", assistanceRouter);
-  app.use("/api/location", locationRouter);
-  app.use("/api/bus-stops", busStopsRouter);
-  app.use("/api/operations", busOperationsRouter);
-  app.use("/api/operations", operationsRouter);
-  app.use("/api/assistant", assistantDiagnosticsRouter);
-  app.use("/api/passenger", passengerRouter);
-  app.use("/api/journeys", journeysRouter);
+  // Metrics and load shedding see every request. Devices are keyed by their id (or address),
+  // everyone else by address, so one noisy client cannot use up another's allowance.
+  app.use((req, res, next) => {
+    const klass = classifyRequest(req.method, req.path);
+    const started = process.hrtime.bigint();
+    metrics.started();
+    limiter?.enter();
+    res.on("finish", () => {
+      metrics.finished();
+      limiter?.leave();
+      metrics.record(
+        klass,
+        res.statusCode,
+        Number(process.hrtime.bigint() - started) / 1e6,
+      );
+    });
+    if (limiter) {
+      const key = String(req.headers["x-device-id"] ?? req.ip ?? "unknown");
+      const admission = limiter.admit(klass, key);
+      if (!admission.ok) {
+        res.setHeader("Retry-After", String(admission.retryAfterSeconds));
+        res
+          .status(429)
+          .json({ error: "Too many requests", reason: admission.reason });
+        return;
+      }
+    }
+    next();
+  });
+
+  if (roles.has("passenger")) {
+    app.use("/api/assistance", assistanceRouter);
+    app.use("/api/location", locationRouter);
+    // Static reference data: safe to cache and to answer with 304 (Express adds the ETag).
+    app.use("/api/bus-stops", (req, res, next) => {
+      if (req.method === "GET") {
+        res.setHeader(
+          "Cache-Control",
+          `public, max-age=${READ_ONLY_CACHE_SECONDS}`,
+        );
+      }
+      next();
+    });
+    app.use("/api/bus-stops", busStopsRouter);
+    app.use("/api/assistant", assistantDiagnosticsRouter);
+    app.use("/api/passenger", passengerRouter);
+    app.use("/api/journeys", journeysRouter);
+  }
+  if (roles.has("operations")) {
+    app.use("/api/operations", busOperationsRouter);
+    app.use("/api/operations", operationsRouter);
+  }
 
   app.get("/health", (req, res) => {
     res.json({
@@ -72,6 +149,25 @@ export function createApp() {
     });
   });
 
+  // Liveness (/health) says the process is up; readiness says its stores answer.
+  app.get("/ready", async (_req, res) => {
+    const checks: Record<string, string> = {};
+    try {
+      getOperationsStore().snapshot();
+      checks.operationsStore = "ok";
+    } catch (error) {
+      checks.operationsStore = `failed: ${String(error)}`;
+    }
+    try {
+      await getBusOperations().listBusStatus({ limit: 1 });
+      checks.busOperations = "ok";
+    } catch (error) {
+      checks.busOperations = `failed: ${String(error)}`;
+    }
+    const ready = Object.values(checks).every((value) => value === "ok");
+    res.status(ready ? 200 : 503).json({ ready, checks });
+  });
+
   const requireAdmin: express.RequestHandler = (req, res, next) => {
     const token = process.env.OPERATOR_API_TOKEN;
     if (token && req.headers.authorization !== `Bearer ${token}`) {
@@ -80,6 +176,16 @@ export function createApp() {
     }
     next();
   };
+
+  app.get("/admin/metrics", requireAdmin, (_req, res) => {
+    const hub = getEventHub();
+    res.json({
+      ...metrics.snapshot(),
+      connectedWebSocketClients: getConnectedClientCount(),
+      eventSubscribers: hub.subscriberCount(),
+      eventTopics: hub.topicCount(),
+    });
+  });
 
   app.get("/admin/logs", requireAdmin, (req, res) => {
     res.json({
