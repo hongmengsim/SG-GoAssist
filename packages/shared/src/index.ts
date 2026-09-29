@@ -610,8 +610,9 @@ export interface AssistanceMetrics {
 /**
  * Integration additions: bus movement, single-bay coordination, the Pi's
  * halt/continue decision, and the simulated ramp. All additive; existing
- * statuses and unions above are unchanged. Wrapper messages below keep busId
- * nested (not top-level) so passenger sockets never receive them: the
+ * statuses and unions are unchanged (StatusUpdateMessage in particular must
+ * not grow; see OperatorStatusUpdateMessage). Wrapper messages below keep
+ * busId nested (not top-level) so passenger sockets never receive them: the
  * broadcaster only sends top-level busId/caseId/requestId matches to
  * non-operator clients.
  */
@@ -896,7 +897,14 @@ export type StatusUpdateMessage =
   | ActuatorStatusUpdateMessage
   | OperatorEscalationMessage
   | DeviceHealthUpdateMessage
-  | AutonomyStatusUpdateMessage
+  | AutonomyStatusUpdateMessage;
+
+/**
+ * Operator-only messages. Deliberately NOT part of StatusUpdateMessage: the
+ * passenger app narrows that union exhaustively (its describeEvent falls
+ * through to DEVICE_HEALTH), so adding members there would break the app.
+ */
+export type OperatorStatusUpdateMessage =
   | BusStatusUpdateMessage
   | BayStatusUpdateMessage
   | RampSimulationUpdateMessage
