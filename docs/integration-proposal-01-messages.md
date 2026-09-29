@@ -1,4 +1,21 @@
-# Integration proposal 01: message additions (DRAFT for review, nothing implemented)
+# Integration proposal 01: message additions
+
+**Status (30 Sep 2026): approved in direction by the project owner.** Ownership ruling: laser/ToF and passenger-app behaviour follow this repo's existing implementation unchanged; the controller/operator UI follows the CE2 prototype; all naming follows this repo's conventions (UPPER_SNAKE values, camelCase fields, this repo's ids and class labels); new statuses are added only where the 29 Sep handoff needs something this repo lacks.
+
+## Naming rules (prototype -> this repo)
+
+| Prototype (bus-project-2) | This repo |
+|---|---|
+| `travelling_to_stop`, `waiting_for_bay`, `positioned_at_stop`, `departing` | `TRAVELLING_TO_STOP`, `WAITING_FOR_BAY`, `POSITIONED_AT_STOP`, `DEPARTING` |
+| `stowed`, `deployment_requested`, `deploying`, `deployed`, `halted` | `STOWED`, `DEPLOYMENT_REQUESTED`, `DEPLOYING`, `DEPLOYED`, `HALTED` |
+| `clear`, `occupied`, `uncertain`; `continue`, `halt` | `CLEAR`, `OCCUPIED`, `UNCERTAIN`; `CONTINUE`, `HALT` |
+| `submitted`, `confirmed_by_bus`, `cancelled`, `cannot_fulfil` | `SENDING`, `ACKNOWLEDGED`, `CANCELLED`, `FAILED` (existing) |
+| `completed` request | case state `COMPLETED` (existing); no new request status |
+| `snake_case` fields (`zone_state`, `capture_ts`) | `camelCase` (`zoneState`, `observedAt`) |
+| `bus1`, `bus2`, `STOP-01`, `BAY-A`, services 190/14/77 | registered bus ids (e.g. `AV-095-01`), numeric stop codes (e.g. `18331`), services 95/191 |
+| `rollator_walker`, `bag_or_box` | `walker`; `luggage` for suitcases; `bag_or_box` kept as a new label for bags/boxes/bottles |
+| free-text reasons (`tof_unavailable`) | `HaltReason` enum |
+| UI log kinds (`cmd`, `ok`, `fault`, `op`) | derived from the backend's audit event names (`SIGNAL_ACCEPTED`, `ACTUATOR_COMMAND_ISSUED`, ...) |
 
 Branch: `integration`. Scope: add the few messages the SG GoAssist handoff needs that `packages/shared` does not have yet. **Additive only.** Existing types, statuses and endpoints keep their meaning, so the current app and all 94 backend tests are unaffected.
 
