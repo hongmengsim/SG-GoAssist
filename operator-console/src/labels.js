@@ -87,3 +87,49 @@ export function humanize(value) {
 export function reasonsText(reasons) {
   return (reasons ?? []).map((reason) => word(HALT_REASON, reason)).join(", ");
 }
+
+// ---- cases ----------------------------------------------------------------------------------
+
+export const CASE_STATE = {
+  REQUESTED: { text: "Requested", kind: "info" },
+  VALIDATED: { text: "Validated", kind: "info" },
+  VEHICLE_ASSIGNED: { text: "Vehicle assigned", kind: "info" },
+  SAFE_TO_ACTUATE: { text: "Safe to actuate", kind: "info" },
+  ACTUATING: { text: "Actuating", kind: "info" },
+  READY: { text: "Ready to board", kind: "ok" },
+  COMPLETED: { text: "Completed", kind: "ok" },
+  NEEDS_CONFIRMATION: { text: "Needs confirmation", kind: "warn" },
+  ESCALATED: { text: "Escalated", kind: "stop" },
+  BLOCKED: { text: "Blocked", kind: "stop" },
+  FAILED: { text: "Failed", kind: "stop" },
+  CANCELLED: { text: "Cancelled", kind: "idle" },
+};
+
+export const TERMINAL_CASE_STATES = new Set([
+  "COMPLETED",
+  "FAILED",
+  "CANCELLED",
+]);
+export const ATTENTION_CASE_STATES = new Set([
+  "BLOCKED",
+  "FAILED",
+  "ESCALATED",
+  "NEEDS_CONFIRMATION",
+]);
+
+export const CASE_ACTIONS = [
+  ["CONFIRM", "Confirm intent", "primary"],
+  ["RETRY", "Retry checks", ""],
+  ["ESCALATE", "Escalate", ""],
+  ["COMPLETE", "Complete", "primary"],
+  ["CANCEL", "Cancel case", "danger"],
+];
+
+export const RAMP_POSITION = {
+  STOWED: "Stowed",
+  DEPLOYING: "Deploying",
+  DEPLOYED: "Deployed",
+  RETRACTING: "Retracting",
+  FAULT: "Fault",
+  UNKNOWN: "Unknown",
+};

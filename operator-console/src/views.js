@@ -19,19 +19,16 @@ import {
   summary,
   zoneView,
 } from "./viewmodel.js";
+import { kv, section, time } from "./ui.js";
+import {
+  attentionPanel,
+  busCaseRow,
+  casePage,
+  casesPage,
+  metricsStrip,
+} from "./caseViews.js";
 
-const time = (iso) => {
-  const parsed = new Date(iso);
-  return Number.isNaN(parsed.getTime())
-    ? "--:--:--"
-    : parsed.toISOString().slice(11, 19);
-};
-
-const kv = (rows) =>
-  `<dl class="kv">${rows.map(([key, value]) => `<dt>${esc(key)}</dt><dd>${value}</dd>`).join("")}</dl>`;
-
-const section = (width, title, right, body) =>
-  `<section class="${width}"><h2><span>${title}</span>${right ?? ""}</h2><div class="body">${body}</div></section>`;
+export { casePage, casesPage };
 
 // ---- shared pieces --------------------------------------------------------------------------
 
@@ -44,6 +41,16 @@ export function breadcrumbs(route) {
     return link("#/", "Overview") + sep + here(route.id);
   if (route.name === "bus")
     return link("#/", "Overview") + sep + here(route.id);
+  if (route.name === "cases")
+    return link("#/", "Overview") + sep + here("Cases");
+  if (route.name === "case")
+    return (
+      link("#/", "Overview") +
+      sep +
+      link("#/cases", "Cases") +
+      sep +
+      here(route.id.slice(-8).toUpperCase())
+    );
   return here("Overview");
 }
 
@@ -194,6 +201,8 @@ export function overviewPage(state, ui) {
   const buses = busIds(state);
   return `${alerts}
     <div class="stats" role="group" aria-label="Summary">${stat("Bus stops", counts.stops)}${stat("Buses", counts.buses)}${stat("Open requests", counts.openRequests)}${stat("Fault entries", counts.faultEntries)}</div>
+    ${metricsStrip(state)}
+    ${attentionPanel(state)}
     ${section("c12", "Bus stops", tag("idle", "Click to open"), `<div class="cards">${stops.map((code) => stopCard(state, code)).join("") || '<p class="empty">No bus stop has reported yet.</p>'}</div>`)}
     ${section("c12", "Buses", tag("idle", "Click to open"), `<div class="cards">${buses.map((id) => busCard(state, id)).join("") || '<p class="empty">No bus has reported yet.</p>'}</div>`)}
     ${auditSection(state, ui, "Audit log · all requests, all buses")}`;
@@ -349,6 +358,7 @@ export function busPage(state, busId, ui, actions) {
             ? `${esc(request.requestId)} <small>· passenger sees "${esc(word(PASSENGER_SEES, request.status))}"</small>`
             : "<small>none accepted</small>",
         ],
+        ["Case", busCaseRow(state, busId) ?? "<small>no open case</small>"],
       ])}`,
     )}
     ${zonePanel(state, busId)}

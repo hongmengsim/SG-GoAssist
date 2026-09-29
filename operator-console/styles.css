@@ -717,3 +717,19 @@ ul.reasons li::marker {
   font: 700 12px var(--mono);
   letter-spacing: 0.06em;
 }
+
+.stats.six {
+  grid-template-columns: repeat(6, 1fr);
+}
+@media (max-width: 1000px) {
+  .stats.six {
+    grid-template-columns: 1fr 1fr 1fr;
+  }
+}
+ul.checklist {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 8px;
+  display: grid;
+  gap: 6px;
+}

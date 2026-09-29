@@ -6,6 +6,7 @@
 
 import { addAudit, initialState, reduce } from "../state.js";
 import { canProceedNow } from "../viewmodel.js";
+import { HALT_REASON } from "../labels.js";
 
 export const MOCK_STOP = "18331";
 export const MOCK_BUSES = ["AV-095-01", "AV-095-02"];
@@ -46,6 +47,7 @@ export function createMockWorld({ clock = () => Date.now() } = {}) {
   let requestCounter;
   let options;
   let buses;
+  let caseCounter;
 
   const iso = () => new Date(clock()).toISOString();
 
@@ -54,6 +56,7 @@ export function createMockWorld({ clock = () => Date.now() } = {}) {
     messages = [];
     counter = 0;
     requestCounter = 7;
+    caseCounter = 0;
     options = {
       autoAccept: true,
       autoProceed: false,
@@ -65,6 +68,8 @@ export function createMockWorld({ clock = () => Date.now() } = {}) {
         {
           simulated: index === 1,
           accepted: null,
+          caseId: null,
+          caseOverride: null,
           object: null,
           faults: { tof: false, cam: false, stall: false },
           operatorHalt: false,
@@ -239,13 +244,118 @@ export function createMockWorld({ clock = () => Date.now() } = {}) {
   function emitDecision(id) {
     const decision = decisionFor(id);
     const previous = state.buses[id]?.decision;
-    if (previous && facts(previous) === facts(decision)) return decision;
-    emit({ type: "RAMP_SAFETY", decision, timestamp: iso() });
-    audit("RAMP_SAFETY_CHANGED", {
-      busId: id,
-      detail: { permission: decision.permission, reasons: decision.reasons },
-    });
+    if (!previous || facts(previous) !== facts(decision)) {
+      emit({ type: "RAMP_SAFETY", decision, timestamp: iso() });
+      audit("RAMP_SAFETY_CHANGED", {
+        busId: id,
+        detail: { permission: decision.permission, reasons: decision.reasons },
+      });
+    }
+    publishTelemetry(id, decision);
+    syncCase(id, decision);
     return decision;
+  }
+
+  // ---- telemetry and cases (what the backend's case orchestrator would keep) -----------------
+
+  const RAMP_POSITION = {
+    STOWED: "STOWED",
+    DEPLOYED: "DEPLOYED",
+    DEPLOYMENT_REQUESTED: "DEPLOYING",
+    DEPLOYING: "DEPLOYING",
+    HALTED: "DEPLOYING",
+  };
+
+  function publishTelemetry(id, decision) {
+    const positioned = movement(id) === "POSITIONED_AT_STOP";
+    const telemetry = {
+      busId: id,
+      stopCode: MOCK_STOP,
+      vehicleStopped: positioned,
+      parkingBrakeActive: positioned,
+      doorOpen: positioned,
+      deploymentPathClear: decision.permission === "CONTINUE",
+      rampPosition: RAMP_POSITION[rampState(id)] ?? "UNKNOWN",
+      networkOnline: true,
+      observedAt: iso(),
+    };
+    const previous = state.telemetry[id];
+    if (previous && facts(previous) === facts(telemetry)) return;
+    emit({ type: "TELEMETRY_SNAPSHOT", telemetry, timestamp: iso() });
+  }
+
+  function saveCase(item) {
+    emit({ type: "CASE_SNAPSHOT", case: item, timestamp: iso() });
+  }
+
+  function openCase(busId, requestId) {
+    caseCounter += 1;
+    const caseId = `CASE-MOCK-${String(caseCounter).padStart(4, "0")}`;
+    const request = state.requests[requestId];
+    buses[busId].caseId = caseId;
+    buses[busId].caseOverride = null;
+    saveCase({
+      caseId,
+      stopCode: MOCK_STOP,
+      busId,
+      busService: "95",
+      phase: "BOARDING",
+      intents: [{ intentId: `INT-${caseCounter}`, confirmed: true }],
+      assistanceTypes: request?.assistanceTypes ?? ["WHEELCHAIR_RAMP"],
+      passengerCount: 1,
+      confidence: 0.9,
+      boardingIntent: {
+        decision: "CONFIRMED",
+        confidence: 0.9,
+        reason: "Explicit request from the app (mock)",
+        evidence: [],
+        assessedAt: iso(),
+      },
+      state: "VALIDATED",
+      actionPlan: [
+        {
+          assistanceType: "WHEELCHAIR_RAMP",
+          action: "DEPLOY_RAMP",
+          requiresSafetyClearance: true,
+          status: "PLANNED",
+        },
+      ],
+      outcome: { operatorInterventions: 0 },
+      createdAt: iso(),
+      updatedAt: iso(),
+    });
+  }
+
+  function setCaseState(busId, next, reason) {
+    const current = state.cases[buses[busId].caseId];
+    if (
+      !current ||
+      ["COMPLETED", "FAILED", "CANCELLED"].includes(current.state)
+    )
+      return;
+    if (current.state === next && current.escalationReason === reason) return;
+    const updated = { ...current, state: next, updatedAt: iso() };
+    if (reason) updated.escalationReason = reason;
+    else delete updated.escalationReason;
+    saveCase(updated);
+  }
+
+  function syncCase(busId, decision) {
+    const bus = buses[busId];
+    if (!bus.caseId || bus.caseOverride) return;
+    const ramp = rampState(busId);
+    if (ramp === "DEPLOYED") return setCaseState(busId, "READY");
+    if (ramp === "HALTED") {
+      const first = decision.reasons[0];
+      return setCaseState(
+        busId,
+        "BLOCKED",
+        first ? HALT_REASON[first] : "Ramp halted",
+      );
+    }
+    if (ramp === "DEPLOYING" || ramp === "DEPLOYMENT_REQUESTED")
+      return setCaseState(busId, "ACTUATING");
+    setCaseState(busId, "VALIDATED");
   }
 
   // ---- passenger requests -------------------------------------------------------------------
@@ -304,6 +414,7 @@ export function createMockWorld({ clock = () => Date.now() } = {}) {
       return;
     }
     bus.accepted = requestId;
+    openCase(request.busId, requestId);
     requestStatus(requestId, "ACKNOWLEDGED", request.busId);
     audit("REQUEST_ACKNOWLEDGED", {
       busId: request.busId,
@@ -326,6 +437,8 @@ export function createMockWorld({ clock = () => Date.now() } = {}) {
     const requestId = buses[busId].accepted;
     if (!requestId) return;
     buses[busId].accepted = null;
+    buses[busId].caseOverride = null;
+    setCaseFinal(busId, status === "COMPLETED" ? "COMPLETED" : "CANCELLED");
     requestStatus(requestId, status, busId);
     audit(eventType, { busId, actor, detail: { requestId } });
     emitDecision(busId);
@@ -516,6 +629,84 @@ export function createMockWorld({ clock = () => Date.now() } = {}) {
     }
   }
 
+  function setCaseFinal(busId, finalState) {
+    const item = state.cases[buses[busId].caseId];
+    if (!item) return;
+    saveCase({
+      ...item,
+      state: finalState,
+      updatedAt: iso(),
+      escalationReason: undefined,
+    });
+  }
+
+  const finished = (item) =>
+    ["COMPLETED", "FAILED", "CANCELLED"].includes(item.state);
+
+  function caseAction(caseId, action) {
+    const item = state.cases[caseId];
+    if (!item || finished(item)) return;
+    const busId = item.busId;
+    audit(`OPERATOR_${action}`, {
+      busId,
+      actor: "OPERATOR",
+      detail: { caseId },
+    });
+    saveCase({
+      ...item,
+      outcome: {
+        ...item.outcome,
+        operatorInterventions: (item.outcome?.operatorInterventions ?? 0) + 1,
+      },
+    });
+    const bus = buses[busId];
+    if (action === "ESCALATE") {
+      bus.caseOverride = "ESCALATED";
+      saveCase({
+        ...state.cases[caseId],
+        state: "ESCALATED",
+        escalationReason: "Operator review requested",
+        updatedAt: iso(),
+      });
+    } else if (action === "CONFIRM" || action === "RETRY") {
+      bus.caseOverride = null;
+      const current = state.cases[caseId];
+      saveCase({
+        ...current,
+        state: "VALIDATED",
+        escalationReason: undefined,
+        updatedAt: iso(),
+      });
+      syncCase(busId, emitDecision(busId));
+    } else if (action === "COMPLETE") {
+      const decision = emitDecision(busId);
+      if (decision.permission === "HALT" && rampState(busId) !== "STOWED") {
+        setCaseState(
+          busId,
+          "BLOCKED",
+          "Ramp path is not clear, so the ramp cannot be stowed yet",
+        );
+        return;
+      }
+      if (rampState(busId) !== "STOWED") stowRamp(busId);
+      boardingComplete(busId);
+    } else if (action === "CANCEL") {
+      cancelRequest(busId, "OPERATOR");
+    }
+  }
+
+  function caseActionsFor(caseId) {
+    const item = state.cases[caseId];
+    const allowed = Boolean(item) && !finished(item);
+    const reason = allowed ? undefined : "This case is finished.";
+    return Object.fromEntries(
+      ["CONFIRM", "RETRY", "ESCALATE", "COMPLETE", "CANCEL"].map((name) => [
+        name,
+        { enabled: allowed, reason },
+      ]),
+    );
+  }
+
   // ---- scene controls (mock only) -----------------------------------------------------------
 
   function placeObject(id, className) {
@@ -599,6 +790,8 @@ export function createMockWorld({ clock = () => Date.now() } = {}) {
       );
     },
     actionsFor: actions,
+    caseAction,
+    caseActionsFor,
     reset: fresh,
   };
 }

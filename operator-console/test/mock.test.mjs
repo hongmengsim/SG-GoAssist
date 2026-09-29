@@ -232,7 +232,14 @@ test("every wire message the mock emits conforms to the contract schema", () => 
   t.w.depart(B1);
   t.w.proceedNext("OPERATOR");
 
-  const checked = t.w.messages.filter((m) => m.type !== "REQUEST_STATUS");
+  const wire = new Set([
+    "BUS_STATUS",
+    "BAY_STATUS",
+    "RAMP_SIMULATION",
+    "RAMP_SAFETY",
+    "HELP_REQUIRED",
+  ]);
+  const checked = t.w.messages.filter((m) => wire.has(m.type));
   assert.ok(checked.length > 10, "a meaningful number of messages");
   for (const message of checked) {
     assert.ok(

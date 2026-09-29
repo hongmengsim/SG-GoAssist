@@ -6,11 +6,25 @@
 // The console holds no passenger identity: request lists are reduced to the fields it needs.
 
 import { addAudit, initialState, reduce, setAudit } from "../state.js";
-import { canProceedNow, requestsForBus, stopCodes } from "../viewmodel.js";
+import {
+  canProceedNow,
+  isFinished,
+  requestsForBus,
+  stopCodes,
+} from "../viewmodel.js";
 
 const AUDIT_LIMIT = 200;
 const RECONNECT_MS = 2000;
 const REFRESH_DELAY_MS = 500;
+const DEVICE_FRESH_MS = 15000;
+const CASE_ACTIONS = new Set([
+  "CONFIRM",
+  "RETRY",
+  "ESCALATE",
+  "COMPLETE",
+  "CANCEL",
+]);
+const AUTONOMY_ACTIONS = new Set(["STOP", "MANUAL", "RESUME"]);
 
 const DEPLOY_UNAVAILABLE =
   "The backend issues the deploy command itself once the case is cleared; there is no operator deploy.";
@@ -100,6 +114,8 @@ export function createLiveSource({
           get(`/api/operations/audit?limit=${AUDIT_LIMIT}`),
         ]);
       if (run !== snapshotRun) return;
+      const caseData = await readCaseData();
+      if (run !== snapshotRun) return;
       let next = state;
       const wrap = (type, key) => (item) => ({
         type,
@@ -119,6 +135,7 @@ export function createLiveSource({
         next = reduce(next, message);
       }
       next = setAudit(next, audit.events);
+      next = applyCaseData(next, caseData);
       for (const stop of stopCodes(next)) {
         const bay = await get(
           `/api/operations/bays/${encodeURIComponent(stop)}`,
@@ -149,19 +166,82 @@ export function createLiveSource({
     }
   }
 
+  // The optional reads (telemetry, autonomy, metrics) may legitimately be missing for a bus or
+  // when a service is off; only the case list itself is required.
+  async function optional(path) {
+    try {
+      return await get(path);
+    } catch (error) {
+      if (error instanceof HttpFailure && error.status === 401) throw error;
+      return undefined;
+    }
+  }
+
+  async function readCaseData() {
+    const cases = await get("/api/operations/cases");
+    const busIdsWithCases = [
+      ...new Set(cases.cases.map((item) => item.busId).filter(Boolean)),
+    ];
+    const vehicle = (id, suffix) =>
+      optional(`/api/operations/vehicles/${encodeURIComponent(id)}/${suffix}`);
+    const [telemetry, autonomy, metrics, devices, perception] =
+      await Promise.all([
+        Promise.all(busIdsWithCases.map((id) => vehicle(id, "telemetry"))),
+        Promise.all(busIdsWithCases.map((id) => vehicle(id, "autonomy"))),
+        optional("/api/operations/metrics"),
+        optional("/api/operations/devices"),
+        optional("/api/operations/perception/metrics"),
+      ]);
+    return {
+      cases: cases.cases,
+      telemetry,
+      autonomy,
+      metrics,
+      devices,
+      perception,
+    };
+  }
+
+  function applyCaseData(start, data) {
+    let next = start;
+    for (const item of data.cases)
+      next = reduce(next, { type: "CASE_SNAPSHOT", case: item });
+    for (const item of data.telemetry)
+      if (item)
+        next = reduce(next, { type: "TELEMETRY_SNAPSHOT", telemetry: item });
+    for (const item of data.autonomy)
+      if (item)
+        next = reduce(next, { type: "AUTONOMY_SNAPSHOT", autonomy: item });
+    if (data.metrics) {
+      const online = (data.devices?.devices ?? []).filter(
+        (device) =>
+          device.networkOnline &&
+          Date.now() - Date.parse(device.observedAt) < DEVICE_FRESH_MS,
+      ).length;
+      next = reduce(next, {
+        type: "METRICS_SNAPSHOT",
+        metrics: data.metrics,
+        devicesOnline: data.devices ? online : undefined,
+        perceptionPrecision: data.perception?.microPrecision ?? undefined,
+      });
+    }
+    return next;
+  }
+
   // The audit log is not pushed, and pushed request messages carry no case id, so both are
   // re-read shortly after anything changes.
   async function refreshLists() {
     cancelRefresh = null;
     try {
-      const [audit, requests] = await Promise.all([
+      const [audit, requests, caseData] = await Promise.all([
         get(`/api/operations/audit?limit=${AUDIT_LIMIT}`),
         get("/api/assistance"),
+        readCaseData(),
       ]);
       let next = setAudit(state, audit.events);
       for (const item of requests.requests)
         next = reduce(next, { type: "REQUEST_SNAPSHOT", request: item });
-      apply(next);
+      apply(applyCaseData(next, caseData));
     } catch {
       // The next pushed message or reconnect refreshes again; the connection tag shows real failures.
     }
@@ -208,8 +288,9 @@ export function createLiveSource({
         scheduleRefresh();
       }
       if (
-        message?.type === "ASSIST_REQUESTED" ||
-        message?.type === "REQUEST_STATUS"
+        ["ASSIST_REQUESTED", "REQUEST_STATUS", "CASE_STATUS"].includes(
+          message?.type,
+        )
       )
         scheduleRefresh();
     };
@@ -241,10 +322,60 @@ export function createLiveSource({
     };
   }
 
-  async function perform(action, { busId, stopCode } = {}) {
+  async function performCaseAction(kind, { caseId, busId, action }) {
+    try {
+      if (kind === "case") {
+        if (!CASE_ACTIONS.has(action))
+          return { ok: false, message: "Unknown case action." };
+        await request(
+          "POST",
+          `/api/operations/cases/${encodeURIComponent(caseId)}/operator`,
+          { action },
+        );
+      } else {
+        if (!AUTONOMY_ACTIONS.has(action))
+          return { ok: false, message: "Unknown vehicle action." };
+        // The same body the older operator page sent: resuming declares the checks done.
+        const clearance =
+          action === "RESUME"
+            ? { obstacleCleared: true, localizationAccuracyMeters: 5 }
+            : {};
+        await request(
+          "POST",
+          `/api/operations/vehicles/${encodeURIComponent(busId)}/autonomy/override`,
+          { action, ...clearance },
+        );
+      }
+    } catch (error) {
+      return {
+        ok: false,
+        message: error instanceof Error ? error.message : String(error),
+      };
+    }
+    loadSnapshot();
+    return { ok: true, message: "Done." };
+  }
+
+  function caseActionsFor(caseId) {
+    const item = state.cases[caseId];
+    const open = Boolean(item) && !isFinished(item);
+    const reason = open ? undefined : "This case is finished or not known.";
+    const actions = Object.fromEntries(
+      [...CASE_ACTIONS].map((name) => [name, { enabled: open, reason }]),
+    );
+    const hasAutonomy = Boolean(item?.busId && state.autonomy[item.busId]);
+    for (const name of AUTONOMY_ACTIONS)
+      actions[`AUTONOMY_${name}`] = { enabled: hasAutonomy };
+    return actions;
+  }
+
+  async function perform(action, context = {}) {
+    const { busId, stopCode } = context;
     // The backend is the authority on whether an action is allowed now; the console's own view may
     // be a moment out of date, so it does not pre-empt a refusal. Only actions that do not exist
     // are refused here.
+    if (action === "case" || action === "autonomy")
+      return performCaseAction(action, context);
     if (action !== "proceed" && action !== "cancel") {
       return {
         ok: false,
@@ -306,6 +437,7 @@ export function createLiveSource({
       return connection.status === "auth-required";
     },
     actionsFor,
+    caseActionsFor,
     perform,
     onChange: (listener) => {
       listeners.add(listener);

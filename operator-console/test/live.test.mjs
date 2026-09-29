@@ -108,6 +108,69 @@ function backend(overrides = {}) {
         },
       ],
     },
+    "/api/operations/cases": {
+      count: 1,
+      cases: [
+        {
+          caseId: "CASE-1",
+          stopCode: STOP,
+          busId: B1,
+          busService: "95",
+          phase: "BOARDING",
+          intents: [{ intentId: "I1", confirmed: true }],
+          assistanceTypes: ["WHEELCHAIR_RAMP"],
+          passengerCount: 1,
+          confidence: 0.9,
+          boardingIntent: {
+            decision: "CONFIRMED",
+            confidence: 0.9,
+            reason: "Explicit request",
+            evidence: [],
+            assessedAt: T,
+          },
+          state: "BLOCKED",
+          escalationReason: "Ramp deployment path is obstructed",
+          actionPlan: [],
+          outcome: { operatorInterventions: 0 },
+          createdAt: T,
+          updatedAt: T,
+        },
+      ],
+    },
+    [`/api/operations/vehicles/${B1}/telemetry`]: {
+      busId: B1,
+      vehicleStopped: true,
+      parkingBrakeActive: true,
+      doorOpen: true,
+      deploymentPathClear: false,
+      rampPosition: "STOWED",
+      observedAt: T,
+    },
+    [`/api/operations/vehicles/${B1}/autonomy`]: {
+      busId: B1,
+      state: "DOCKED",
+      mode: "AUTOMATIC",
+      targetStopCode: STOP,
+      distanceToTargetMeters: 0,
+      speedKph: 0,
+    },
+    "/api/operations/metrics": {
+      activeCases: 1,
+      safetyBlocks: 3,
+      acknowledgementP95Ms: 250,
+    },
+    "/api/operations/devices": {
+      count: 2,
+      devices: [
+        {
+          deviceId: "d1",
+          networkOnline: true,
+          observedAt: new Date().toISOString(),
+        },
+        { deviceId: "d2", networkOnline: false, observedAt: T },
+      ],
+    },
+    "/api/operations/perception/metrics": { microPrecision: 0.5 },
     [`/api/operations/bays/${STOP}`]: {
       stopCode: STOP,
       bayId: "BAY-1",
@@ -427,4 +490,135 @@ test("stop closes the socket and cancels timers", async () => {
   assert.equal(t.socket().readyState, 3);
   await t.runTimers();
   assert.equal(FakeSocket.instances.length, 1, "no reconnect after stop");
+});
+
+test("the snapshot includes cases, the bus's telemetry and autonomy, and the metrics", async () => {
+  const t = make();
+  t.source.start();
+  await t.settle();
+  const state = t.source.state;
+  assert.equal(state.cases["CASE-1"].state, "BLOCKED");
+  assert.equal(state.telemetry[B1].deploymentPathClear, false);
+  assert.equal(state.autonomy[B1].mode, "AUTOMATIC");
+  assert.equal(state.metrics.activeCases, 1);
+  assert.equal(
+    state.metrics.devicesOnline,
+    1,
+    "only devices seen recently and online count",
+  );
+  assert.equal(state.metrics.perceptionPrecision, 0.5);
+});
+
+test("a bus with no telemetry or autonomy record does not break the snapshot", async () => {
+  const t = make({
+    [`/api/operations/vehicles/${B1}/telemetry`]: () => ({
+      ok: false,
+      status: 404,
+      json: async () => ({ error: "Safety telemetry not found" }),
+    }),
+    [`/api/operations/vehicles/${B1}/autonomy`]: () => ({
+      ok: false,
+      status: 404,
+      json: async () => ({ error: "not found" }),
+    }),
+    "/api/operations/metrics": () => ({
+      ok: false,
+      status: 500,
+      json: async () => ({ error: "boom" }),
+    }),
+  });
+  t.source.start();
+  await t.settle();
+  assert.notEqual(t.source.connection.status, "error");
+  assert.equal(t.source.state.cases["CASE-1"].state, "BLOCKED");
+  assert.equal(t.source.state.telemetry[B1], undefined);
+});
+
+test("a pushed case status updates the case and refreshes the lists", async () => {
+  const t = make();
+  t.source.start();
+  await t.settle();
+  t.socket().open();
+  t.socket().push({
+    type: "CASE_STATUS",
+    caseId: "CASE-1",
+    state: "ACTUATING",
+    busId: B1,
+    stopCode: STOP,
+    passengerCount: 1,
+    assistanceTypes: ["WHEELCHAIR_RAMP"],
+    timestamp: "2026-09-30T00:00:09.000Z",
+  });
+  assert.equal(t.source.state.cases["CASE-1"].state, "ACTUATING");
+  const before = t.api.calls.filter((c) => c.url.includes("/cases")).length;
+  await t.runTimers();
+  assert.ok(
+    t.api.calls.filter((c) => c.url.includes("/cases")).length > before,
+  );
+});
+
+test("each case action is posted to the case's operator endpoint", async () => {
+  const bodies = [];
+  const t = make({
+    "/api/operations/cases/CASE-1/operator": (options) => {
+      bodies.push(JSON.parse(options.body));
+      return { ok: true, status: 200, json: async () => ({ case: {} }) };
+    },
+  });
+  t.source.start();
+  await t.settle();
+  for (const action of ["CONFIRM", "RETRY", "ESCALATE", "COMPLETE", "CANCEL"]) {
+    const result = await t.source.perform("case", { caseId: "CASE-1", action });
+    assert.equal(result.ok, true, action);
+  }
+  assert.deepEqual(
+    bodies.map((b) => b.action),
+    ["CONFIRM", "RETRY", "ESCALATE", "COMPLETE", "CANCEL"],
+  );
+  const unknown = await t.source.perform("case", {
+    caseId: "CASE-1",
+    action: "DELETE_EVERYTHING",
+  });
+  assert.equal(unknown.ok, false);
+});
+
+test("autonomy overrides are posted as the older operator page posted them", async () => {
+  const bodies = [];
+  const t = make({
+    [`/api/operations/vehicles/${B1}/autonomy/override`]: (options) => {
+      bodies.push(JSON.parse(options.body));
+      return { ok: true, status: 200, json: async () => ({}) };
+    },
+  });
+  t.source.start();
+  await t.settle();
+  await t.source.perform("autonomy", { busId: B1, action: "STOP" });
+  await t.source.perform("autonomy", { busId: B1, action: "RESUME" });
+  assert.deepEqual(bodies[0], { action: "STOP" });
+  assert.deepEqual(bodies[1], {
+    action: "RESUME",
+    obstacleCleared: true,
+    localizationAccuracyMeters: 5,
+  });
+});
+
+test("case actions are offered only for cases that are not finished", async () => {
+  const t = make();
+  t.source.start();
+  await t.settle();
+  assert.equal(t.source.caseActionsFor("CASE-1").CANCEL.enabled, true);
+  assert.equal(t.source.caseActionsFor("CASE-1").AUTONOMY_STOP.enabled, true);
+  assert.equal(t.source.caseActionsFor("NOPE").CANCEL.enabled, false);
+  t.socket().open();
+  t.socket().push({
+    type: "CASE_STATUS",
+    caseId: "CASE-1",
+    state: "COMPLETED",
+    busId: B1,
+    stopCode: STOP,
+    passengerCount: 1,
+    assistanceTypes: [],
+    timestamp: "2026-09-30T00:00:09.000Z",
+  });
+  assert.equal(t.source.caseActionsFor("CASE-1").CANCEL.enabled, false);
 });

@@ -6,7 +6,16 @@
 export const MAX_AUDIT = 500;
 
 export function initialState() {
-  return { buses: {}, bays: {}, requests: {}, audit: [] };
+  return {
+    buses: {},
+    bays: {},
+    requests: {},
+    cases: {},
+    telemetry: {},
+    autonomy: {},
+    metrics: {},
+    audit: [],
+  };
 }
 
 const isRecord = (value) => typeof value === "object" && value !== null;
@@ -90,6 +99,56 @@ export function reduce(state, message) {
       const request = message.request;
       if (!isRecord(request) || !isId(request.requestId)) return state;
       return withRequest(state, request.requestId, requestFromPush(request));
+    }
+    case "CASE_SNAPSHOT": {
+      const item = message.case;
+      if (!isRecord(item) || !isId(item.caseId)) return state;
+      return { ...state, cases: { ...state.cases, [item.caseId]: item } };
+    }
+    case "CASE_STATUS": {
+      if (!isId(message.caseId)) return state;
+      const existing = state.cases[message.caseId] ?? {
+        caseId: message.caseId,
+      };
+      const next = { ...existing, updatedAt: message.timestamp };
+      for (const key of [
+        "state",
+        "busId",
+        "stopCode",
+        "passengerCount",
+        "assistanceTypes",
+      ]) {
+        if (message[key] !== undefined) next[key] = message[key];
+      }
+      // A status push carries the current reason, so an absent one means it no longer applies.
+      if (message.escalationReason !== undefined)
+        next.escalationReason = message.escalationReason;
+      else delete next.escalationReason;
+      return { ...state, cases: { ...state.cases, [message.caseId]: next } };
+    }
+    case "TELEMETRY_SNAPSHOT": {
+      const item = message.telemetry;
+      if (!isRecord(item) || !isId(item.busId)) return state;
+      return {
+        ...state,
+        telemetry: { ...state.telemetry, [item.busId]: item },
+      };
+    }
+    case "AUTONOMY_SNAPSHOT": {
+      const item = message.autonomy;
+      if (!isRecord(item) || !isId(item.busId)) return state;
+      return { ...state, autonomy: { ...state.autonomy, [item.busId]: item } };
+    }
+    case "METRICS_SNAPSHOT": {
+      if (!isRecord(message.metrics)) return state;
+      return {
+        ...state,
+        metrics: {
+          ...message.metrics,
+          devicesOnline: message.devicesOnline,
+          perceptionPrecision: message.perceptionPrecision,
+        },
+      };
     }
     case "REQUEST_SNAPSHOT": {
       // A request as listed by the backend. Only the fields the console needs: never the session id.

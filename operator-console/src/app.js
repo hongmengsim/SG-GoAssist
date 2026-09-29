@@ -7,7 +7,14 @@ import { createLiveSource } from "./live/source.js";
 import { createMockSource } from "./mock/source.js";
 import { handlePlayground, playgroundHtml } from "./mock/playground.js";
 import { busIds, stopCodes } from "./viewmodel.js";
-import { breadcrumbs, busPage, overviewPage, stopPage } from "./views.js";
+import {
+  breadcrumbs,
+  busPage,
+  casePage,
+  casesPage,
+  overviewPage,
+  stopPage,
+} from "./views.js";
 
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
@@ -84,6 +91,8 @@ function route(state) {
     return { name: "stop", id: parts[1] };
   if (parts[0] === "bus" && busIds(state).includes(parts[1]))
     return { name: "bus", id: parts[1] };
+  if (parts[0] === "cases") return { name: "cases" };
+  if (parts[0] === "case" && parts[1]) return { name: "case", id: parts[1] };
   return { name: "overview" };
 }
 
@@ -117,7 +126,11 @@ function render(force = false) {
         )
       : current.name === "bus"
         ? busPage(state, current.id, ui, source.actionsFor(current.id))
-        : overviewPage(state, ui);
+        : current.name === "cases"
+          ? casesPage(state)
+          : current.name === "case"
+            ? casePage(state, current.id, source.caseActionsFor(current.id))
+            : overviewPage(state, ui);
   if (keep) {
     const element = document.querySelector(keep);
     if (element && !element.disabled && element.id !== "tokenInput")
@@ -162,6 +175,28 @@ $("root").addEventListener("click", (event) => {
   if (chip) {
     ui.kind = chip.dataset.kind;
     return render(true);
+  }
+  const caseButton = event.target.closest("[data-case-action]");
+  if (caseButton && !caseButton.disabled) {
+    const { caseAction, case: caseId } = caseButton.dataset;
+    const words = {
+      CONFIRM: "Confirm the intent",
+      RETRY: "Retry the checks",
+      ESCALATE: "Escalate",
+      COMPLETE: "Mark the case complete",
+      CANCEL: "Cancel the case",
+    };
+    const go = () => run("case", { caseId, action: caseAction });
+    return ["ESCALATE", "COMPLETE", "CANCEL"].includes(caseAction)
+      ? ask(`${words[caseAction]} for ${caseId.slice(-8).toUpperCase()}?`, go)
+      : go();
+  }
+  const vehicleButton = event.target.closest("[data-autonomy]");
+  if (vehicleButton && !vehicleButton.disabled) {
+    const { autonomy, bus } = vehicleButton.dataset;
+    return ask(`Send "${autonomy.toLowerCase()}" to ${bus}?`, () =>
+      run("autonomy", { busId: bus, action: autonomy }),
+    );
   }
   const button = event.target.closest("[data-act]");
   if (!button || button.disabled) return;
