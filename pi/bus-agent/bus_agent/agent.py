@@ -163,6 +163,10 @@ class BusAgent:
             halt = message.get("halt") or {}
             if halt.get("busId") == self.bus_id and isinstance(halt.get("halted"), bool):
                 self.set_operator_halt(halt["halted"])
+                # Any halt read that started before this push is older than it.
+                invalidate = getattr(self._backend, "invalidate_halt", None)
+                if invalidate is not None:
+                    invalidate()
 
     # ---- the loop ---------------------------------------------------------------------------
 

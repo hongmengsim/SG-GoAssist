@@ -61,6 +61,8 @@ class AsyncBackend:
         self._want_commands = False
         self._want_halt = False
         self._halt: Optional[dict] = None
+        # Bumped when a push tells the agent something newer than any halt read in flight.
+        self._halt_epoch = 0
         self._last_poll = {"requests": 0.0, "commands": 0.0, "halt": 0.0}
         self.last_error: Optional[str] = None
         self._thread = threading.Thread(target=self._run, name="backend-io", daemon=True)
@@ -128,6 +130,19 @@ class AsyncBackend:
             self._want_halt = True
             self._cond.notify_all()
             return None if self._halt is None else dict(self._halt)
+
+    def invalidate_halt(self) -> None:
+        """A pushed halt event is newer than any read that started before it.
+
+        Forgets the cached halt, throws away a read that is in flight, and asks for a fresh one,
+        so an answer that is 0 to 10 s old can never undo what the push just said.
+        """
+        with self._cond:
+            self._halt_epoch += 1
+            self._halt = None
+            self._want_halt = True
+            self._last_poll["halt"] = 0.0
+            self._cond.notify_all()
 
     def register_capability(self, capability: dict) -> None:
         with self._cond:
@@ -289,6 +304,7 @@ class AsyncBackend:
             with self._cond:
                 setattr(self, want_attr, False)
                 self._last_poll[name] = time.monotonic()
+                epoch = self._halt_epoch
             try:
                 items = fetch()
             except BackendError as error:
@@ -296,6 +312,8 @@ class AsyncBackend:
                 failed = True
                 continue
             with self._cond:
+                if name == "halt" and epoch != self._halt_epoch:
+                    continue  # a push overtook this read; the next one will be fresh
                 setattr(self, cache_attr, items if name == "halt" else list(items))
             self._succeeded()
         return failed
