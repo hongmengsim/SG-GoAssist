@@ -120,6 +120,46 @@ class ChangeGateTests(unittest.TestCase):
         self.now = 1.0
         self.assertFalse(gate.due("bus", {"movement": "X", "observedAt": "t2"}))
 
+    def decision(self, distance_mm, confidence, beam="BEAM_CLEAR", class_name="person"):
+        return {
+            "zoneState": "OCCUPIED",
+            "permission": "HALT",
+            "reasons": ["OBJECT_IN_ZONE"],
+            "tof": {"state": beam, "distanceMm": distance_mm, "simulated": False},
+            "camera": {"imageOk": True},
+            "objectsInZone": [{"className": class_name, "safety": "UNSAFE", "confidence": confidence}],
+            "simulated": False,
+            "observedAt": "t",
+        }
+
+    def test_jittering_measurements_are_not_a_change(self) -> None:
+        # Real sensors move the beam distance and the detection confidence on every reading; sending
+        # each one would post several times a second (5,174 audit entries in 26 minutes on the Pi).
+        gate = self.make()
+        gate.sent("safety-decision", self.decision(253, 0.61))
+        self.now = 0.3
+        self.assertFalse(gate.due("safety-decision", self.decision(256, 0.63)))
+        self.now = 4.9
+        self.assertFalse(gate.due("safety-decision", self.decision(249, 0.58)))
+
+    def test_measurements_are_still_refreshed_by_the_heartbeat(self) -> None:
+        gate = self.make()
+        gate.sent("safety-decision", self.decision(253, 0.61))
+        self.now = 5.0
+        self.assertTrue(gate.due("safety-decision", self.decision(256, 0.63)))
+
+    def test_a_beam_state_change_is_sent_at_once(self) -> None:
+        gate = self.make()
+        gate.sent("safety-decision", self.decision(253, 0.61))
+        self.now = 0.3
+        self.assertTrue(gate.due("safety-decision", self.decision(31, 0.61, beam="BLOCKED")))
+
+    def test_a_different_detected_class_is_sent_at_once(self) -> None:
+        gate = self.make()
+        gate.sent("safety-decision", self.decision(253, 0.61))
+        self.now = 0.3
+        self.assertTrue(gate.due("safety-decision", self.decision(253, 0.61, class_name="airplane")))
+
     def test_a_report_that_was_not_confirmed_is_offered_again(self) -> None:
         gate = self.make()
         payload = {"movement": "X"}
