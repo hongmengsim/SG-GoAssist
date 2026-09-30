@@ -210,6 +210,20 @@ class DeploymentTests(unittest.TestCase):
         self.assertEqual("HALTED", world.agent.ramp.state)
         self.assertIn("TOF_UNAVAILABLE", world.agent.last_decision.reasons)
 
+    def test_a_beam_source_that_fails_halts_and_never_stops_the_tick(self) -> None:
+        # An unplugged ESP32 raises OSError from the serial read. The tick must survive it and halt.
+        world = World()
+        world.positioned_with_request()
+        world.deploy(4)
+
+        def unplugged():
+            raise OSError(5, "Input/output error")
+
+        world.beam_source.read_lines = unplugged
+        world.tick(8)
+        self.assertEqual("HALTED", world.agent.ramp.state)
+        self.assertIn("TOF_UNAVAILABLE", world.agent.last_decision.reasons)
+
     def test_a_covered_or_missing_camera_halts(self) -> None:
         for fault in ("cover", "stop"):
             with self.subTest(fault=fault):

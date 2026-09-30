@@ -113,6 +113,58 @@ class ReadingTests(unittest.TestCase):
         self.assertEqual(500, reader.calibrate())
 
 
+class FlakySource(FakeLineSource):
+    """A line source whose port can vanish, as an unplugged ESP32 does (OSError: Input/output error)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.failing = False
+
+    def read_lines(self) -> list:
+        if self.failing:
+            raise OSError(5, "Input/output error")
+        return super().read_lines()
+
+
+class SourceFailureTests(unittest.TestCase):
+    def flaky_calibrated(self):
+        clock = Clock()
+        source = FlakySource()
+        reader = BeamReader(source, clock=clock)
+        for index in range(10):
+            source.push(f"{index},VL53L0X,500,VALID")
+            reader.poll()
+            clock.advance(0.2)
+        reader.calibrate()
+        return reader, source, clock
+
+    def test_a_vanished_port_is_unknown_not_an_exception(self) -> None:
+        reader, source, clock = self.flaky_calibrated()
+        source.failing = True
+        reading = reader.poll()
+        self.assertEqual("UNKNOWN", reading.state)
+        self.assertIsNone(reading.distance_mm)
+
+    def test_a_failed_read_never_keeps_the_last_clear_beam(self) -> None:
+        reader, source, clock = self.flaky_calibrated()
+        source.push("11,VL53L0X,500,VALID")
+        self.assertEqual("BEAM_CLEAR", reader.poll().state)
+        source.failing = True  # no time passes: the old clear reading is still fresh
+        self.assertEqual("UNKNOWN", reader.poll().state)
+
+    def test_the_beam_recovers_when_the_source_works_again(self) -> None:
+        reader, source, clock = self.flaky_calibrated()
+        source.failing = True
+        self.assertEqual("UNKNOWN", reader.poll().state)
+        source.failing = False
+        states = []
+        for _ in range(3):
+            clock.advance(0.2)
+            source.push("1,VL53L0X,500,VALID")
+            states.append(reader.poll().state)
+        self.assertEqual("BEAM_CLEAR", states[-1])
+
+
 class SimulatedSourceTests(unittest.TestCase):
     def build(self):
         clock = Clock()

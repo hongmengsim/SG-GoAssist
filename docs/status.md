@@ -119,3 +119,110 @@ Legend: `[x]` built and verified by a test or a run (evidence given), `[ ]` not 
 - **Unresolved from the 29 Sep handoff:** alighting and destination scope in the app (documented, not hidden), backend as both cloud and controller, final ToF sensor, submission deadline.
 - **Contract change process:** additions to `contracts/` (operator-only messages, report types) were made ahead of a written proposal; recorded in `docs/interfaces/message-additions.md`.
 - **The 1 Oct 2026 security and code reviews** (four independent reviewers: backend security, backend code, the Pi agent, the operator console) produced findings that are recorded in `docs/reviews/2026-10-01-reviews.md` with their status.
+
+## Hardware bring-up log (worked on the branch `hardware-bringup`, since merged into `main`)
+
+**1 Oct 2026, fixed in code, not yet verified on hardware:** an unplugged or vanished ESP32 no longer raises out of the agent's tick; `BeamReader.poll` reports `UNKNOWN` (no distance), logs once, and the gate halts (`TOF_UNAVAILABLE`). Four new tests reproduce the `OSError: [Errno 5]` seen on the Pi and pass; tof-link 31, bus-agent 176 tests pass. The unplug check with the real agent is still to run.
+
+To continue this work in a new session, start with `docs/runbooks/hardware-bring-up-handoff.md`. Helper scripts used during the bring-up are in `docs/runbooks/hardware-bringup-tools/`.
+
+Only what was run on hardware and shown in pasted output is marked "verified on hardware". Everything else stays not verified. The ramp is simulated only; no camera frames are stored.
+
+### Stage 1: ESP32 serial link (Pi #1, 30 Sep 2026)
+
+- **Verified on hardware:** the Pi sees the ESP32 as `/dev/ttyACM0` (`1a86:55d3 QinHeng USB Single Serial`, `cdc_acm` driver; there is no `/dev/serial/by-id/` entry, so configure the `ttyACM0` path). Reading 115200 baud with nothing sent gave `time_ms,VL53L0X,distance_mm,status` lines about every 294 ms for 10 s with no restart. `VALID` distances and `NA,INVALID_status_2` lines both arrive. Distance readings therefore need no handshake or keepalive; a writer is still untested for the lasers.
+- **Not verified:** stable power. Before that read the ESP32 restarted about every 3 s, with `over-current change` messages on all four USB ports. After a re-plug at 362.9 s the log stayed quiet for about 72 s. `vcgencmd get_throttled` returned `0x50000` (under-voltage and throttling have occurred since boot; none at the time of the check). The Pi supply is marginal; the cause of the earlier loop is not proven.
+- **Not verified:** the backstop distance. The readings sat at 21 to 27 mm, then 47 to 258 mm with gaps; where the board and hand were was not recorded. Calibration needs a reference of 150 to 1000 mm.
+
+### Stage 2: ToF beam states through `pi/tof-link` (Pi #1, 30 Sep 2026)
+
+Run with a throwaway script that drives `BeamReader` on the real ESP32 over `/dev/ttyACM0` (it sends nothing and stores nothing). The agent's own `calibrate` command was not used: `--real` refuses to start until the camera and model also open.
+
+- **Verified on hardware:**
+  - Before calibration the state was `UNCALIBRATED` (`UNKNOWN` for the first reading only).
+  - The first calibration attempt was refused ("Wait for 10 fresh valid readings"); the second gave a reference of 228.5 mm.
+  - With the path empty: `BEAM_CLEAR` at 226 to 234 mm.
+  - With a hand in the beam: `BLOCKED` at 34 to 115 mm.
+  - After the hand was withdrawn: `CHECKING`, then `BEAM_CLEAR`.
+  - With the backstop removed: `UNKNOWN` with no distance for the whole 6 s, never `BEAM_CLEAR`.
+- **Not verified:**
+  - Hand timing was loose. Both the hand-in and hand-out runs show `BLOCKED` twice, so the exact block and clear latency is not measured.
+  - Unplugging the ESP32 gives `UNKNOWN` within about a second and halts the gate: not tested (the halt needs the agent).
+  - The agent's own `calibrate` command and the gate's halt reasons: not tested (Stage 5).
+  - Stable power: `throttled=0x50000` and 390 over-current lines were still present at uptime 1024 s. The supply is still suspect.
+- **Observation:** clear readings drifted between 226 and 249 mm against a 228.5 mm reference, about 20 mm from the reference at the top, against a 30 mm margin. The margin is thin for this sensor and backstop.
+
+### Stages 1 and 2, re-run after the power fault was removed (30 Sep 2026)
+
+- **Cause of the power fault (reported by CE2, not measured by me):** a phone was connected to the Pi's USB port. With it removed the fault stopped. Until then the ESP32 repeatedly dropped off USB (`OSError: [Errno 5] Input/output error` in the reader), with `over-current change` bursts on all four USB ports. Over-current lines also appeared with the ESP32 unplugged (330 to 390 in 30 s), so the ESP32 was not their source. A new cable had already cleared the under-voltage (`throttled=0x0`, `EXT5V_V` 4.92 to 5.00 V) but not the over-current.
+- **Verified on hardware (clean re-run of the beam test, new reference 259.0 mm):**
+  - `UNCALIBRATED` before calibration; calibration was refused twice ("Wait for 10 fresh valid readings", then "Reference is moving/noisy"), then accepted at 259.0 mm.
+  - Path empty: `BEAM_CLEAR` at 256 to 260 mm for 5 s.
+  - Hand held in the beam: `BLOCKED` from the first reading in the block, 65 mm falling to 35 to 43 mm, held for the whole 6 s.
+  - Hand withdrawn: `BLOCKED` for about 1.5 s, then `CHECKING` for two readings, then `BEAM_CLEAR` for the rest.
+  - Backstop removed: `UNKNOWN` with no distance for the whole 6 s.
+  - The whole run (about 40 s) completed with no serial error.
+- **Not verified:** `throttled`, `EXT5V_V` and the over-current count were not pasted after the phone was removed, so power is judged only by the run completing. Unplugging the ESP32 mid-run and the gate's halt need the agent (Stage 5).
+- **Observation:** with the backstop untouched, clear readings sat 15 to 25 mm above the 259.0 mm reference (274 to 284 mm) after the hand was withdrawn. The margin is 30 mm, so this is close.
+- **Open code issue seen on hardware, not yet fixed:** `SerialLineSource.read_lines` (`pi/tof-link/beam_reading.py`) has no handling for the port vanishing, and `BusAgent._decide` calls it unguarded, so an unplugged ESP32 would raise out of the tick instead of reporting `UNKNOWN`. To be tested and fixed before the unplug check in Stage 5.
+
+### Stage 3 (partial) and the model already on the Pi (30 Sep 2026)
+
+- **Camera capture, verified on hardware:** the Pi camera (`imx708_wide`) opens through the agent's own `Picamera2Grabber` path and delivers 640x640x3 frames at about 9 per second. A normal lit scene read healthy on all 37 frames (mean 116.6, std 58.2). The helper printed only summary numbers; no frame was saved, written or sent.
+- **Image-health check on real frames, NOT verified:** "lens covered" (mean 113.9, std 50.5) and "dark" (mean 73.0, std 89.4) both read healthy on every frame. Either the lens was not actually covered during the timed window or the placeholder thresholds are too permissive for this camera. A re-run with the lens covered first is pending; the thresholds in `pi/perception/perception/health.py` are unchanged.
+- **Model plug-in, verified on hardware (load and speed only):** `/home/pi/yolo11n_ncnn_model` (Ultralytics YOLO11n NCNN export, stock COCO 80 classes, 640x640, from a 23 Sep 2026 export) loads through the repo's own `ultralytics_runner` (ultralytics 8.4.162). Load 1.8 s. On a blank synthetic frame (not a camera frame) it ran 93.4 ms per frame, 10.7 frames per second, over 20 runs, with an empty result. That measures inference only, on one blank input: not with camera capture, a live scene, detections in the frame, or the agent running at the same time. It says nothing about detection quality; that is CE2's ML work and was not evaluated.
+- **What the model can name:** COCO classes such as person, bicycle, backpack, handbag, suitcase and chair. It has no wheelchair, stroller or box class (as the repo already states); only the beam guards those until a fine-tuned model exists. Not tested: how the safe/unsafe policy behaves on real detections from this model.
+- **To use it:** set `modelPath` in `agent.json` to the model folder (`/home/pi/yolo11n_ncnn_model`), not a `.param` file. Not yet run through `--real`.
+
+### Stage 3 result: camera capture and image health (30 Sep 2026, reported by CE2 from a live view)
+
+- **Verified on hardware (numbers as read by CE2 from a live browser view; no frame was saved):** with the lens fully covered the health check reported `too_dark` (mean 1.3, std 1.5, 95th percentile 4). A normal lit scene reported healthy (mean 110.1, std 58.2, 95th percentile 255). The live view was a helper outside the repo that keeps only the newest frame in memory and listens on the Pi's loopback address (reached through an SSH tunnel).
+- **Earlier runs that read "healthy" while covered** (mean 27 to 75, std 34 to 106) are explained by the cover not being light-tight, not by the check; this is my inference, not something a frame showed.
+- **Not tested:** `overexposed` (glare), and `low_contrast_or_blocked` on its own (a fully covered lens trips `too_dark` first). The health thresholds in `pi/perception/perception/health.py` are unchanged from the phone-footage placeholders and still need a partly blocked lens and glare to be checked.
+- **Power:** CE2 reports the over-current fault is fully fixed; no fresh `throttled` or over-current count was pasted after the phone was removed, so this is a report, not a measurement.
+
+### Stage 4: perception with stub detectors on real camera frames (30 Sep 2026)
+
+- **Verified on hardware:** real Pi camera frames went through the repo's own pipeline (`pi/perception` health check, detector, safe/unsafe policy, ramp-zone overlap) and then through `pi/safety-gate`. Detectors were stubs returning fixed detections, so nothing here looked at the picture and no model was involved. The beam input was fixed at `BEAM_CLEAR`, not the real ToF. Results (lens uncovered, lit scene): nothing detected gave `CONTINUE`; a person inside the zone gave `HALT` (`OBJECT_IN_ZONE`); a person outside the zone gave `CONTINUE`; a leaf at 0.95 inside the zone gave `CONTINUE`; a leaf at 0.60 gave `HALT`; a fake model runner returning a suitcase was mapped to `bag_or_box` and gave `HALT`; a runner that raised gave `objects` unavailable, `inference_error` and `HALT` (`CAMERA_DEGRADED`). With the lens covered, both the empty stub and a stub person gave `too_dark`, `objects` unavailable (not empty), and `HALT` (`CAMERA_DEGRADED`).
+- **Not verified:** any real detection (no model looked at a frame here); overexposure; the real beam feeding the same run; the 0.92 safe-object floor's value (an owner decision, not tested for correctness of the value).
+- **Plug-in point shown:** `ModelDetector(runner)` from `bus_agent/sensors_real.py` accepts any runner returning `(class name, confidence, (x1, y1, x2, y2))` in 0 to 1 units; the real runner is `ultralytics_runner(modelPath)`.
+
+### Stage 5: bus-agent `--real` against the backend (Pi #1 to a backend on the Windows PC, 30 Sep 2026)
+
+Setup: backend built from this branch on the PC (Node v22.15.1, `GOASSIST_AUTO_ACK=off`, device secret and operator token in environment variables only, SQLite in `backend/.runtime/hw`), reached from the Pi over an iPhone-hotspot network at `172.20.10.3:3000`. Pi #1 ran `python -m bus_agent --real` with the real ESP32 ToF, the Pi camera and the stock `yolo11n` COCO model as a stand-in (not CE2's model). The ramp is simulated. Times below are UTC as written in the backend audit file.
+
+- **Verified on hardware:**
+  - Preflight passed with all three real sensors; the agent started (`AV-095-01 running with REAL sensors`), did not refuse.
+  - `GET /ready` from the Pi returned 200 with both stores ok.
+  - The backend audit shows the agent as actor `VEHICLE`: capability registered and bus status `TRAVELLING_TO_STOP` with `simulated: false` at 04:35:27; at 04:57:16.573 `arrive 18331` became `BAY_CHANGED` and `POSITIONED_AT_STOP`.
+  - The operator console (live mode, from the backend) showed `AV-095-01` connected with the Pi's decision, reasons in words, beam state and distance, camera state, and `Last report 0 s ago`.
+  - A test request (`SIGNAL_ACCEPTED`, actor `APP`, 04:57:45.798) reached "Confirmed by bus". With the backend's timer off, only the signed device endpoint `assist-ack` can set that; on the agent side a request is only added to its accepted set after its acknowledgement call succeeds, and `NO_ACCEPTED_REQUEST` cleared. The backend issued `DEPLOY_RAMP` (actor `ORCHESTRATOR`) at 04:57:56.242, 10.4 s after the request.
+  - Deployment timeout observed: the beam was blocked (about 31 mm) so the simulated ramp did not progress. The backend expired the command at 04:58:26.289 (30.05 s after issue) and the agent raised `HELP_REQUIRED_CHANGED` with reason `DEPLOYMENT_TIMEOUT`, state `HALTED`, at 04:58:27.436 (31.19 s after issue, includes delivery time). The console showed the banner "Deployment timed out (state halted)" and the case `BLOCKED` with "Ramp deployment path is obstructed".
+- **Not verified:**
+  - Who acknowledged the request, by name: the backend audit has no event for the acknowledgement (no actor recorded), so the bus-only claim rests on the signed endpoint and the agent's own behaviour, not on an audit entry. The agent window's acknowledgement lines were not pasted.
+  - The request-to-acknowledgement time (the console's "acknowledgement p95 6 ms" was not explained and is not trusted).
+  - The backend window output; the operator halt; the link-loss halt; the beam being clear during a deployment (the beam was blocked throughout); recording and replay; Pi #2.
+- **Bug found on hardware and fixed (commit 9e1439c, Pi not yet updated):** the agent posted its safety decision about 3.7 times a second, not on change plus a 5 s heartbeat: 5,174 `RAMP_SAFETY_CHANGED` entries in 26 minutes (median gap 0.275 s). The change check counted the beam distance and detection confidence as changes, and real sensors move them on every reading. Simulated sensors never moved them, so tests missed it. Now those readings go out only with the heartbeat. Four new tests; all 174 agent tests pass. Not yet confirmed on the Pi: the new rate must be measured from the audit file.
+- **Observations, not changed:**
+  - The console shows "Vehicle stopped", "Parking brake" and "Door open" as `CLEAR` under `FROM THE BUS`, but the agent simulates those three values (a positioned bus counts as stopped, braked and door open); the console does not say so.
+  - `Devices online: 0` while the Pi was reporting (backend-side lost-agent detection is not built).
+  - The console shows the decision time in UTC beside a header clock in local time.
+  - The Pi's local status page shows a `SIMULATED` badge on a real run: `.mark { display: inline-block }` overrides the `hidden` attribute in `pi/bus-agent/bus_agent/status.html`.
+  - The backend expired the deploy command 1.1 s before the agent reported its own 30 s timeout; the two timers race.
+
+### Stage 5 follow-up: decision posting rate after the fix, measured on the Pi (30 Sep 2026)
+
+- **Verified on hardware:** with the fix (commit 9e1439c) copied to the Pi and the agent restarted at 05:04:12 UTC, the backend audit file shows `RAMP_SAFETY_CHANGED` entries per minute falling from about 190 to 250 (04:58 to 05:03, before the restart) to 57, 18, 42, 21 and 7 (05:04 to 05:08). That is roughly a 75 to 97 percent drop. After 05:08:12 the audit file gained no new rows for over four minutes, which fits a steady decision producing no new rows; it does not by itself show the agent was still posting.
+- **Not verified:** that the rate is at the intended one message per bus every five seconds when nothing changes (the backend audits only content changes, so heartbeat posts do not show in the audit file); what caused the remaining changes (hand and object movement, beam flicker); that the agent was still reporting after 05:08:12 (needs the console's "Last report" age).
+
+### Stage 5 incident: `401 Invalid device signature` after a relaunch (30 Sep 2026)
+
+- **What happened:** after the backend and the Pi agent were relaunched with new secrets, the agent's posts and polls were rejected with `401 Invalid device signature` for at least five minutes (the console showed "Last report 5 min ago"; the backend audit stopped at 05:08:12 UTC). The Pi could not report, receive commands or acknowledge.
+- **Cause: not determined.** The two suspects were a device-secret mismatch (a paste after the launcher's 90 s timed clipboard had cleared, or a second launch) and a clock difference over 60 s. The hash and clock comparison was not run. A full restart of everything with fresh secrets cleared it: from 05:18:11 UTC the backend audit shows the agent re-registered and reporting again, with no `401` seen by CE2.
+- **Change made:** the launcher no longer copies the device secret automatically; both secrets are now copied from its SCRATCH tab on demand. This is a guess at the cause, not a confirmed fix.
+- **Also seen in the audit:** the earlier blocked test case was cancelled from the console (`OPERATOR_CANCEL`, `ASSISTANCE_CANCELLED_RAMP_SAFE`).
+
+### Decisions recorded on 30 Sep 2026 (CE2)
+
+- **Live camera view for controllers: an on-demand relay, designed only, nothing built.** The controller turns it on and off in the operator console, either when they open a bus or from an escalated case. It is off by default. The Pi connects outward to a stateless relay only while someone is watching; nothing is stored on any disk, including the relay; each view is audited once per session (not per frame); viewers are capped per operator and per bus; the safety loop must never wait on the encoder. Camera images shown to controllers is a privacy decision that CE2 owns.
+- **Operator-side debugging (`AGENT_DIAGNOSTICS`)** is proposed to CE2 and waits for approval and for the other session's storage work before any change to `backend/` or `contracts/`.

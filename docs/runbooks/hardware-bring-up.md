@@ -1,6 +1,6 @@
 # Hardware bring-up (Pi #1, ESP32, ToF, camera)
 
-**Nothing in this runbook has been run on hardware yet.** It is the order in which to bring the real parts in, one at a time, with a check and a fallback at each step. Everything before step 1 already runs on a laptop (`docs/runbooks/run-everything-on-one-laptop.md`).
+**Parts of this runbook were run on Pi #1 on 30 Sep 2026** (what was verified and what was not is in `docs/status.md`; how to continue is in `hardware-bring-up-handoff.md`; helper scripts are in `hardware-bringup-tools/`). Anything not listed as verified there has not been run on hardware. It is the order in which to bring the real parts in, one at a time, with a check and a fallback at each step. Everything before step 1 already runs on a laptop (`docs/runbooks/run-everything-on-one-laptop.md`).
 
 Rules that hold throughout: the ramp stays simulated; camera frames are never stored; secrets go in the environment (`DEVICE_SHARED_SECRET`, `OPERATOR_API_TOKEN`), never in a file; the Pi's clock must be right (signatures allow 60 seconds); if a step fails, go back to `--simulate`.
 
