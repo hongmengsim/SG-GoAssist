@@ -6,18 +6,20 @@ Accessible journeys. Guided with care.
 
 Each part lives in its own folder, has its own README (purpose, interface, how to run it alone, how to test it) and can be worked on without the others running. Start with [`docs/`](docs/README.md).
 
-| Part                                          | Folder                                            | State          |
-| --------------------------------------------- | ------------------------------------------------- | -------------- |
-| Message contract (types and constants)        | [`contracts/`](contracts/README.md)               | active         |
-| Backend (REST, WebSocket, case orchestration) | [`backend/`](backend/README.md)                   | active         |
-| Passenger app                                 | [`passenger-app/`](passenger-app/README.md)       | active         |
-| ESP32 ToF link on the Pi                      | [`pi/tof-link/`](pi/tof-link/README.md)           | active         |
-| Camera perception on the Pi                   | [`pi/perception/`](pi/perception/README.md)       | planned        |
-| Pi safety decision (halt or continue)         | [`pi/safety-gate/`](pi/safety-gate/README.md)     | planned        |
-| Pi bus agent (one Pi = one bus)               | [`pi/bus-agent/`](pi/bus-agent/README.md)         | planned        |
-| Operator console                              | [`operator-console/`](operator-console/README.md) | planned        |
-| ESP32 firmware in use                         | [`firmware/`](firmware/README.md)                 | active         |
-| Earlier designs and reference material        | [`archive/`](archive/README.md)                   | not maintained |
+| Part                                          | Folder                                            | State                    |
+| --------------------------------------------- | ------------------------------------------------- | ------------------------ |
+| Message contract (types and constants)        | [`contracts/`](contracts/README.md)               | active                   |
+| Backend (REST, WebSocket, case orchestration) | [`backend/`](backend/README.md)                   | active                   |
+| Passenger app                                 | [`passenger-app/`](passenger-app/README.md)       | active                   |
+| ESP32 ToF link on the Pi                      | [`pi/tof-link/`](pi/tof-link/README.md)           | active                   |
+| Camera perception on the Pi                   | [`pi/perception/`](pi/perception/README.md)       | built, simulated sensors |
+| Pi safety decision (halt or continue)         | [`pi/safety-gate/`](pi/safety-gate/README.md)     | built, simulated sensors |
+| Pi bus agent (one Pi = one bus)               | [`pi/bus-agent/`](pi/bus-agent/README.md)         | built, simulated sensors |
+| Operator console                              | [`operator-console/`](operator-console/README.md) | active                   |
+| ESP32 firmware in use                         | [`firmware/`](firmware/README.md)                 | active                   |
+| Earlier designs and reference material        | [`archive/`](archive/README.md)                   | not maintained           |
+
+**Where things stand:** [`docs/status.md`](docs/status.md) is the checklist (what is built and verified, what is left, known gaps). Everything is simulated: no camera, ESP32, Raspberry Pi or physical ramp has been used, and the ramp is simulated only. `npm run verify` runs every check (`verify:fast` skips the passenger app and the end-to-end scenario). Hardware bring-up steps are in [`docs/runbooks/hardware-bring-up.md`](docs/runbooks/hardware-bring-up.md); running several backend processes on Postgres and Redis is in [`docs/runbooks/multi-process.md`](docs/runbooks/multi-process.md).
 
 `npm run check:modules` verifies that every module has its README, a test command, and no imports across module boundaries. `npm run test:modules` tests that checker.
 

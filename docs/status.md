@@ -1,16 +1,16 @@
 # Status audit and checklist
 
-Audit of the `integration` branch on 30 Sep 2026: 39 commits ahead of `main`, nothing pushed. Everything below is simulated unless it says otherwise: **no camera, ESP32, Raspberry Pi or physical ramp has been used**, and no model has run.
+Audit of the `integration` branch, first written 30 Sep 2026 and updated 1 Oct 2026: 70 commits ahead of `main`, pushed to `origin/integration`, not merged. Everything below is simulated unless it says otherwise: **no camera, ESP32, Raspberry Pi or physical ramp has been used**, and no model has run.
 
 Legend: `[x]` built and verified by a test or a run (evidence given), `[ ]` not done, `[~]` partly done (the gap is stated).
 
 ## How it was verified
 
-| Check                                                      | Result on 30 Sep 2026                                                                                               |
+| Check                                                      | Result on 1 Oct 2026                                                                                                |
 | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
 | `npm run verify` (full)                                    | 13 of 13 passed, including the passenger app and the end-to-end scenario                                            |
 | `npm run verify:fast`                                      | 11 of 11 passed (last run after the final commit)                                                                   |
-| Backend                                                    | 284 tests                                                                                                           |
+| Backend                                                    | 430 tests (473 with a Postgres server, none skipped; see `backend/README.md`)                                       |
 | Passenger app                                              | 420 tests (last full run; unchanged code)                                                                           |
 | Contracts                                                  | 4 (TypeScript, schema drift and fixtures) + 3 (Python, fixtures)                                                    |
 | `pi/tof-link` / `perception` / `safety-gate` / `bus-agent` | 28 / 33 / 29 / 170 tests, no hardware                                                                               |
@@ -87,12 +87,11 @@ Legend: `[x]` built and verified by a test or a run (evidence given), `[ ]` not 
 
 - [~] **R1 Timeouts, help-required, link loss:** built and tested but **off by default**: `deploymentTimeoutSeconds` and `linkLossHaltSeconds` in the agent config (a stalled deployment raises help-required, fails its command and halts; a lost backend link halts the ramp). Values chosen by CE2 on 30 Sep 2026: deployment timeout 30 s; link-loss halt 10 s (both confirmed by CE2); both are set in `pi/bus-agent/agent.example.json`, and stay off in code unless a config sets them. Still to do: tell the team, and the backend-side lost-agent detection (heartbeat loss) is not built.
 - [~] **R3 Security parity:** signed requests from Python, the operator token in the console, and signed per-bus WebSocket subscription (`SUBSCRIBE_DEVICE`; the Pi holds no operator token) are done. Per-device secrets (today one shared secret) and rotation are not.
-- [~] **R4 Documentation:** runbook, endpoint reference and module READMEs done. Still to write: a hardware bring-up runbook, and an update to `CLAUDE.md`-style project notes.
-- [~] **R5 CI:** `.github/workflows/ci.yml` written (node modules, each Python module, contracts Python, passenger app, end-to-end scenario and overload check) but **never run**; the branch is pushed, so the first run will show what needs fixing.
+- [x] **R4 Documentation:** runbooks (one laptop, hardware bring-up, multi-process), endpoint reference, decisions 0001 to 0005 and every module README were reviewed against the code on 1 Oct 2026. Nothing in the hardware runbook has been run on hardware.
+- [x] **R5 CI:** `.github/workflows/ci.yml` has run on GitHub since 30 Sep 2026 and is green: node modules, each Python module, contracts Python, passenger app, the single-process end-to-end scenario and overload check, and a `postgres-redis` job (Postgres 16 and Redis 7 service containers: the Postgres adapter tests, the two-process check and the two-process scenario). The first run of the last job failed because the database URL was set for the whole job; that is fixed.
 - [ ] **R6 Safe-object policy constants agreed with the team** (0.92 is in code; the size limit is open; the agent and backend must mirror the final values).
 - [~] **Scale items:** done: SC2 role mounting (`passenger`, `operations`), SC4 rate limiting with priority and load shedding, SC5 cache headers on bus-stop data, SC7 `/admin/metrics` and `/ready`, SC8 load-test harness, bounded in-memory log and batched audit writes (part of SC6). Retention (rest of SC6) and SC10 (the whole-state document retired) are built (see the Platform and scale list). Not done: SC9 cursor-based command polling and store-and-forward, splitting the fleet role from the operator role, and the 3,000 messages per second target (measured about 2,000 per second on one process).
 - [ ] **Update the teammate:** contract additions, `packages/*` rename, lockfile churn (about 150 lines), the audit-index addition to their store, the `/operator` removal, and how to refresh their checkout (decision 0003).
-- [ ] Update the local `CLAUDE.md` to the current state.
 
 ### Needs hardware (deferred by scope)
 
@@ -113,10 +112,10 @@ Legend: `[x]` built and verified by a test or a run (evidence given), `[ ]` not 
 - **Nothing has run on hardware.** Every "real" claim above means "the real backend and the real code paths", with simulated sensors and a simulated ramp, labelled as such in every report.
 - **A lost backend link halts an in-progress deployment only if `linkLossHaltSeconds` is set** (off by default until the value is agreed); the loop itself keeps running on its own either way. The local gate keeps running and halts on an obstruction, but nothing halts on link loss alone (R1).
 - **No timeouts unless configured:** a stalled deployment is only detected if `deploymentTimeoutSeconds` is set. Placeholders that must not be mistaken for agreed values: simulated deployment time 4 s, poll intervals, camera freshness 1.0 s, the placeholder ramp polygon, image-health thresholds, the mock console's 8 s stall timeout.
-- **Case data needs SQLite to survive a restart:** on a runtime without `node:sqlite` the operations data is in memory only (a warning is logged). The previous JSON-file fallback was removed with the whole-state document.
+- **Case data needs SQLite or Postgres to survive a restart:** on a runtime without `node:sqlite`, and with no `GOASSIST_DATABASE_URL`, the operations data is in memory only (a warning is logged). The previous JSON-file fallback was removed with the whole-state document.
 - **The mock console's gate rules are stand-ins** for `pi/safety-gate`.
 - **Cancelling a request only starts a safe stow;** the request keeps showing "Confirmed by bus" until the case finishes.
 - **The console's live camera view is a labelled placeholder;** the ramp-zone panel is drawn from the Pi's decision, not an image.
 - **Unresolved from the 29 Sep handoff:** alighting and destination scope in the app (documented, not hidden), backend as both cloud and controller, final ToF sensor, submission deadline.
 - **Contract change process:** additions to `contracts/` (operator-only messages, report types) were made ahead of a written proposal; recorded in `docs/interfaces/message-additions.md`.
-- **CI is unverified** until something is pushed.
+- **The 1 Oct 2026 security and code reviews** (four independent reviewers: backend security, backend code, the Pi agent, the operator console) produced findings that are recorded in `docs/reviews/2026-10-01-reviews.md` with their status.

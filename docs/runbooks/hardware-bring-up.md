@@ -7,6 +7,7 @@ Rules that hold throughout: the ramp stays simulated; camera frames are never st
 ## 0. Before you touch the Pi
 
 - Backend host chosen and reachable from the Pi's network (a laptop is fine). Start it with `GOASSIST_AUTO_ACK=off` and `DEVICE_SHARED_SECRET` set.
+- Decisions made by CE2 on 1 Oct 2026: the backend runs on a separate computer that installs it from GitHub (`npm install`, `npm run build`, start; see `backend/README.md`); Pi #1 is Bus 1 (`AV-095-01`) with the real sensors; Pi #2 is Bus 2 (`AV-095-02`) and stays simulated (`--simulate`) but sends live, signed traffic to the backend over the network; the timeouts in `agent.example.json` are 30 s (deployment) and 10 s (link loss).
 - Time synchronised on both machines (`timedatectl` on the Pi).
 - Copy the repository to the Pi intact (the agent finds `pi/tof-link`, `pi/perception` and `pi/safety-gate` by path). `pip install -r pi/bus-agent/requirements.txt`; on the Pi also `pyserial`, `picamera2`, `ultralytics` (or `opencv-python` for a USB camera).
 - Copy `pi/bus-agent/agent.example.json` to `agent.json` and set `busId`, `busService`, `backendUrl`. Leave `serialPort`, `cameraIndex` and `modelPath` for later steps.

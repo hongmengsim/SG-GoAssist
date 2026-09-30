@@ -19,6 +19,7 @@ report = decision.to_report("2026-09-30T00:00:00.000Z")   # body of a RampSafety
 - `beam`: `BeamInput(state, distance_mm, simulated)` with `state` one of `BEAM_CLEAR`, `BLOCKED`, `CHECKING`, `UNCALIBRATED`, `UNKNOWN` (the contract's `TofBeamState`). The teammate's `BeamState` in `pi/tof-link` spells the clear state `BEAM CLEAR`; the adapter in `pi/bus-agent` converts it.
 - `context`: `BusContext(movement, has_accepted_request, operator_halt)`. `movement` is a `BusMovementState`.
 - `config`: `GateConfig(max_camera_age_seconds)`, default 1.0 s. That default is a placeholder assumption until the real camera rate is known.
+- The gate itself produces the sensor and context reasons (`OBJECT_IN_ZONE`, `TOF_BLOCKED`, `TOF_UNAVAILABLE`, `TOF_NOT_CALIBRATED`, `CAMERA_DEGRADED`, `SENSORS_DISAGREE`, `BUS_NOT_AT_BOARDING_POSITION`, `WAITING_FOR_BAY`, `NO_ACCEPTED_REQUEST`, `OPERATOR_HALT`). `DEPLOYMENT_TIMEOUT` and `BACKEND_LINK_LOST` are also in the ordered list but are added by `pi/bus-agent` from time and the backend link, never by the gate. Anything added to a decision can only add a halt reason.
 - Result: `zone_state` (`CLEAR` / `OCCUPIED` / `UNCERTAIN`), `permission` (`CONTINUE` / `HALT`), `reasons` (`HaltReason` values in a fixed order), and the inputs used. `to_report` uses the contract's field names and validates against `contracts/schema/RampSafetyReport.schema.json`.
 
 ## Rules

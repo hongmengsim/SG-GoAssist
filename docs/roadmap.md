@@ -1,4 +1,4 @@
-# Roadmap: what is still missing (30 Sep 2026)
+# Roadmap (written 30 Sep 2026, updated 1 Oct 2026)
 
 Scope rule from the project owner: **prioritise software integration between the parts. Testing of the ESP32 and Raspberry Pi hardware, and the machine-learning model running on the Pi, come later.** Everything below can be built and tested on one laptop with simulated sensors. Items that need hardware or the model are listed at the end as deferred.
 
@@ -6,9 +6,19 @@ Sizes are rough: **S** about half a day, **M** one to two days, **L** three days
 
 ## Where we are
 
-Done and verified: repository restructured into independent modules with a checker; shared types added (`BusStatus`, `BayStatus`, `RampSafetyDecision`, `RampSimulationStatus`, `HelpRequired`, operator-only message union); line endings fixed; the existing backend, app and ToF module all pass their tests (backend 94, app 420, ToF 10).
+**Update, 1 Oct 2026.** Every item in priorities 0 to 2 and the scale items SC1 to SC8 and SC10 is built and verified in software with simulated sensors; the tables below are kept as written, and [`status.md`](status.md) is the current checklist with evidence. What is left:
 
-Not started: every item below. The backend has no bus, bay, status, acknowledgement or audit endpoints; there is no schema generation; the four planned modules are READMEs only.
+- **Needs hardware, or the ML work (CE2):** everything in `runbooks/hardware-bring-up.md` and the "Needs hardware" and "Needs the ML work" lists in `status.md`. Nothing has run on a Pi, an ESP32, a camera or a physical ramp.
+- **Open decisions:** R6 (the safe-object size limit), confirmation of the timeout values with the team (30 s and 10 s are set in `agent.example.json`), where the backend is hosted, the final ToF sensor, whether Pi #2 stays simulated.
+- **Review and merge:** the branch is pushed but not merged; the teammate has not reviewed the storage, async, lock and Postgres changes (decision 0005).
+- **Scale, not yet shown:** processes on separate machines, more than two processes, 3,000 messages per second; shared rate limits and metrics; the case service's single lock; a deployment definition (compose file); SC9 (cursor-based command polling); a backend-side lost-agent check; splitting the fleet role from the operator role.
+- **Findings from the 1 Oct 2026 security and code reviews** are tracked in `status.md`.
+
+Earlier text follows.
+
+Done and verified at the time of writing: repository restructured into independent modules with a checker; shared types added (`BusStatus`, `BayStatus`, `RampSafetyDecision`, `RampSimulationStatus`, `HelpRequired`, operator-only message union); line endings fixed; the existing backend, app and ToF module all pass their tests (backend 94, app 420, ToF 10).
+
+Not started at the time of writing: every item below. The backend had no bus, bay, status, acknowledgement or audit endpoints; there was no schema generation; the four planned modules were READMEs only.
 
 ## Priority 0: foundation (everything else depends on these)
 
@@ -63,7 +73,7 @@ These come from [`architecture/scalability.md`](architecture/scalability.md). Ea
 | SC6  | **Done (retention, 30 Sep 2026).** Retention for completed cases and a bounded, asynchronous logger                                                                   | SM10          | R1        | M    | both     |
 | SC7  | Metrics, health and readiness endpoints                                                                                                                               | SM13          | E1        | S    | CE2      |
 | SC8  | Load-test harness with the acceptance thresholds in the scalability document                                                                                          | SM13          | E1        | M    | CE2      |
-| SC9  | Cursor-based command polling and store-and-forward in the bus agent                                                                                                   | SM6, SM7      | A1        | M    | CE2      |
+| SC9  | Cursor-based command polling and store-and-forward in the bus agent (**open**)                                                                                        | SM6, SM7      | A1        | M    | CE2      |
 | SC10 | **Done 1 Oct 2026.** Move the existing cases and telemetry off the whole-state document. This touches the teammate's backend core, so it needs their agreement first. | SM3           | after E1  | L    | both     |
 
 Rule for all new backend code from here on: no operation may touch everything ever stored; no domain state in module-level variables; every write idempotent; every subscription scoped.

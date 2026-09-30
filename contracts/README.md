@@ -11,6 +11,7 @@ Everything is exported from `src/index.ts`:
 - Request and case model: `AssistanceType`, `AssistanceRequestStatus`, `AssistanceCase`, `AssistanceCaseState`, `SignalObservation`, ...
 - Vehicle and safety: `SafetyTelemetry`, `RampObstacleAssessment`, `ActuatorCommand`, `ActuatorStatus`, `VehicleStatus`, ...
 - Bus movement, bay, Pi decision and simulated ramp (added 30 Sep 2026): `BusStatus`, `BayStatus`, `RampSafetyDecision`, `RampSimulationStatus`, `HelpRequired`, and the constants `BUS_MOVEMENT_STATES`, `SIMULATED_RAMP_STATES`, `ZONE_STATES`, `RAMP_PERMISSIONS`, `HALT_REASONS`, `TOF_BEAM_STATES`, `HELP_REASONS`.
+- Operator halt and the bus request push (added 30 Sep 2026): `OperatorHalt` and `OperatorHaltMessage` (operator-only), `AssistRequestForBus` and `AssistRequestedMessage`; `HALT_REASONS` also holds `OPERATOR_HALT`, `DEPLOYMENT_TIMEOUT` and `BACKEND_LINK_LOST`. Report types for what a bus posts: `BusStatusReport`, `RampSimulationReport`, `RampSafetyReport`, `HelpRequiredReport`, `SafetyTelemetryReport`.
 - WebSocket messages: `StatusUpdateMessage` (passenger-facing) and `OperatorStatusUpdateMessage` (operator-only).
 
 **Rule:** do not add members to `StatusUpdateMessage`. The passenger app narrows it exhaustively, so a new member breaks the app's typecheck. Operator-only messages go in `OperatorStatusUpdateMessage`.
