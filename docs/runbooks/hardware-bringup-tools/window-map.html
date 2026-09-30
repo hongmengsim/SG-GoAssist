@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bring-up window map</title>
+<style>
+  :root { --bg:#f6f3ec; --ink:#1c1a17; --muted:#5b564d; --panel:#fffdf8; --line:#1c1a17; --pc:#2a4d8f; --pi:#7a3b12; --web:#3d3d3d; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#1a1916; --ink:#f0ebe0; --muted:#b3ac9e; --panel:#24221e; --line:#f0ebe0; --pc:#9db8f0; --pi:#f0b48a; --web:#d0d0d0; } }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:16px; background:var(--bg); color:var(--ink); font:16px/1.5 system-ui, "Segoe UI", sans-serif; max-width:1000px; margin-inline:auto; }
+  h1 { font-size:24px; margin:0 0 4px; }
+  h2 { font-size:18px; margin:28px 0 10px; text-transform:uppercase; letter-spacing:.04em; }
+  p.lead { color:var(--muted); margin:0 0 8px; }
+  .card { background:var(--panel); border:2px solid var(--line); padding:12px 14px; margin:10px 0; }
+  .card.pc  { border-style:solid; }
+  .card.pi  { border-style:double; border-width:5px; }
+  .card.web { border-style:dashed; }
+  .tag { display:inline-block; font:700 12px ui-monospace, Consolas, monospace; border:2px solid currentColor; padding:1px 8px; margin-right:8px; text-transform:uppercase; }
+  .pc .tag { color:var(--pc); }  .pi .tag { color:var(--pi); }  .web .tag { color:var(--web); }
+  .title { font-weight:700; font-size:18px; }
+  .row { margin:6px 0 0; }
+  .k { font:700 12px ui-monospace, Consolas, monospace; text-transform:uppercase; color:var(--muted); display:block; }
+  code, pre { font:13px/1.45 ui-monospace, Consolas, monospace; background:rgba(127,127,127,.15); }
+  code { padding:1px 4px; }
+  pre { padding:8px 10px; margin:4px 0; overflow-x:auto; white-space:pre-wrap; word-break:break-all; }
+  .warn { border:2px dashed var(--line); padding:8px 12px; margin:10px 0; }
+  ul { margin:6px 0 0; padding-left:20px; }
+  footer { margin-top:28px; color:var(--muted); font-size:14px; }
+</style>
+</head>
+<body>
+<h1>Bring-up window map</h1>
+<p class="lead">Pi #1 (<code>AV-095-01</code>) at <code>goassist-pi1.local</code>. Backend on this PC at <code>172.20.10.3:3000</code>. The kind of window is shown by its border and a word tag, never by colour alone: <b>solid = this PC</b>, <b>double = the Pi</b>, <b>dashed = browser</b>.</p>
+
+<div class="warn"><b>Rules that stop the confusion.</b>
+<ul>
+<li>One-off commands (<code>scp</code>, checks) go in the <b>SCRATCH</b> window only. Do not open a new window for each one.</li>
+<li>Name each window when you open it with its title line below.</li>
+<li>The agent and the camera live view cannot run at the same time: only one program can use the camera.</li>
+<li>Never paste secrets, the operator token, or the status page's <code>#code</code> into chat.</li>
+<li><b>Secrets are copied from window 4 (SCRATCH), on demand, the same way for both:</b> <code>Set-Clipboard $env:OPERATOR_API_TOKEN</code> for the console page, <code>Set-Clipboard $env:DEVICE_SHARED_SECRET</code> for window 5. Paste, then <code>Set-Clipboard $null</code>. There is no timed clipboard.</li>
+<li><b>One-shot:</b> <code>bringup.ps1</code> opens windows 1 to 6 as named tabs in one Windows Terminal window.</li>
+</ul></div>
+
+<h2>On this PC (4 PowerShell windows)</h2>
+
+<div class="card pc"><span class="tag">This PC</span><span class="title">1. BACKEND</span>
+<div class="row"><span class="k">What it is</span>The server. The Pi and the console both talk to it. Holds the device secret and operator token in its environment.</div>
+<div class="row"><span class="k">Name the window</span><pre>$Host.UI.RawUI.WindowTitle = 'BACKEND (this PC)'</pre></div>
+<div class="row"><span class="k">Start by hand (generates fresh secrets; the one-shot launcher does this for you)</span>
+<pre>cd D:\D\Claude\SG-GoAssist-hardware; $b = New-Object byte[] 32; $g = [Security.Cryptography.RandomNumberGenerator]::Create(); $g.GetBytes($b); $env:DEVICE_SHARED_SECRET = [BitConverter]::ToString($b).Replace('-','').ToLower(); $g.GetBytes($b); $env:OPERATOR_API_TOKEN = [BitConverter]::ToString($b).Replace('-','').ToLower(); $env:GOASSIST_AUTO_ACK = 'off'; $env:GOASSIST_DATA_DIR = '.runtime\hw'; npm.cmd start --workspace "@buspass/backend"</pre></div>
+<div class="row"><span class="k">Stop</span>Ctrl+C. The secrets stay in this window until you close it, so you can copy the token again with <code>Set-Clipboard $env:OPERATOR_API_TOKEN</code>.</div>
+<div class="row"><span class="k">After a restart with new secrets</span>Copy the new device secret from window 4 and paste it into the Pi (window 5) again.</div></div>
+
+<div class="card pc"><span class="tag">This PC</span><span class="title">2. CONSOLE SERVER</span>
+<div class="row"><span class="k">What it is</span>Serves the operator console page on port 5173. Needed only while the console tab is open.</div>
+<div class="row"><span class="k">Start</span><pre>$Host.UI.RawUI.WindowTitle = 'CONSOLE SERVER (this PC)'; cd D:\D\Claude\SG-GoAssist-hardware; npm.cmd run console</pre></div>
+<div class="row"><span class="k">Stop</span>Ctrl+C.</div></div>
+
+<div class="card pc"><span class="tag">This PC</span><span class="title">3. TUNNEL</span>
+<div class="row"><span class="k">What it is</span>A private pipe to the Pi's own web pages, so they are not open on the network. One window forwards both: the agent's status page (8770) and, when the agent is stopped, the camera live view (8780).</div>
+<div class="row"><span class="k">Start</span><pre>$Host.UI.RawUI.WindowTitle = 'TUNNEL to Pi'; ssh -N -L 8770:127.0.0.1:8770 -L 8780:127.0.0.1:8780 pi@goassist-pi1.local</pre></div>
+<div class="row"><span class="k">Stop</span>Ctrl+C. It prints nothing while it works: that is normal.</div></div>
+
+<div class="card pc"><span class="tag">This PC</span><span class="title">4. SCRATCH</span>
+<div class="row"><span class="k">What it is</span>The only place for one-off commands: <code>scp</code>, copying files, <code>Set-Clipboard $null</code>, git. Reuse it. Do not keep it running anything.</div>
+<div class="row"><span class="k">Start</span><pre>$Host.UI.RawUI.WindowTitle = 'SCRATCH (this PC)'; cd D:\D\Claude\SG-GoAssist-hardware</pre></div></div>
+
+<h2>On the Pi (2 SSH windows)</h2>
+
+<div class="card pi"><span class="tag">The Pi</span><span class="title">5. PI AGENT</span>
+<div class="row"><span class="k">What it is</span>Runs the bus agent. You type its commands here (<code>status</code>, <code>calibrate</code>, <code>arrive 18331</code>). Holds the device secret in this shell only.</div>
+<div class="row"><span class="k">Open and start</span>
+<pre>ssh pi@goassist-pi1.local</pre>
+<pre>read -rs DEVICE_SHARED_SECRET; export DEVICE_SHARED_SECRET</pre>
+<pre>cd ~/SG-GoAssist/pi/bus-agent &amp;&amp; python3 -m bus_agent --real --config agent.json --status-port 8770</pre></div>
+<div class="row"><span class="k">Stop</span>Ctrl+C. Start it again in the same window and the secret is still set.</div>
+<div class="row"><span class="k">Do not use it for</span>anything else. While the agent runs it owns the camera and the ESP32's serial port.</div></div>
+
+<div class="card pi"><span class="tag">The Pi</span><span class="title">6. PI CHECKS</span>
+<div class="row"><span class="k">What it is</span>A second SSH window for read-only checks while the agent runs: power, USB, disk.</div>
+<div class="row"><span class="k">Open</span><pre>ssh pi@goassist-pi1.local</pre></div>
+<div class="row"><span class="k">Useful</span><pre>vcgencmd get_throttled; dmesg | grep -ci over-current; dmesg | grep -c "USB disconnect"</pre></div></div>
+
+<h2>In the browser (2 tabs, plus 1 sometimes)</h2>
+
+<div class="card web"><span class="tag">Browser</span><span class="title">A. OPERATOR CONSOLE</span>
+<div class="row"><span class="k">Address</span><code>http://localhost:5173/?mode=live&amp;backend=http://localhost:3000</code></div>
+<div class="row"><span class="k">Needs</span>Windows 1 (backend) and 2 (console server). Asks for the operator token: paste it there, nowhere else.</div></div>
+
+<div class="card web"><span class="tag">Browser</span><span class="title">B. PI STATUS PAGE</span>
+<div class="row"><span class="k">Address</span><code>http://localhost:8770/#&lt;code&gt;</code>. The <code>#code</code> is printed in window 5 each time the agent starts, and changes every run. Keep it in the link.</div>
+<div class="row"><span class="k">Needs</span>Windows 3 (tunnel) and 5 (agent).</div></div>
+
+<div class="card web"><span class="tag">Browser, sometimes</span><span class="title">C. CAMERA LIVE VIEW</span>
+<div class="row"><span class="k">Address</span><code>http://127.0.0.1:8780/</code></div>
+<div class="row"><span class="k">Needs</span>Window 3 (tunnel) and <code>python3 camera_view.py</code> on the Pi, and the agent must be <b>stopped</b> (one program per camera). Live only, never recorded.</div></div>
+
+<h2>What goes where</h2>
+<div class="card pc">
+<ul>
+<li>"Is the Pi's decision reaching the backend?" &rarr; tab A, and the audit file <code>backend\.runtime\hw\audit.ndjson</code>.</li>
+<li>"Why is the ramp halted?" &rarr; tab B, or tab A once diagnostics are added to the console.</li>
+<li>"Is the ESP32 or the power dropping?" &rarr; window 6.</li>
+<li>"Copy a file to the Pi" &rarr; window 4 (<code>scp</code>).</li>
+</ul></div>
+
+<footer>Not verified: this page is a plan for tidying the windows; it was not tested as a set. A tidier long-term fix is to show the Pi's sensor and link details in the operator console, which would remove windows 3 and tab B.</footer>
+</body>
+</html>
