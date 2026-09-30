@@ -1395,11 +1395,17 @@ async function refreshStaleCases(): Promise<void> {
 
 async function refreshStaleCasesUnlocked(): Promise<void> {
   const data = await getOperationsData();
-  for (const item of await data.cases.listOpen(OPEN_CASE_LIMIT)) {
-    if (
-      item.assistanceTypes.includes("WHEELCHAIR_RAMP") &&
-      ["SAFE_TO_ACTUATE", "ACTUATING"].includes(item.state)
-    ) {
+  // Only the two states a stale telemetry reading can block, each read through the state index,
+  // instead of every open case on every read.
+  const actuating = [
+    ...(await data.cases.list({
+      state: "SAFE_TO_ACTUATE",
+      limit: OPEN_CASE_LIMIT,
+    })),
+    ...(await data.cases.list({ state: "ACTUATING", limit: OPEN_CASE_LIMIT })),
+  ];
+  for (const item of actuating) {
+    if (item.assistanceTypes.includes("WHEELCHAIR_RAMP")) {
       const telemetry = item.busId
         ? await data.telemetry.get(item.busId)
         : undefined;
