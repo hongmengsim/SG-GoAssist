@@ -25,6 +25,7 @@ Inside the Ubuntu shell (not PowerShell): `sudo apt install -y postgresql redis-
 - Backend: `GOASSIST_DATABASE_URL=postgres://user:PASSWORD@host:5432/goassist GOASSIST_EVENT_BUS=redis GOASSIST_REDIS_URL=redis://host:6379 GOASSIST_LOCKS=database`. All four together are what a multi-process run needs.
 - Tests of the Postgres adapters: set `GOASSIST_TEST_DATABASE_URL` and run `npm test --workspace @buspass/backend` (each test uses a throwaway schema).
 - Two real processes: `npm run check:multi-process` (set `GOASSIST_DATABASE_URL` too for the shared-data part).
+- The whole scenario across two processes: `npm run e2e:scenario:two` (needs `GOASSIST_DATABASE_URL`; it makes and drops its own schema).
 - Load: `npm run load:test -- --processes 2 --rate 600` with the same variables set.
 
 ## Checking the Redis adapter against a real server (older instructions)

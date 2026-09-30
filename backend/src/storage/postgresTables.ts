@@ -92,6 +92,38 @@ export class PostgresDocumentTable<T> implements DocumentTable<T> {
     );
   }
 
+  async compareAndPut(expected: T | undefined, next: T): Promise<boolean> {
+    const key = this.spec.key(next);
+    const indexValues = this.names.map(
+      (name) => this.spec.indexes![name](next) ?? null,
+    );
+    const body = JSON.stringify(next);
+    if (expected === undefined) {
+      const columns = [
+        "doc_key",
+        ...this.names.map((_, position) => `i${position}`),
+        "body_json",
+      ];
+      const result = await this.query(
+        `INSERT INTO ${this.table} (${columns.join(", ")})
+         VALUES (${columns.map((_, position) => `$${position + 1}`).join(", ")})
+         ON CONFLICT (doc_key) DO NOTHING`,
+        [key, ...indexValues, body],
+      );
+      return result.rowCount === 1;
+    }
+    const assignments = [
+      ...this.names.map((_, position) => `i${position} = $${position + 1}`),
+      `body_json = $${this.names.length + 1}`,
+    ];
+    const result = await this.query(
+      `UPDATE ${this.table} SET ${assignments.join(", ")}
+       WHERE doc_key = $${this.names.length + 2} AND body_json = $${this.names.length + 3}`,
+      [...indexValues, body, key, JSON.stringify(expected)],
+    );
+    return result.rowCount === 1;
+  }
+
   async list(limit: number): Promise<T[]> {
     const result = await this.query(
       `SELECT body_json FROM ${this.table} ORDER BY ${this.order} LIMIT $1`,

@@ -137,3 +137,57 @@ test("a table name that is not lower-case letters is refused", () => {
     () => new SqliteBusRecordRepository(database, "x; DROP TABLE y"),
   );
 });
+
+for (const adapter of adapters) {
+  const options = { skip: adapter.skip };
+  const label = `BusRecordRepository (${adapter.name})`;
+
+  test(
+    `${label}: compareAndUpsert inserts only when absent, and swaps only an unchanged record`,
+    options,
+    async () => {
+      const repository = adapter.create();
+      assert.equal(
+        await repository.compareAndUpsert(undefined, sample("B1", "one")),
+        true,
+      );
+      assert.equal(
+        await repository.compareAndUpsert(undefined, sample("B1", "again")),
+        false,
+      );
+      const read = (await repository.get("B1"))!;
+      assert.equal(
+        await repository.compareAndUpsert(read, {
+          ...read,
+          observedAt: "2026-09-30T00:00:09.000Z",
+        }),
+        true,
+      );
+      // A swap based on the old read now fails and changes nothing.
+      assert.equal(
+        await repository.compareAndUpsert(read, {
+          ...read,
+          note: "stale write",
+        }),
+        false,
+      );
+      assert.equal((await repository.get("B1"))?.note, "one");
+    },
+  );
+
+  test(
+    `${label}: of many simultaneous swaps from the same read, exactly one wins`,
+    options,
+    async () => {
+      const repository = adapter.create();
+      await repository.upsert(sample("B1"));
+      const read = (await repository.get("B1"))!;
+      const results = await Promise.all(
+        Array.from({ length: 10 }, (_, n) =>
+          repository.compareAndUpsert(read, { ...read, note: `writer ${n}` }),
+        ),
+      );
+      assert.equal(results.filter(Boolean).length, 1);
+    },
+  );
+}

@@ -30,6 +30,13 @@ export interface DocumentTable<T> {
   get(key: string): Promise<T | undefined>;
   /** Creates the document, or replaces it in place. Its indexes are recomputed from it. */
   put(doc: T): Promise<void>;
+  /**
+   * Writes `next` only if the stored document is still exactly `expected` (or, when
+   * `expected` is undefined, only if there is none). One atomic step, so it needs no lock:
+   * a caller that read the document, decided, and wants to write back without a lock uses
+   * this and falls back to a locked path when it returns false.
+   */
+  compareAndPut(expected: T | undefined, next: T): Promise<boolean>;
   /** Insertion order, at most `limit`. */
   list(limit: number): Promise<T[]>;
   /** Documents whose index has this value, in insertion order, at most `limit`. */
@@ -95,6 +102,20 @@ export class MemoryDocumentTable<T> implements DocumentTable<T> {
     for (const name of this.names)
       indexes[name] = this.spec.indexes![name](doc);
     this.rows.set(this.spec.key(doc), { doc: structuredClone(doc), indexes });
+  }
+
+  async compareAndPut(expected: T | undefined, next: T): Promise<boolean> {
+    const row = this.rows.get(this.spec.key(next));
+    if (expected === undefined) {
+      if (row !== undefined) return false;
+    } else if (
+      row === undefined ||
+      JSON.stringify(row.doc) !== JSON.stringify(expected)
+    ) {
+      return false;
+    }
+    await this.put(next);
+    return true;
   }
 
   private ordered(): Array<MemoryRow<T>> {
@@ -179,6 +200,8 @@ export class SqliteDocumentTable<T> implements DocumentTable<T> {
   private readonly names: string[];
   private readonly selectOne: SqliteStatement;
   private readonly upsertOne: SqliteStatement;
+  private readonly insertIfAbsent: SqliteStatement;
+  private readonly swap: SqliteStatement;
   private readonly listAll: SqliteStatement;
   private readonly countAll: SqliteStatement;
   private readonly deleteOne: SqliteStatement;
@@ -227,6 +250,14 @@ export class SqliteDocumentTable<T> implements DocumentTable<T> {
        VALUES (${insertColumns.map(() => "?").join(", ")})
        ON CONFLICT(doc_key) DO UPDATE SET ${updates.join(", ")}`,
     );
+    this.insertIfAbsent = database.prepare(
+      `INSERT INTO ${this.table} (${insertColumns.join(", ")})
+       VALUES (${insertColumns.map(() => "?").join(", ")})
+       ON CONFLICT(doc_key) DO NOTHING`,
+    );
+    this.swap = database.prepare(
+      `UPDATE ${this.table} SET ${[...this.names.map((_, position) => `i${position} = ?`), "body_json = ?"].join(", ")} WHERE doc_key = ? AND body_json = ?`,
+    );
     this.listAll = database.prepare(
       `SELECT body_json FROM ${this.table} ORDER BY ${spec.orderBy === "key" ? "doc_key" : "rowid"} LIMIT ?`,
     );
@@ -260,6 +291,29 @@ export class SqliteDocumentTable<T> implements DocumentTable<T> {
       ...this.names.map((name) => this.spec.indexes![name](doc) ?? null),
       JSON.stringify(doc),
     );
+  }
+
+  async compareAndPut(expected: T | undefined, next: T): Promise<boolean> {
+    const key = this.spec.key(next);
+    const indexValues = this.names.map(
+      (name) => this.spec.indexes![name](next) ?? null,
+    );
+    const body = JSON.stringify(next);
+    if (expected === undefined) {
+      const result = this.insertIfAbsent.run(key, ...indexValues, body) as {
+        changes: number | bigint;
+      };
+      return Number(result.changes) === 1;
+    }
+    // `updates` sets the index columns and the body from `excluded.*`; here the same
+    // assignments are written with plain parameters, so build them in the same order.
+    const result = this.swap.run(
+      ...indexValues,
+      body,
+      key,
+      JSON.stringify(expected),
+    ) as { changes: number | bigint };
+    return Number(result.changes) === 1;
   }
 
   async list(limit: number): Promise<T[]> {

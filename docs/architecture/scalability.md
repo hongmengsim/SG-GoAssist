@@ -187,7 +187,19 @@ Same laptop, Postgres 14 and Redis in WSL on the same machine, `npm run load:tes
 |         2 |        1,000 |      996 |    253.2 |    475.0 | fail   |
 
 - The sustainable rate roughly doubles with the second process (300 to 600), which is the scale-out property. It is far below the single-process SQLite figure (about 2,000) because every message now makes database round trips, and the lock lease adds more.
-- With per-process locks (not correct across processes) two processes reached 983 msg/s at p50 9.7 ms, so the lease is the main cost. Replacing it on this path with one atomic conditional write is the next optimisation and is not built.
+- With per-process locks (not correct across processes) two processes reached 983 msg/s at p50 9.7 ms, so the lease was the main cost.
+
+**After the lock-free hot path** (repeats and stale reports use one compare-and-swap and no lease; same rig, same test, 8 s runs):
+
+| Processes | Rate (msg/s) | Achieved | p50 (ms) | p95 (ms) | Result |
+| --------: | -----------: | -------: | -------: | -------: | ------ |
+|         1 |          600 |      597 |      7.2 |     15.5 | pass   |
+|         1 |        1,000 |      887 |    890.0 |  1,031.7 | fail   |
+|         2 |        1,000 |      998 |      8.2 |     17.7 | pass   |
+|         2 |        1,500 |    1,330 |    844.1 |  1,137.3 | fail   |
+
+- One process now holds 600 msg/s (was 300) and two hold 1,000 (was 600). The second process adds about 50% here rather than 100% because the load generator, both backends, Postgres and Redis share one laptop.
+- Real changes (5% of the traffic in this test) still take the lock lease; that is the remaining cost on this path.
 - Not measured: separate machines, more than two processes, the 3,000 msg/s target.
 
 ## 10. What can and cannot be claimed

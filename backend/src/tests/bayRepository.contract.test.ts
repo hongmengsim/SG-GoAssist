@@ -37,6 +37,8 @@ const sqliteAvailable = (() => {
   return database !== undefined;
 })();
 
+const openDatabases: unknown[] = [];
+
 const adapters: Array<{
   name: string;
   create: () => BayRepository;
@@ -64,6 +66,8 @@ const adapters: Array<{
     create: () => {
       const database = openSqliteDatabase(":memory:");
       if (!database) throw new Error("sqlite unavailable");
+      // Keep the database referenced: a collected database finalizes its statements mid-test.
+      openDatabases.push(database);
       return new SqliteBayRepository(database);
     },
   },

@@ -139,6 +139,8 @@ export class BusOperationsService {
 
   async reportBusStatus(input: unknown, busId: string): Promise<ReportResult> {
     const status = parseBusStatus(input, busId, this.deps.now());
+    const quick = await this.withoutLock(status, busId);
+    if (quick) return quick;
     return this.exclusive(busId, async () => {
       const existing = await this.deps.busStatus.get(busId);
       if (
@@ -172,6 +174,29 @@ export class BusOperationsService {
       await this.deps.onMovement?.(status);
       return { outcome: "CHANGED", status };
     });
+  }
+
+  /**
+   * Answers the two cheap cases with no lock: a report older than the stored one, and a
+   * repeat with the same facts (most reports are these heartbeats), which only refreshes the
+   * time. The refresh is one compare-and-swap, so if anything changed the status since it was
+   * read the swap fails and the report takes the locked path. A repeat does not touch the
+   * bay: the bay only changes when the bus's facts do.
+   */
+  private async withoutLock(
+    status: BusStatus,
+    busId: string,
+  ): Promise<ReportResult | undefined> {
+    const existing = await this.deps.busStatus.get(busId);
+    if (!existing) return undefined;
+    if (Date.parse(status.observedAt) < Date.parse(existing.observedAt))
+      return { outcome: "STALE", status: existing };
+    if (!sameFacts(existing, status)) return undefined;
+    const swapped = await this.deps.busStatus.compareAndUpsert(
+      existing,
+      status,
+    );
+    return swapped ? { outcome: "HEARTBEAT", status } : undefined;
   }
 
   /** Current bay for a stop; a stop nobody has reported at has an empty bay. */

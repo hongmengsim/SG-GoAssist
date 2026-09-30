@@ -239,6 +239,19 @@ export class BusReportsService {
     const descriptor = DESCRIPTORS[kind];
     const record = descriptor.parse(input, busId, this.deps.now());
     const repository = this.deps.repositories[kind];
+    // The two cheap cases need no lock: an older report is ignored, and a repeat that only has
+    // a newer time is one compare-and-swap (if the record changed meanwhile the swap fails and
+    // the report takes the locked path below).
+    const current = await repository.get(busId);
+    if (current) {
+      if (Date.parse(record.observedAt) < Date.parse(current.observedAt))
+        return { outcome: "STALE" as const, record: current };
+      if (
+        withoutTime(current) === withoutTime(record) &&
+        (await repository.compareAndUpsert(current, record))
+      )
+        return { outcome: "HEARTBEAT" as const, record };
+    }
     return getLock().run(`report:${kind}:${busId}`, async () => {
       const existing = await repository.get(busId);
       if (

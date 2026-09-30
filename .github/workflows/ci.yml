@@ -103,8 +103,14 @@ jobs:
       - run: npm install --no-save --workspace @buspass/backend pg ioredis
       - name: backend tests, including the Postgres adapters
         run: npm test --workspace @buspass/backend
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install jsonschema websockets pyserial
       - name: two real backend processes sharing Postgres, Redis and locks
         run: npm run check:multi-process
+      - name: the whole end-to-end scenario across two processes
+        run: npm run e2e:scenario:two
 
   end-to-end:
     runs-on: ubuntu-latest

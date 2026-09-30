@@ -205,8 +205,12 @@ class Bus:
 
 
 class Scenario:
-    def __init__(self, api: Api, bus1: Bus, bus2: Bus) -> None:
+    def __init__(self, api: Api, bus1: Bus, bus2: Bus, ops: "Api | None" = None) -> None:
+        # `api` is the passenger side. `ops` is the operator side: the same backend in one-process
+        # mode, the OTHER process in two-process mode, so every operator action and read crosses
+        # processes there.
         self.api = api
+        self.ops = ops or api
         self.bus1 = bus1
         self.bus2 = bus2
         self.caseless: list = []
@@ -351,7 +355,7 @@ class Scenario:
         passed("the sensor recovers and the zone reads clear again")
 
     def step_5b_operator_halt(self) -> None:
-        status, _ = self.api.call(
+        status, _ = self.ops.call(
             "POST", f"/api/operations/vehicles/{BUS_1}/operator-halt", {"halted": True, "reason": "e2e halt"}
         )
         assert status == 200, f"operator halt returned {status}"
@@ -362,7 +366,7 @@ class Scenario:
         )
         assert self.decision(BUS_1)["permission"] == "HALT"
         passed("an operator halt reaches the bus and its gate halts (OPERATOR_HALT)")
-        self.api.call("POST", f"/api/operations/vehicles/{BUS_1}/operator-halt", {"halted": False})
+        self.ops.call("POST", f"/api/operations/vehicles/{BUS_1}/operator-halt", {"halted": False})
         wait_until(
             lambda: (self.decision(BUS_1) or {}).get("permission") == "CONTINUE",
             15,
@@ -374,7 +378,7 @@ class Scenario:
         case = self.case_of(request_id)
         self.bus1.do("place person 0.95")
         wait_until(lambda: (self.decision(BUS_1) or {}).get("permission") == "HALT", 10, "a person on the ramp to halt the gate")
-        status, _ = self.api.call("POST", f"/api/operations/cases/{case['caseId']}/operator", {"action": "COMPLETE"})
+        status, _ = self.ops.call("POST", f"/api/operations/cases/{case['caseId']}/operator", {"action": "COMPLETE"})
         assert status == 200, f"operator COMPLETE returned {status}"
         time.sleep(2)
         assert not self.pending_commands(BUS_1, "RETRACT_RAMP"), "no retract command while a person is on the ramp"
@@ -383,7 +387,7 @@ class Scenario:
 
         self.bus1.do("clear")
         wait_until(lambda: (self.decision(BUS_1) or {}).get("zoneState") == "CLEAR", 10, "the ramp zone to read clear")
-        self.api.call("POST", f"/api/operations/cases/{case['caseId']}/operator", {"action": "RETRY"})
+        self.ops.call("POST", f"/api/operations/cases/{case['caseId']}/operator", {"action": "RETRY"})
         wait_until(lambda: (self.ramp(BUS_1) or {}).get("state") == "STOWED", 20, "the ramp to be stowed after the person leaves")
         wait_until(
             lambda: self.api.get(f"/api/operations/cases/{case['caseId']}")["state"] == "COMPLETED",
@@ -408,7 +412,7 @@ class Scenario:
         hold(lambda: (self.ramp(BUS_2) or {}).get("state", "STOWED") == "STOWED", 3, "Bus 2 does not move when Bus 1 leaves")
         passed("Bus 1 departs; the bay is released but nobody is granted it and Bus 2 does not deploy")
 
-        status, granted = self.api.call("POST", f"/api/operations/bays/{STOP}/proceed", {})
+        status, granted = self.ops.call("POST", f"/api/operations/bays/{STOP}/proceed", {})
         assert status == 200 and granted["grantedBusId"] == BUS_2, (status, granted)
         wait_until(lambda: self.bay()["occupantBusId"] == BUS_2, 10, "Bus 2 to enter the bay after the grant")
         wait_until(lambda: (self.ramp(BUS_2) or {}).get("state") == "DEPLOYED", 40, "Bus 2's ramp to deploy")
@@ -443,7 +447,7 @@ class Scenario:
             bus.stop()
 
     def step_8_audit(self) -> None:
-        events = self.api.get("/api/operations/audit?limit=500")["events"]
+        events = self.ops.get("/api/operations/audit?limit=500")["events"]
         events.reverse()  # oldest first
         types = [e["eventType"] for e in events]
 
@@ -466,18 +470,54 @@ class Scenario:
         passed(f"audit trail holds the sequence in order ({len(events)} events)")
 
 
+SHARED_ENV = {
+    "GOASSIST_DATABASE_URL": None,
+    "GOASSIST_EVENT_BUS": "redis",
+    "GOASSIST_REDIS_URL": None,
+    "GOASSIST_LOCKS": "database",
+}
+
+
+def require_shared_environment() -> None:
+    """Two processes only make sense if they share data, events and locks."""
+    missing = []
+    for name, wanted in SHARED_ENV.items():
+        value = os.environ.get(name, "")
+        if wanted is None and not value:
+            missing.append(name)
+        elif wanted is not None and value != wanted:
+            missing.append(f"{name}={wanted}")
+    if missing:
+        raise SystemExit(
+            "two-process mode needs shared storage, events and locks; set: " + ", ".join(missing)
+            + " (or run `npm run e2e:scenario:two`, which sets them up)"
+        )
+
+
 def main() -> int:
-    backend = Backend()
+    two = "--two-processes" in sys.argv or os.environ.get("SCENARIO_PROCESSES") == "2"
+    if two:
+        require_shared_environment()
+    first = Backend()
+    second = Backend() if two else None
+    backends = [first] + ([second] if second else [])
     buses: list = []
     try:
-        say(f"starting the backend on port {backend.port} (bus-only acknowledgement, signed devices)")
-        backend.start()
-        api = Api(backend.base)
-        bus1, bus2 = Bus(BUS_1, backend.base), Bus(BUS_2, backend.base)
+        for backend in backends:
+            say(f"starting a backend on port {backend.port} (bus-only acknowledgement, signed devices)")
+            backend.start()
+        # One process: everything on it. Two: passenger and Bus 1 on the first, Bus 2 and the
+        # operator on the second, so a request made on one is delivered to a bus on the other.
+        other = second or first
+        api = Api(first.base)
+        ops = Api(other.base)
+        bus1, bus2 = Bus(BUS_1, first.base), Bus(BUS_2, other.base)
         buses = [bus1, bus2]
         for bus in buses:
             bus.start()
-        scenario = Scenario(api, bus1, bus2)
+        if two:
+            say("TWO PROCESSES: passenger + Bus 1 on A, operator + Bus 2 on B, sharing Postgres, Redis and locks")
+        scenario = Scenario(api, bus1, bus2, ops)
         scenario.step_1_register_and_queue()
         scenario.step_2_nothing_confirms_without_a_bus()
         request_id = scenario.step_3_unsafe_object_blocks_then_bus_acknowledges()
@@ -486,21 +526,27 @@ def main() -> int:
         scenario.step_5b_operator_halt()
         scenario.step_6_retract_only_when_the_ramp_is_clear(request_id)
         scenario.step_7_bay_release_and_grant()
-        scenario.step_9_stalled_deployment_raises_help(backend.base)
+        scenario.step_9_stalled_deployment_raises_help(other.base)
         scenario.step_8_audit()
-        say("RESULT: every step held (all sensors and the ramp simulated)")
+        say(
+            "RESULT: every step held across two processes (all sensors and the ramp simulated)"
+            if two
+            else "RESULT: every step held (all sensors and the ramp simulated)"
+        )
         return 0
     except (ScenarioFailure, AssertionError) as failure:
         say(f"FAIL  {failure}")
-        if backend.log_path.exists():
-            tail = backend.log_path.read_text(errors="replace").splitlines()[-15:]
-            say("---- backend log (last lines) ----")
-            say("\n".join(tail))
+        for label, backend in zip("AB", backends):
+            if backend.log_path.exists():
+                tail = backend.log_path.read_text(errors="replace").splitlines()[-15:]
+                say(f"---- backend {label} log (last lines) ----")
+                say("\n".join(tail))
         return 1
     finally:
         for bus in buses:
             bus.stop()
-        backend.stop()
+        for backend in backends:
+            backend.stop()
 
 
 if __name__ == "__main__":

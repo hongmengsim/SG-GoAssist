@@ -43,6 +43,13 @@ export class DocumentBusStatusRepository implements BusStatusRepository {
     return this.table.put(status);
   }
 
+  compareAndUpsert(
+    expected: BusStatus | undefined,
+    next: BusStatus,
+  ): Promise<boolean> {
+    return this.table.compareAndPut(expected, next);
+  }
+
   list(filter: BusStatusFilter): Promise<BusStatus[]> {
     return filter.stopCode === undefined
       ? this.table.list(filter.limit)
@@ -89,6 +96,10 @@ export class DocumentBusRecordRepository<
 
   upsert(record: T): Promise<void> {
     return this.table.put(record);
+  }
+
+  compareAndUpsert(expected: T | undefined, next: T): Promise<boolean> {
+    return this.table.compareAndPut(expected, next);
   }
 
   list(limit: number): Promise<T[]> {
