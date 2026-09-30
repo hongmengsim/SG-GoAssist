@@ -38,7 +38,7 @@ if ($Record -and $Record -notmatch '^[A-Za-z0-9_-]+$') { throw '-Record may cont
 $recordArg = if ($Record) { " --record recordings/$Record" } else { '' }
 
 $remoteAgent = @'
-echo Paste the device secret, then press Enter; read -rs DEVICE_SHARED_SECRET; echo; if [ ${#DEVICE_SHARED_SECRET} -eq 0 ]; then echo NO SECRET RECEIVED - the agent was NOT started. Close this tab and open it again.; exit 1; fi; echo secret fingerprint on the Pi: $(printf %s $DEVICE_SHARED_SECRET | sha256sum | cut -c1-8) - it must equal the SCRATCH tab fingerprint; export DEVICE_SHARED_SECRET; cd ~/SG-GoAssist/pi/bus-agent; python3 -m bus_agent --real --config agent.json@@BACKENDARG@@ --status-port 8770
+echo Paste the device secret, then press Enter; read -rs DEVICE_SHARED_SECRET; echo; if [ ${#DEVICE_SHARED_SECRET} -eq 0 ]; then echo NO SECRET RECEIVED - the agent was NOT started. Close this tab and open it again.; exit 1; fi; echo secret fingerprint on the Pi: $(printf %s $DEVICE_SHARED_SECRET | sha256sum | cut -c1-8) - it must equal the SCRATCH tab fingerprint; export DEVICE_SHARED_SECRET; cd ~/SG-GoAssist/pi/bus-agent; python3 -m bus_agent --real --config agent.json@@BACKENDARG@@ --status-port 8770 --live-view-port 8780
 '@
 
 $secretCheck = @'
