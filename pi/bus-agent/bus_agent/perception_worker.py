@@ -43,6 +43,10 @@ class PerceptionWorker:
         self._period = period_seconds
         self._lock = threading.Lock()
         self._latest: Optional[tuple] = None
+        # The live view: the newest frame is held in memory only while somebody is watching, and is
+        # dropped the moment the last viewer leaves. Nothing else ever keeps a frame.
+        self._watchers = 0
+        self._view: Optional[tuple] = None
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self.simulated = bool(getattr(camera, "simulated", False))
@@ -66,6 +70,18 @@ class PerceptionWorker:
         with self._lock:
             return self._latest
 
+    def watch(self, delta: int) -> None:
+        """A live-view viewer arrived (+1) or left (-1). With none left, the held frame is dropped."""
+        with self._lock:
+            self._watchers = max(0, self._watchers + delta)
+            if self._watchers == 0:
+                self._view = None
+
+    def latest_view(self) -> Optional[tuple]:
+        """(frame, PerceptionResult, captured_at) for the live view, or None when nobody is watching."""
+        with self._lock:
+            return self._view
+
     def _run(self) -> None:
         while not self._stop.is_set():
             try:
@@ -78,4 +94,6 @@ class PerceptionWorker:
             )
             with self._lock:
                 self._latest = (result, capture.captured_at)
+                if self._watchers > 0 and capture.frame is not None:
+                    self._view = (capture.frame, result, capture.captured_at)
             self._stop.wait(self._period)

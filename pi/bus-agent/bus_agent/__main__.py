@@ -23,6 +23,7 @@ from .config import ConfigError, choose_backend_url, load_config
 from .console import HELP
 from .event_listener import EventListener
 from .http_backend import HttpBackend
+from .live_view import LiveViewServer, rendering_available
 from .recording import ReplayError
 from .real_security import real_mode_findings, timeout_warnings
 from .real_mode import PreflightFailed, build_real_sensors, default_factories
@@ -60,13 +61,26 @@ def main(argv: "list[str] | None" = None) -> int:
     parser.add_argument("--no-events", action="store_true", help="poll only; no WebSocket push")
     parser.add_argument("--status-port", type=int, default=0, help="serve the local status page on this port (0 = off)")
     parser.add_argument("--status-listen", default="127.0.0.1", help="address for the status page; 0.0.0.0 exposes it on the LAN")
+    parser.add_argument(
+        "--live-view-port",
+        type=int,
+        default=0,
+        help="with --real: serve a live camera view on this port (0 = off), only while someone watches, never recorded; uses the status page's start-up code",
+    )
+    parser.add_argument("--live-view-listen", default="127.0.0.1", help="address for the live view; 0.0.0.0 exposes it on the LAN")
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
+    if not 0 <= args.live_view_port <= 65535:
+        parser.error("--live-view-port must be a port number from 1 to 65535 (0 = off)")
     if sum(bool(mode) for mode in (args.simulate, args.real, args.replay)) != 1:
         parser.error("choose exactly one of --simulate, --real or --replay DIR")
     if args.record and not args.real:
         parser.error("--record is only for --real")
+    if args.live_view_port and not args.real:
+        parser.error("--live-view-port is only for --real")
+    if args.live_view_port and not rendering_available():
+        parser.error("the live view needs Pillow and numpy (on the Pi: sudo apt install python3-pil python3-numpy)")
     settings = None
     sensors = None
     if args.real:
@@ -124,12 +138,23 @@ def main(argv: "list[str] | None" = None) -> int:
     board = StatusBoard()
     runner = Runner(rig, events, commands, board=board, controls=args.simulate, auto_calibrate=not args.real)
     status_server = None
+    live_view = None
+    code = secrets.token_hex(16) if (args.status_port or args.live_view_port) else None
     if args.status_port:
-        code = secrets.token_hex(16)
         status_server = StatusServer(board, commands, code, args.status_listen, args.status_port, controls=args.simulate)
         status_server.start()
         # The code is printed once and never logged elsewhere; keep the #code in the link.
         print(f"Status page: http://localhost:{status_server.port}/#{code}", flush=True)
+    if args.live_view_port:
+        try:
+            live_view = LiveViewServer(rig.worker, settings.ramp_polygon, code, args.live_view_listen, args.live_view_port)
+        except OSError as error:
+            print(f"Cannot start the live view on port {args.live_view_port}: {error}", file=sys.stderr)
+            backend.stop()
+            return 2
+        live_view.start()
+        # Same start-up code as the status page. Frames are shown while someone watches and never recorded.
+        print(f"Live view: port {live_view.port} on {args.live_view_listen}; code {code}", flush=True)
 
     listener = None
     if not args.no_events:
@@ -151,6 +176,8 @@ def main(argv: "list[str] | None" = None) -> int:
             listener.stop()
         if status_server is not None:
             status_server.stop()
+        if live_view is not None:
+            live_view.stop()
         if args.real:
             rig.worker.stop()
             if rig.lasers is not None:

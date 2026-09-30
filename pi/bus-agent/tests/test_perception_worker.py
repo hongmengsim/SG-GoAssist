@@ -113,6 +113,60 @@ class WorkerTests(unittest.TestCase):
         self.assertFalse(worker.running)
 
 
+class WatchedFrameTests(unittest.TestCase):
+    """A frame is held in memory only while someone is watching the live view, and only the newest one."""
+
+    def make(self):
+        camera = SimulatedCamera(time.monotonic)
+        worker = PerceptionWorker(camera, camera, POLYGON, period_seconds=0.01)
+        self.addCleanup(worker.stop)
+        return worker
+
+    def test_no_frame_is_kept_while_nobody_is_watching(self) -> None:
+        worker = self.make()
+        worker.start()
+        self.assertTrue(wait_for(lambda: worker.latest_perception() is not None))
+        time.sleep(0.1)
+        self.assertIsNone(worker.latest_view())
+
+    def test_while_watched_the_newest_frame_its_result_and_time_are_available(self) -> None:
+        worker = self.make()
+        worker.watch(+1)
+        worker.start()
+        self.assertTrue(wait_for(lambda: worker.latest_view() is not None))
+        frame, result, captured_at = worker.latest_view()
+        self.assertIsInstance(frame, SimFrame)
+        self.assertTrue(result.image_ok)
+        self.assertLessEqual(captured_at, time.monotonic())
+
+    def test_the_frame_is_dropped_as_soon_as_the_last_viewer_leaves(self) -> None:
+        worker = self.make()
+        worker.watch(+1)
+        worker.watch(+1)
+        worker.start()
+        self.assertTrue(wait_for(lambda: worker.latest_view() is not None))
+        worker.watch(-1)
+        self.assertIsNotNone(worker.latest_view(), "one viewer is still watching")
+        worker.watch(-1)
+        self.assertIsNone(worker.latest_view())
+
+    def test_the_viewer_count_never_goes_below_zero(self) -> None:
+        worker = self.make()
+        worker.watch(-1)
+        worker.watch(-1)
+        worker.watch(+1)
+        worker.start()
+        self.assertTrue(wait_for(lambda: worker.latest_view() is not None))
+
+    def test_watching_does_not_change_what_the_agent_reads(self) -> None:
+        worker = self.make()
+        worker.watch(+1)
+        worker.start()
+        self.assertTrue(wait_for(lambda: worker.latest_perception() is not None))
+        result, _ = worker.latest_perception()
+        self.assertEqual((), result.objects)
+
+
 class Fixed:
     """Stands in for a worker whose result the test sets by hand."""
 
