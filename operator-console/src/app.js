@@ -2,6 +2,7 @@
 //   ?mode=mock   (default) a simulated world in the page, no backend
 //   ?mode=live   the real backend: ?backend=http://host:3000 (default: this host, port 3000)
 
+import { resolveBackend } from "./backendUrl.js";
 import { simulatedTag, tag } from "./html.js";
 import { createLiveSource } from "./live/source.js";
 import { createMockSource } from "./mock/source.js";
@@ -36,8 +37,20 @@ function storeToken(value) {
   }
 }
 
-const backend =
-  params.get("backend") ?? `${location.protocol}//${location.hostname}:3000`;
+// Where the operator token is sent is decided by an allow-list, never by the link alone.
+const allowedBackends = (
+  document
+    .querySelector('meta[name="goassist-allowed-backends"]')
+    ?.getAttribute("content") ?? ""
+)
+  .split(",")
+  .map((entry) => entry.trim())
+  .filter(Boolean);
+const { baseUrl: backend, warning: backendWarning } = resolveBackend({
+  param: params.get("backend"),
+  page: location,
+  allowed: allowedBackends,
+});
 const source =
   mode === "live"
     ? createLiveSource({ baseUrl: backend, token: storedToken() })
@@ -73,7 +86,7 @@ function renderNotice() {
       ? `<form id="tokenForm" class="row"><label for="tokenInput">Operator token</label>
         <input id="tokenInput" type="password" autocomplete="off" required><button class="primary" type="submit">Use token</button></form>`
       : "";
-  const messages = [notice, detail]
+  const messages = [notice, detail, mode === "live" ? backendWarning : ""]
     .filter(Boolean)
     .map((text) => `<p role="status">${text.replace(/[&<>]/g, "")}</p>`)
     .join("");
