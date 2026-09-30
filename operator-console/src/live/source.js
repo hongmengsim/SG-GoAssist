@@ -109,6 +109,9 @@ export function createLiveSource({
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
     const payload = await response.json().catch(() => ({}));
+    // A 401 at any time (not only on the first load) means the token is missing, wrong or expired.
+    if (response.status === 401)
+      setConnection("auth-required", "The backend needs the operator token.");
     if (!response.ok)
       throw new HttpFailure(
         response.status,
