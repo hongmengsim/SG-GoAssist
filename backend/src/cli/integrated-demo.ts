@@ -94,7 +94,7 @@ async function main() {
 async function sendTelemetry(
   rampPosition: "STOWED" | "DEPLOYED" | "RETRACTING",
 ) {
-  return post(`/api/operations/vehicles/${busId}/telemetry`, {
+  return await post(`/api/operations/vehicles/${busId}/telemetry`, {
     stopCode,
     vehicleStopped: true,
     parkingBrakeActive: true,
@@ -111,15 +111,15 @@ async function get(path: string): Promise<any> {
   const response = await fetch(`${baseUrl}${path}`);
   if (!response.ok)
     throw new Error(`${response.status} ${await response.text()}`);
-  return response.json();
+  return await response.json();
 }
 
 async function post(path: string, body: unknown) {
-  return request(path, "POST", body);
+  return await request(path, "POST", body);
 }
 
 async function put(path: string, body: unknown) {
-  return request(path, "PUT", body);
+  return await request(path, "PUT", body);
 }
 
 async function request(
@@ -134,7 +134,7 @@ async function request(
   });
   if (!response.ok)
     throw new Error(`${response.status} ${await response.text()}`);
-  return response.json();
+  return await response.json();
 }
 
 main().catch((error) => {

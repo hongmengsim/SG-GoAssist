@@ -136,14 +136,14 @@ export function createApp(options: AppOptions = {}) {
     app.use("/api/operations", operationsRouter);
   }
 
-  app.get("/health", (req, res) => {
+  app.get("/health", async (req, res) => {
     res.json({
       status: "ok",
       timestamp: new Date().toISOString(),
       environment: NODE_ENV,
       connectedWebSocketClients: getConnectedClientCount(),
       activeRequests: getAllRequests().length,
-      activeAssistanceCases: listCases().filter(
+      activeAssistanceCases: (await listCases()).filter(
         (item) => !["COMPLETED", "FAILED", "CANCELLED"].includes(item.state),
       ).length,
     });
@@ -153,7 +153,7 @@ export function createApp(options: AppOptions = {}) {
   app.get("/ready", async (_req, res) => {
     const checks: Record<string, string> = {};
     try {
-      getOperationsData().ping();
+      await (await getOperationsData()).ping();
       checks.operationsStore = "ok";
     } catch (error) {
       checks.operationsStore = `failed: ${String(error)}`;
@@ -196,7 +196,7 @@ export function createApp(options: AppOptions = {}) {
   app.post("/admin/reset", requireAdmin, async (req, res, next) => {
     try {
       clearAllRequests();
-      clearOperations();
+      await clearOperations();
       await clearBusOperationsData();
       res.json({
         message: "All requests cleared",

@@ -34,29 +34,58 @@ interface LegacyState {
   precisionDockingObservations?: PrecisionDockingObservation[];
 }
 
-function copyIn(data: OperationsData, state: LegacyState): number {
+async function copyIn(
+  data: OperationsData,
+  state: LegacyState,
+): Promise<number> {
   let copied = 0;
-  const each = <T>(items: T[] | undefined, write: (item: T) => void) => {
+  const each = async <T>(
+    items: T[] | undefined,
+    write: (item: T) => Promise<void>,
+  ) => {
     for (const item of items ?? []) {
-      write(item);
+      await write(item);
       copied += 1;
     }
   };
-  each(state.cases, (item) => data.cases.upsert(item));
-  each(state.observations, (item) => data.observations.put(item));
-  each(state.capabilities, (item) => data.capabilities.put(item));
-  each(state.safetyTelemetry, (item) => data.telemetry.put(item));
-  each(state.actuatorCommands, (item) => data.putCommand(item));
-  each(state.actuatorStatuses, (item) => data.putStatus(item));
-  each(state.devices, (item) => data.devices.put(item));
-  each(state.autonomousVehicles, (item) => data.vehicles.put(item));
-  each(state.rampObstacleClassifications, (item) =>
-    data.rampClassifications.put(item),
+  await each(state.cases, async (item) => await data.cases.upsert(item));
+  await each(
+    state.observations,
+    async (item) => await data.observations.put(item),
   );
-  each(state.perceptionEvaluationSamples, (item) =>
-    data.perceptionSamples.put(item),
+  await each(
+    state.capabilities,
+    async (item) => await data.capabilities.put(item),
   );
-  each(state.precisionDockingObservations, (item) => data.docking.put(item));
+  await each(
+    state.safetyTelemetry,
+    async (item) => await data.telemetry.put(item),
+  );
+  await each(
+    state.actuatorCommands,
+    async (item) => await data.putCommand(item),
+  );
+  await each(
+    state.actuatorStatuses,
+    async (item) => await data.putStatus(item),
+  );
+  await each(state.devices, async (item) => await data.devices.put(item));
+  await each(
+    state.autonomousVehicles,
+    async (item) => await data.vehicles.put(item),
+  );
+  await each(
+    state.rampObstacleClassifications,
+    async (item) => await data.rampClassifications.put(item),
+  );
+  await each(
+    state.perceptionEvaluationSamples,
+    async (item) => await data.perceptionSamples.put(item),
+  );
+  await each(
+    state.precisionDockingObservations,
+    async (item) => await data.docking.put(item),
+  );
   return copied;
 }
 
@@ -65,11 +94,11 @@ function copyIn(data: OperationsData, state: LegacyState): number {
  * and an old operations.json is renamed, so a second start finds nothing to import. Returns
  * how many records were copied.
  */
-export function importLegacyState(
+export async function importLegacyState(
   data: OperationsData,
   database: SqliteDatabase | undefined,
   jsonPath: string,
-): number {
+): Promise<number> {
   let copied = 0;
   if (database) {
     const table = database
@@ -83,7 +112,10 @@ export function importLegacyState(
         .get() as { state_json?: string } | undefined;
       if (row?.state_json) {
         try {
-          copied += copyIn(data, JSON.parse(row.state_json) as LegacyState);
+          copied += await copyIn(
+            data,
+            JSON.parse(row.state_json) as LegacyState,
+          );
           database.exec("DELETE FROM operations_state");
         } catch (error) {
           logger.error("Could not import the old operations state", undefined, {
@@ -95,7 +127,7 @@ export function importLegacyState(
   }
   if (database && fs.existsSync(jsonPath)) {
     try {
-      copied += copyIn(
+      copied += await copyIn(
         data,
         JSON.parse(fs.readFileSync(jsonPath, "utf8")) as LegacyState,
       );

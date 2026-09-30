@@ -28,7 +28,7 @@ for (const driver of ["json", "sqlite"]) {
   test(
     `appendAuditBatch writes every event once and they read back in order (${driver})`,
     { skip: driver === "sqlite" && !sqliteAvailable },
-    () => {
+    async () => {
       const directory = mkdtempSync(join(tmpdir(), "goassist-batch-"));
       const previous = process.env.GOASSIST_STORAGE_DRIVER;
       process.env.GOASSIST_STORAGE_DRIVER = driver;
@@ -37,12 +37,15 @@ for (const driver of ["json", "sqlite"]) {
         store.audit.appendBatch([event(1), event(2), event(3)]);
         store.audit.appendBatch([]);
         store.audit.append(event(4));
-        const read = store.audit.read({ limit: 10 });
+        const read = await store.audit.read({ limit: 10 });
         assert.deepEqual(
           read.map((item) => item.eventId),
           ["EVENT-4", "EVENT-3", "EVENT-2", "EVENT-1"],
         );
-        assert.equal(store.audit.read({ limit: 10, busId: "B1" }).length, 2);
+        assert.equal(
+          (await store.audit.read({ limit: 10, busId: "B1" })).length,
+          2,
+        );
       } finally {
         if (previous === undefined) delete process.env.GOASSIST_STORAGE_DRIVER;
         else process.env.GOASSIST_STORAGE_DRIVER = previous;

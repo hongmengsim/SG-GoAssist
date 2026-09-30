@@ -104,12 +104,12 @@ export class SqliteCaseRepository implements CaseRepository {
     this.clearSignals = database.prepare("DELETE FROM case_signals");
   }
 
-  get(caseId: string): AssistanceCase | undefined {
+  async get(caseId: string): Promise<AssistanceCase | undefined> {
     const row = this.selectOne.get(caseId);
     return row ? parse(row) : undefined;
   }
 
-  upsert(item: AssistanceCase): void {
+  async upsert(item: AssistanceCase): Promise<void> {
     const open = TERMINAL_CASE_STATES.includes(item.state) ? 0 : 1;
     this.database.exec("BEGIN");
     try {
@@ -132,12 +132,12 @@ export class SqliteCaseRepository implements CaseRepository {
     }
   }
 
-  findBySignalId(signalId: string): AssistanceCase | undefined {
+  async findBySignalId(signalId: string): Promise<AssistanceCase | undefined> {
     const row = this.bySignal.get(signalId);
     return row ? parse(row) : undefined;
   }
 
-  findOpen(query: OpenCaseQuery): AssistanceCase | undefined {
+  async findOpen(query: OpenCaseQuery): Promise<AssistanceCase | undefined> {
     const values: unknown[] = [];
     const conditions = ["is_open = 1"];
     if (query.stopCode !== undefined) {
@@ -168,7 +168,7 @@ export class SqliteCaseRepository implements CaseRepository {
     return statement;
   }
 
-  list(filter: CaseListFilter): AssistanceCase[] {
+  async list(filter: CaseListFilter): Promise<AssistanceCase[]> {
     const conditions: string[] = [];
     const values: unknown[] = [];
     if (filter.busId !== undefined) {
@@ -188,32 +188,35 @@ export class SqliteCaseRepository implements CaseRepository {
       .map(parse);
   }
 
-  listOpen(limit: number): AssistanceCase[] {
+  async listOpen(limit: number): Promise<AssistanceCase[]> {
     return this.openList.all(limit).map(parse);
   }
 
-  listFinishedOldest(limit: number): AssistanceCase[] {
+  async listFinishedOldest(limit: number): Promise<AssistanceCase[]> {
     return this.finishedOldest.all(limit).map(parse);
   }
 
-  listFinishedBefore(isoTime: string, limit: number): AssistanceCase[] {
+  async listFinishedBefore(
+    isoTime: string,
+    limit: number,
+  ): Promise<AssistanceCase[]> {
     return this.finishedBefore.all(isoTime, limit).map(parse);
   }
 
-  countFinished(): number {
+  async countFinished(): Promise<number> {
     return (this.countFinishedStatement.get() as { total: number }).total;
   }
 
-  delete(caseId: string): void {
+  async delete(caseId: string): Promise<void> {
     this.deleteCase.run(caseId);
     this.deleteSignals.run(caseId);
   }
 
-  count(): number {
+  async count(): Promise<number> {
     return (this.countAll.get() as { total: number }).total;
   }
 
-  countByState(): Partial<Record<AssistanceCaseState, number>> {
+  async countByState(): Promise<Partial<Record<AssistanceCaseState, number>>> {
     const counts: Partial<Record<AssistanceCaseState, number>> = {};
     for (const row of this.countStates.all() as Array<{
       state: AssistanceCaseState;
@@ -223,7 +226,7 @@ export class SqliteCaseRepository implements CaseRepository {
     return counts;
   }
 
-  clear(): void {
+  async clear(): Promise<void> {
     this.clearCases.run();
     this.clearSignals.run();
   }

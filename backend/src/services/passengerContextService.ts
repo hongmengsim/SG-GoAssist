@@ -88,11 +88,11 @@ export const serviceAdvisoryProvider: ServiceAdvisoryProvider =
 export const walkingEnvironmentProvider: WalkingEnvironmentProvider =
   new PrototypeWalkingEnvironmentProvider();
 
-export function getPassengerContext(
+export async function getPassengerContext(
   latitude: number,
   longitude: number,
   radiusMeters = 200,
-): PassengerContextSnapshot {
+): Promise<PassengerContextSnapshot> {
   const nearbyStops = busStopRepository.nearby(
     latitude,
     longitude,
@@ -105,14 +105,16 @@ export function getPassengerContext(
   return {
     generatedAt: new Date().toISOString(),
     radiusMeters,
-    nearbyStops: nearbyStops.map((stop) => ({
-      stop,
-      distanceMeters: stop.distanceMeters,
-      walkingMinutes: walkingMinutes(stop.distanceMeters),
-      arrivals: passengerArrivalProvider.arrivalsForStop(stop.busStopCode),
-      amenities: stopAmenityProvider.amenitiesForStop(stop.busStopCode),
-      vehicles: listStopVehiclePresence(stop.busStopCode),
-    })),
+    nearbyStops: await Promise.all(
+      nearbyStops.map(async (stop) => ({
+        stop,
+        distanceMeters: stop.distanceMeters,
+        walkingMinutes: walkingMinutes(stop.distanceMeters),
+        arrivals: passengerArrivalProvider.arrivalsForStop(stop.busStopCode),
+        amenities: stopAmenityProvider.amenitiesForStop(stop.busStopCode),
+        vehicles: await listStopVehiclePresence(stop.busStopCode),
+      })),
+    ),
     advisories: serviceAdvisoryProvider.advisoriesFor(services, stopCodes),
     provenance: passengerArrivalProvider.provenance,
   };

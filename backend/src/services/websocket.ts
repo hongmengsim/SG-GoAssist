@@ -105,7 +105,7 @@ export function initializeWebSocketServer(
     clients.add(client);
     logger.info("WebSocket client connected");
 
-    ws.on("message", (data: string) => {
+    ws.on("message", async (data: string) => {
       try {
         const message = JSON.parse(data);
 
@@ -156,7 +156,7 @@ export function initializeWebSocketServer(
           ws.send(
             JSON.stringify({ type: "SUBSCRIBED_CASE", caseId: client.caseId }),
           );
-          const caseRecord = getCase(message.caseId);
+          const caseRecord = await getCase(message.caseId);
           if (caseRecord) {
             client.busId = caseRecord.busId ?? client.busId;
             ws.send(
@@ -199,7 +199,7 @@ export function initializeWebSocketServer(
             client.stopCode = stopCode;
             setSubscription(client, "stop", topic.stop(stopCode));
             ws.send(JSON.stringify({ type: "SUBSCRIBED_STOP", stopCode }));
-            listStopVehiclePresence(stopCode).forEach((vehicle) => {
+            (await listStopVehiclePresence(stopCode)).forEach((vehicle) => {
               ws.send(
                 JSON.stringify({
                   type: "STOP_VEHICLE_PRESENCE",

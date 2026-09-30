@@ -23,12 +23,12 @@ import {
 
 let dataDirectory = "";
 
-beforeEach(() => {
+beforeEach(async () => {
   dataDirectory = fs.mkdtempSync(
     path.join(os.tmpdir(), "goassist-operations-"),
   );
-  configureOperationsData(dataDirectory, { retentionTimer: false });
-  registerVehicleCapability({
+  await configureOperationsData(dataDirectory, { retentionTimer: false });
+  await registerVehicleCapability({
     busId: "BUS-95-01",
     busService: "95",
     ramp: true,
@@ -52,48 +52,57 @@ afterEach(() => {
   fs.rmSync(dataDirectory, { recursive: true, force: true });
 });
 
-test("confirmed ramp intent cannot actuate until every safety interlock is clear", () => {
-  const item = explicitRamp("signal-one", "passenger-one");
+test("confirmed ramp intent cannot actuate until every safety interlock is clear", async () => {
+  const item = await explicitRamp("signal-one", "passenger-one");
   assert.equal(item.state, "BLOCKED");
   assert.match(item.escalationReason ?? "", /telemetry is unavailable/i);
-  assert.equal(listPendingActuatorCommands("BUS-95-01").length, 0);
+  assert.equal((await listPendingActuatorCommands("BUS-95-01")).length, 0);
 
-  const blocked = ingestSafetyTelemetry(
+  const blocked = await ingestSafetyTelemetry(
     telemetry({ deploymentPathClear: false }),
   );
   assert.equal(blocked.deploymentPathClear, false);
-  assert.equal(getCase(item.caseId)?.state, "BLOCKED");
-  assert.match(getCase(item.caseId)?.escalationReason ?? "", /obstructed/i);
-  assert.equal(listPendingActuatorCommands("BUS-95-01").length, 0);
+  assert.equal((await getCase(item.caseId))?.state, "BLOCKED");
+  assert.match(
+    (await getCase(item.caseId))?.escalationReason ?? "",
+    /obstructed/i,
+  );
+  assert.equal((await listPendingActuatorCommands("BUS-95-01")).length, 0);
 
-  ingestSafetyTelemetry(telemetry());
-  assert.equal(getCase(item.caseId)?.state, "ACTUATING");
+  await ingestSafetyTelemetry(telemetry());
+  assert.equal((await getCase(item.caseId))?.state, "ACTUATING");
   assert.equal(
-    listPendingActuatorCommands("BUS-95-01")[0].command,
+    (await listPendingActuatorCommands("BUS-95-01"))[0].command,
     "DEPLOY_RAMP",
   );
 });
 
-test("expired actuator commands are failed and can never be polled for execution", () => {
-  const item = explicitRamp("signal-expired", "passenger-expired");
-  ingestSafetyTelemetry(telemetry());
-  const command = listPendingActuatorCommands("BUS-95-01")[0];
+test("expired actuator commands are failed and can never be polled for execution", async () => {
+  const item = await explicitRamp("signal-expired", "passenger-expired");
+  await ingestSafetyTelemetry(telemetry());
+  const command = (await listPendingActuatorCommands("BUS-95-01"))[0];
 
-  const stored = getOperationsData().commands.get(command.commandId)!;
-  getOperationsData().commands.put({
+  const stored = (await (
+    await getOperationsData()
+  ).commands.get(command.commandId))!;
+  await (
+    await getOperationsData()
+  ).commands.put({
     ...stored,
     expiresAt: new Date(Date.now() - 1_000).toISOString(),
   });
 
-  assert.equal(listPendingActuatorCommands("BUS-95-01").length, 0);
-  const status = getOperationsData().statuses.get(command.commandId);
+  assert.equal((await listPendingActuatorCommands("BUS-95-01")).length, 0);
+  const status = await (
+    await getOperationsData()
+  ).statuses.get(command.commandId);
   assert.equal(status?.state, "FAILED");
   assert.match(status?.detail ?? "", /expired/i);
-  assert.equal(getCase(item.caseId)?.state, "FAILED");
+  assert.equal((await getCase(item.caseId))?.state, "FAILED");
 
-  assert.throws(
-    () =>
-      updateActuatorStatus({
+  await assert.rejects(
+    async () =>
+      await updateActuatorStatus({
         commandId: command.commandId,
         caseId: item.caseId,
         busId: "BUS-95-01",
@@ -104,12 +113,12 @@ test("expired actuator commands are failed and can never be polled for execution
   );
 });
 
-test("ramp readiness requires both actuator completion and deployed limit switch", () => {
-  const item = explicitRamp("signal-two", "passenger-two");
-  ingestSafetyTelemetry(telemetry());
-  const command = listPendingActuatorCommands("BUS-95-01")[0];
+test("ramp readiness requires both actuator completion and deployed limit switch", async () => {
+  const item = await explicitRamp("signal-two", "passenger-two");
+  await ingestSafetyTelemetry(telemetry());
+  const command = (await listPendingActuatorCommands("BUS-95-01"))[0];
 
-  const unverified = updateActuatorStatus({
+  const unverified = await updateActuatorStatus({
     commandId: command.commandId,
     caseId: item.caseId,
     busId: "BUS-95-01",
@@ -118,12 +127,12 @@ test("ramp readiness requires both actuator completion and deployed limit switch
   });
   assert.equal(unverified.state, "BLOCKED");
 
-  ingestSafetyTelemetry(telemetry({ rampPosition: "DEPLOYED" }));
-  assert.equal(getCase(item.caseId)?.state, "READY");
+  await ingestSafetyTelemetry(telemetry({ rampPosition: "DEPLOYED" }));
+  assert.equal((await getCase(item.caseId))?.state, "READY");
 });
 
-test("sensor-only ramp detection needs confirmation and never stores image metadata", () => {
-  const observed = submitSignalObservation({
+test("sensor-only ramp detection needs confirmation and never stores image metadata", async () => {
+  const observed = await submitSignalObservation({
     signalId: "camera-one",
     source: "CAMERA",
     kind: "WHEELCHAIR_DETECTED",
@@ -137,43 +146,43 @@ test("sensor-only ramp detection needs confirmation and never stores image metad
     metadata: { imageData: "never-store-this", modelVersion: "demo-v1" },
   });
   assert.equal(observed.state, "NEEDS_CONFIRMATION");
-  assert.equal(listPendingActuatorCommands().length, 0);
+  assert.equal((await listPendingActuatorCommands()).length, 0);
 
-  ingestSafetyTelemetry(telemetry());
-  const confirmed = applyOperatorAction(observed.caseId, "CONFIRM");
+  await ingestSafetyTelemetry(telemetry());
+  const confirmed = await applyOperatorAction(observed.caseId, "CONFIRM");
   assert.equal(confirmed.state, "ACTUATING");
 });
 
-test("multiple passengers share one actuator action without losing individual intent", () => {
-  const first = explicitRamp("signal-a", "passenger-a");
-  const second = explicitRamp("signal-b", "passenger-b");
+test("multiple passengers share one actuator action without losing individual intent", async () => {
+  const first = await explicitRamp("signal-a", "passenger-a");
+  const second = await explicitRamp("signal-b", "passenger-b");
   assert.equal(second.caseId, first.caseId);
   assert.equal(second.intents.length, 2);
   assert.equal(second.passengerCount, 2);
 
-  ingestSafetyTelemetry(telemetry());
+  await ingestSafetyTelemetry(telemetry());
   assert.equal(
-    listPendingActuatorCommands().filter(
+    (await listPendingActuatorCommands()).filter(
       (item) => item.command === "DEPLOY_RAMP",
     ).length,
     1,
   );
 });
 
-test("cases survive an operations-store reload", () => {
-  const item = explicitRamp("signal-persist", "passenger-persist");
-  configureOperationsData(dataDirectory, { retentionTimer: false });
-  assert.equal(getCase(item.caseId, false)?.passengerCount, 1);
+test("cases survive an operations-store reload", async () => {
+  const item = await explicitRamp("signal-persist", "passenger-persist");
+  await configureOperationsData(dataDirectory, { retentionTimer: false });
+  assert.equal((await getCase(item.caseId, false))?.passengerCount, 1);
 });
 
-test("boarding completion retracts and verifies the ramp before closing the case", () => {
-  const item = explicitRamp("signal-complete", "passenger-complete");
-  ingestSafetyTelemetry(telemetry());
-  const deploy = listPendingActuatorCommands().find(
+test("boarding completion retracts and verifies the ramp before closing the case", async () => {
+  const item = await explicitRamp("signal-complete", "passenger-complete");
+  await ingestSafetyTelemetry(telemetry());
+  const deploy = (await listPendingActuatorCommands()).find(
     (command) => command.command === "DEPLOY_RAMP",
   )!;
-  ingestSafetyTelemetry(telemetry({ rampPosition: "DEPLOYED" }));
-  updateActuatorStatus({
+  await ingestSafetyTelemetry(telemetry({ rampPosition: "DEPLOYED" }));
+  await updateActuatorStatus({
     commandId: deploy.commandId,
     caseId: item.caseId,
     busId: "BUS-95-01",
@@ -182,7 +191,7 @@ test("boarding completion retracts and verifies the ramp before closing the case
     updatedAt: new Date().toISOString(),
   });
 
-  const completionDetected = submitSignalObservation({
+  const completionDetected = await submitSignalObservation({
     signalId: "completion-one",
     source: "PRESSURE_SENSOR",
     kind: "BOARDING_COMPLETE",
@@ -195,11 +204,11 @@ test("boarding completion retracts and verifies the ramp before closing the case
   });
   assert.equal(completionDetected.caseId, item.caseId);
   assert.equal(completionDetected.state, "ACTUATING");
-  const retract = listPendingActuatorCommands().find(
+  const retract = (await listPendingActuatorCommands()).find(
     (command) => command.command === "RETRACT_RAMP",
   )!;
   assert.ok(retract);
-  const awaitingLimitSwitch = updateActuatorStatus({
+  const awaitingLimitSwitch = await updateActuatorStatus({
     commandId: retract.commandId,
     caseId: item.caseId,
     busId: "BUS-95-01",
@@ -209,29 +218,34 @@ test("boarding completion retracts and verifies the ramp before closing the case
   });
   assert.equal(awaitingLimitSwitch.state, "ACTUATING");
 
-  ingestSafetyTelemetry(telemetry({ rampPosition: "STOWED" }));
-  const completed = getCase(item.caseId)!;
+  await ingestSafetyTelemetry(telemetry({ rampPosition: "STOWED" }));
+  const completed = (await getCase(item.caseId))!;
   assert.equal(completed.state, "COMPLETED");
   assert.ok(completed.outcome.completionTimeMs !== undefined);
   assert.equal(
-    synchronizeLegacyCaseStatus(item.caseId, AssistanceRequestStatus.CANCELLED)
-      .state,
+    (
+      await synchronizeLegacyCaseStatus(
+        item.caseId,
+        AssistanceRequestStatus.CANCELLED,
+      )
+    ).state,
     "COMPLETED",
   );
   assert.equal(
-    recordPassengerFeedback(item.caseId, 5).outcome.passengerFeedbackScore,
+    (await recordPassengerFeedback(item.caseId, 5)).outcome
+      .passengerFeedbackScore,
     5,
   );
 });
 
-test("cancellation retracts a deployed ramp before becoming terminal", () => {
-  const item = explicitRamp("signal-cancel", "passenger-cancel");
-  ingestSafetyTelemetry(telemetry());
-  const deploy = listPendingActuatorCommands().find(
+test("cancellation retracts a deployed ramp before becoming terminal", async () => {
+  const item = await explicitRamp("signal-cancel", "passenger-cancel");
+  await ingestSafetyTelemetry(telemetry());
+  const deploy = (await listPendingActuatorCommands()).find(
     (command) => command.command === "DEPLOY_RAMP",
   )!;
-  ingestSafetyTelemetry(telemetry({ rampPosition: "DEPLOYED" }));
-  updateActuatorStatus({
+  await ingestSafetyTelemetry(telemetry({ rampPosition: "DEPLOYED" }));
+  await updateActuatorStatus({
     commandId: deploy.commandId,
     caseId: item.caseId,
     busId: "BUS-95-01",
@@ -240,40 +254,43 @@ test("cancellation retracts a deployed ramp before becoming terminal", () => {
     updatedAt: new Date().toISOString(),
   });
 
-  const cancelling = applyOperatorAction(item.caseId, "CANCEL");
+  const cancelling = await applyOperatorAction(item.caseId, "CANCEL");
   assert.equal(cancelling.state, "ACTUATING");
   assert.equal(cancelling.boardingIntent.decision, "DECLINED");
   assert.ok(
-    listPendingActuatorCommands().some(
+    (await listPendingActuatorCommands()).some(
       (command) => command.command === "RETRACT_RAMP",
     ),
   );
 
-  ingestSafetyTelemetry(telemetry({ rampPosition: "STOWED" }));
-  assert.equal(getCase(item.caseId)?.state, "CANCELLED");
+  await ingestSafetyTelemetry(telemetry({ rampPosition: "STOWED" }));
+  assert.equal((await getCase(item.caseId))?.state, "CANCELLED");
 });
 
-test("cancellation removes an unstarted deployment command", () => {
-  const item = explicitRamp("signal-cancel-early", "passenger-cancel-early");
-  ingestSafetyTelemetry(telemetry());
+test("cancellation removes an unstarted deployment command", async () => {
+  const item = await explicitRamp(
+    "signal-cancel-early",
+    "passenger-cancel-early",
+  );
+  await ingestSafetyTelemetry(telemetry());
   assert.ok(
-    listPendingActuatorCommands().some(
+    (await listPendingActuatorCommands()).some(
       (command) => command.command === "DEPLOY_RAMP",
     ),
   );
 
-  const cancelled = applyOperatorAction(item.caseId, "CANCEL");
+  const cancelled = await applyOperatorAction(item.caseId, "CANCEL");
   assert.equal(cancelled.state, "CANCELLED");
   assert.equal(
-    listPendingActuatorCommands().filter(
+    (await listPendingActuatorCommands()).filter(
       (command) => command.command === "DEPLOY_RAMP",
     ).length,
     0,
   );
 });
 
-test("sensor fusion can mark intent likely but never confirmed without consent", () => {
-  const detected = submitSignalObservation({
+test("sensor fusion can mark intent likely but never confirmed without consent", async () => {
+  const detected = await submitSignalObservation({
     signalId: "intent-wheelchair",
     source: "CAMERA",
     kind: "WHEELCHAIR_DETECTED",
@@ -285,7 +302,7 @@ test("sensor fusion can mark intent likely but never confirmed without consent",
     anonymousToken: "rotating-zone-token",
     observedAt: new Date().toISOString(),
   });
-  const likely = submitSignalObservation({
+  const likely = await submitSignalObservation({
     signalId: "intent-zone",
     source: "DISTANCE_SENSOR",
     kind: "PASSENGER_IN_BOARDING_ZONE",
@@ -300,14 +317,14 @@ test("sensor fusion can mark intent likely but never confirmed without consent",
   assert.equal(likely.caseId, detected.caseId);
   assert.equal(likely.boardingIntent.decision, "LIKELY");
   assert.equal(likely.state, "NEEDS_CONFIRMATION");
-  assert.equal(listPendingActuatorCommands().length, 0);
+  assert.equal((await listPendingActuatorCommands()).length, 0);
 
-  const confirmed = applyOperatorAction(likely.caseId, "CONFIRM");
+  const confirmed = await applyOperatorAction(likely.caseId, "CONFIRM");
   assert.equal(confirmed.boardingIntent.decision, "CONFIRMED");
 });
 
-function explicitRamp(signalId: string, anonymousToken: string) {
-  return submitSignalObservation({
+async function explicitRamp(signalId: string, anonymousToken: string) {
+  return await submitSignalObservation({
     signalId,
     source: "APP",
     kind: "EXPLICIT_ASSISTANCE_REQUEST",

@@ -132,6 +132,8 @@ export class OperationsData {
   private readonly database: SqliteDatabase | undefined;
   private readonly retention: RetentionPolicy;
   private timer: NodeJS.Timeout | undefined;
+  /** Resolves once old data is imported and the first retention pass is done. */
+  readonly ready: Promise<void>;
 
   constructor(dataDirectory: string, options: OperationsDataOptions = {}) {
     fs.mkdirSync(dataDirectory, { recursive: true });
@@ -170,29 +172,36 @@ export class OperationsData {
     this.perceptionSamples = table(specs.perceptionSamples);
     this.docking = table(specs.docking);
     this.audit = new AuditLog(db, path.join(dataDirectory, "audit.ndjson"));
-    importLegacyState(this, db, path.join(dataDirectory, "operations.json"));
-    this.runRetention();
+    this.ready = this.start(db, path.join(dataDirectory, "operations.json"));
     if (options.retentionTimer !== false) {
       this.timer = setInterval(
-        () => this.runRetention(),
+        () => void this.runRetention(),
         RETENTION_INTERVAL_MS,
       );
       this.timer.unref();
     }
   }
 
+  private async start(
+    database: SqliteDatabase | undefined,
+    legacyJsonPath: string,
+  ): Promise<void> {
+    await importLegacyState(this, database, legacyJsonPath);
+    await this.runRetention();
+  }
+
   /** Records a command as open, so it is offered to the bus until a status closes it. */
-  putCommand(command: ActuatorCommand): void {
-    this.commands.put(command);
+  async putCommand(command: ActuatorCommand): Promise<void> {
+    await this.commands.put(command);
   }
 
   /**
    * Records a status for a command. A terminal status closes the command (it is no longer
    * offered to the bus); any other status leaves it open.
    */
-  putStatus(status: ActuatorStatus): void {
-    this.statuses.put(status);
-    this.commands.setIndex(
+  async putStatus(status: ActuatorStatus): Promise<void> {
+    await this.statuses.put(status);
+    await this.commands.setIndex(
       status.commandId,
       "open",
       TERMINAL_ACTUATOR_STATES.includes(status.state) ? undefined : OPEN,
@@ -200,8 +209,8 @@ export class OperationsData {
   }
 
   /** Commands with no terminal status yet, oldest first. */
-  openCommands(limit: number): ActuatorCommand[] {
-    return this.commands.find("open", OPEN, limit);
+  async openCommands(limit: number): Promise<ActuatorCommand[]> {
+    return await this.commands.find("open", OPEN, limit);
   }
 
   /** Appends removed cases to the archive file (one line each, with when it was archived). */
@@ -218,9 +227,9 @@ export class OperationsData {
   }
 
   /** Applies the retention limits now; returns how many cases were archived. */
-  runRetention(nowMs = Date.now()): number {
+  async runRetention(nowMs = Date.now()): Promise<number> {
     try {
-      return enforceRetention(this, this.retention, nowMs);
+      return await enforceRetention(this, this.retention, nowMs);
     } catch (error) {
       logger.error("Retention failed", undefined, { error: String(error) });
       return 0;
@@ -228,13 +237,13 @@ export class OperationsData {
   }
 
   /** A cheap read used by the readiness check: fails if the storage is unusable. */
-  ping(): void {
-    this.cases.count();
+  async ping(): Promise<void> {
+    await this.cases.count();
   }
 
   /** Removes all data; with `removeFiles` also the audit and archive files. */
-  reset(removeFiles = false): void {
-    this.cases.clear();
+  async reset(removeFiles = false): Promise<void> {
+    await this.cases.clear();
     for (const table of [
       this.observations,
       this.capabilities,
@@ -247,7 +256,7 @@ export class OperationsData {
       this.perceptionSamples,
       this.docking,
     ] as Array<DocumentTable<unknown>>)
-      table.clear();
+      await table.clear();
     this.audit.reset(removeFiles);
     if (removeFiles && fs.existsSync(this.archivePath))
       fs.unlinkSync(this.archivePath);
@@ -284,23 +293,36 @@ function defaultDataDirectory(): string {
 
 let current: OperationsData | undefined;
 
-export function getOperationsData(): OperationsData {
+/**
+ * The audit log, without waiting for the data to be ready. Audit writes are fire-and-forget
+ * (they are batched and never block a request), so they use this instead of
+ * `getOperationsData()`.
+ */
+export function getAuditLog(): AuditLog {
   current ??= new OperationsData(defaultDataDirectory());
+  return current.audit;
+}
+
+/** The current data, once it is ready to use. */
+export async function getOperationsData(): Promise<OperationsData> {
+  current ??= new OperationsData(defaultDataDirectory());
+  await current.ready;
   return current;
 }
 
 /** Used by isolated tests and demo resets: closes the current data and opens another. */
-export function configureOperationsData(
+export async function configureOperationsData(
   dataDirectory: string,
   options: OperationsDataOptions = {},
-): OperationsData {
+): Promise<OperationsData> {
   current?.close();
   current = new OperationsData(dataDirectory, options);
+  await current.ready;
   return current;
 }
 
-export function resetOperationsData(removeFiles = false): void {
-  getOperationsData().reset(removeFiles);
+export async function resetOperationsData(removeFiles = false): Promise<void> {
+  await (await getOperationsData()).reset(removeFiles);
 }
 
 /** Closes the current data (if any) so its files can be removed; the next use opens it again. */

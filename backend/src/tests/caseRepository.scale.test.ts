@@ -38,27 +38,27 @@ function makeCase(index: number): AssistanceCase {
   } as unknown as AssistanceCase;
 }
 
-function timePerWriteMs(
+async function timePerWriteMs(
   repository: SqliteCaseRepository,
   from: number,
   count: number,
-): number {
+): Promise<number> {
   const started = process.hrtime.bigint();
   for (let index = from; index < from + count; index += 1)
-    repository.upsert(makeCase(index));
+    await repository.upsert(makeCase(index));
   return Number(process.hrtime.bigint() - started) / 1e6 / count;
 }
 
 test(
   "case write time stays flat as stored cases grow to 20,000, and lookups stay indexed",
   { skip },
-  () => {
+  async () => {
     assert.ok(sqlite);
     const repository = new SqliteCaseRepository(sqlite);
-    const firstBatch = timePerWriteMs(repository, 0, BATCH);
-    timePerWriteMs(repository, BATCH, RECORDS - 2 * BATCH);
-    const lastBatch = timePerWriteMs(repository, RECORDS - BATCH, BATCH);
-    assert.equal(repository.count(), RECORDS);
+    const firstBatch = await timePerWriteMs(repository, 0, BATCH);
+    await timePerWriteMs(repository, BATCH, RECORDS - 2 * BATCH);
+    const lastBatch = await timePerWriteMs(repository, RECORDS - BATCH, BATCH);
+    assert.equal(await repository.count(), RECORDS);
     const slowdown = lastBatch / firstBatch;
     console.log(
       `# case write: ${firstBatch.toFixed(3)} ms at 0 cases, ${lastBatch.toFixed(3)} ms at ${RECORDS - BATCH} cases (x${slowdown.toFixed(2)})`,
@@ -73,7 +73,8 @@ test(
       .all("10001", "BOARDING") as Array<{ detail: string }>;
     // findOpen builds exactly this statement for a stop and a phase.
     assert.equal(
-      repository.findOpen({ stopCode: "10001", phase: "BOARDING" })?.caseId,
+      (await repository.findOpen({ stopCode: "10001", phase: "BOARDING" }))
+        ?.caseId,
       "CASE-000001",
     );
     assert.ok(

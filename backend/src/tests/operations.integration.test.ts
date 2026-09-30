@@ -638,7 +638,7 @@ test("ramp laser fusion recognizes small light debris without clearing unsafe ob
 });
 
 async function capability(baseUrl: string) {
-  return requestJson(
+  return await requestJson(
     baseUrl,
     "/api/operations/vehicles/BUS-DEMO/capabilities",
     {
@@ -662,34 +662,38 @@ async function capability(baseUrl: string) {
 }
 
 async function autonomousCapability(baseUrl: string) {
-  return requestJson(baseUrl, "/api/operations/vehicles/AV-DEMO/capabilities", {
-    method: "PUT",
-    body: JSON.stringify({
-      busService: "95",
-      autonomous: true,
-      autonomyLevel: "MOCK_ROUTE_AUTOMATION",
-      ramp: true,
-      externalAudio: true,
-      visualDisplay: true,
-      dwellControl: true,
-      wheelchairSpaceCapacity: 1,
-      supportedTelemetry: [
-        "vehicleStopped",
-        "parkingBrakeActive",
-        "doorOpen",
-        "deploymentPathClear",
-        "rampPosition",
-      ],
-      updatedAt: new Date().toISOString(),
-    }),
-  });
+  return await requestJson(
+    baseUrl,
+    "/api/operations/vehicles/AV-DEMO/capabilities",
+    {
+      method: "PUT",
+      body: JSON.stringify({
+        busService: "95",
+        autonomous: true,
+        autonomyLevel: "MOCK_ROUTE_AUTOMATION",
+        ramp: true,
+        externalAudio: true,
+        visualDisplay: true,
+        dwellControl: true,
+        wheelchairSpaceCapacity: 1,
+        supportedTelemetry: [
+          "vehicleStopped",
+          "parkingBrakeActive",
+          "doorOpen",
+          "deploymentPathClear",
+          "rampPosition",
+        ],
+        updatedAt: new Date().toISOString(),
+      }),
+    },
+  );
 }
 
 async function autonomousMotion(
   baseUrl: string,
   body: Record<string, unknown>,
 ) {
-  return requestJson(
+  return await requestJson(
     baseUrl,
     "/api/operations/vehicles/AV-DEMO/autonomy/motion",
     { method: "POST", body: JSON.stringify(body) },
@@ -700,7 +704,7 @@ async function precisionDocking(
   baseUrl: string,
   body: Record<string, unknown>,
 ) {
-  return requestJson(
+  return await requestJson(
     baseUrl,
     "/api/operations/vehicles/AV-DEMO/autonomy/docking",
     { method: "POST", body: JSON.stringify(body) },

@@ -24,23 +24,23 @@ const CLASSES = new Set<RampObstacleClass>([
 export class RampObstacleValidationError extends Error {}
 export class RampObstacleNotFoundError extends Error {}
 
-export function recordRampObstacleClassification(
+export async function recordRampObstacleClassification(
   input: RampObstacleClassification,
-): RampObstacleAssessment {
+): Promise<RampObstacleAssessment> {
   validateClassification(input);
-  getOperationsData().rampClassifications.put(input);
-  return getRampObstacleAssessment(input.busId);
+  await (await getOperationsData()).rampClassifications.put(input);
+  return await getRampObstacleAssessment(input.busId);
 }
 
-export function getRampObstacleAssessment(
+export async function getRampObstacleAssessment(
   busId: string,
-): RampObstacleAssessment {
-  const data = getOperationsData();
-  const ranging = data.telemetry.get(busId)?.rampObstacle;
+): Promise<RampObstacleAssessment> {
+  const data = await getOperationsData();
+  const ranging = (await data.telemetry.get(busId))?.rampObstacle;
   if (!ranging) {
     throw new RampObstacleNotFoundError("Ramp laser ranging is unavailable");
   }
-  const classification = data.rampClassifications.get(busId);
+  const classification = await data.rampClassifications.get(busId);
   return fuseRampObstacleAssessment(ranging, classification);
 }
 

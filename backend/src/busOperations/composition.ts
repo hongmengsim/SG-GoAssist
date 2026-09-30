@@ -5,7 +5,7 @@ import { publishEvent } from "../events/eventHub";
 import { logger } from "../services/logger";
 import { OperatorHaltService, type StoredHalt } from "./operatorHalt";
 import { AuditBatcher } from "./auditBatcher";
-import { getOperationsData } from "../services/operationsData";
+import { getAuditLog } from "../services/operationsData";
 import type { OperationsAuditEvent } from "../services/auditLog";
 import { openSqliteDatabase, type SqliteDatabase } from "../storage/sqlite";
 import {
@@ -84,7 +84,7 @@ export function createBusOperations(
   options: BusOperationsOptions,
 ): BusOperations {
   const batcher = new AuditBatcher((events) =>
-    getOperationsData().audit.appendBatch(events),
+    getAuditLog().appendBatch(events),
   );
   let repository: BusStatusRepository | undefined;
   let bays: BayRepository | undefined;

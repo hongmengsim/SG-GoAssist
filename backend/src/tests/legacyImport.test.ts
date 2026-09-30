@@ -63,8 +63,8 @@ const legacyState = {
   precisionDockingObservations: [{ busId: "AV-095-01" }],
 };
 
-function open(directory: string): OperationsData {
-  return new OperationsData(directory, {
+async function open(directory: string): Promise<OperationsData> {
+  const data = new OperationsData(directory, {
     driver: "sqlite",
     retentionTimer: false,
     retention: {
@@ -73,26 +73,34 @@ function open(directory: string): OperationsData {
       maxSeriesRecords: 1e9,
     },
   });
+  await data.ready;
+  return data;
 }
 
-function assertImported(data: OperationsData): void {
-  assert.equal(data.cases.count(), 2);
-  assert.equal(data.cases.get("CASE-OLD-1")?.state, "READY");
-  assert.equal(data.cases.findBySignalId("SIG-1")?.caseId, "CASE-OLD-1");
+async function assertImported(data: OperationsData): Promise<void> {
+  assert.equal(await data.cases.count(), 2);
+  assert.equal((await data.cases.get("CASE-OLD-1"))?.state, "READY");
   assert.equal(
-    data.observations.findOne("idempotencyKey", "KEY-1")?.signalId,
+    (await data.cases.findBySignalId("SIG-1"))?.caseId,
+    "CASE-OLD-1",
+  );
+  assert.equal(
+    (await data.observations.findOne("idempotencyKey", "KEY-1"))?.signalId,
     "SIG-1",
   );
-  assert.equal(data.capabilities.get("AV-095-01")?.busService, "95");
-  assert.equal(data.telemetry.findOne("stopCode", "18331")?.busId, "AV-095-01");
-  assert.ok(data.devices.get("DEV-1"));
-  assert.ok(data.vehicles.get("AV-095-01"));
-  assert.ok(data.rampClassifications.get("AV-095-01"));
-  assert.ok(data.perceptionSamples.get("P1"));
-  assert.ok(data.docking.get("AV-095-01"));
+  assert.equal((await data.capabilities.get("AV-095-01"))?.busService, "95");
+  assert.equal(
+    (await data.telemetry.findOne("stopCode", "18331"))?.busId,
+    "AV-095-01",
+  );
+  assert.ok(await data.devices.get("DEV-1"));
+  assert.ok(await data.vehicles.get("AV-095-01"));
+  assert.ok(await data.rampClassifications.get("AV-095-01"));
+  assert.ok(await data.perceptionSamples.get("P1"));
+  assert.ok(await data.docking.get("AV-095-01"));
   // A command with a terminal status is closed; the other is still offered to the bus.
   assert.deepEqual(
-    data.openCommands(10).map((command) => command.commandId),
+    (await data.openCommands(10)).map((command) => command.commandId),
     ["K-OPEN"],
   );
 }
@@ -100,7 +108,7 @@ function assertImported(data: OperationsData): void {
 test(
   "an old whole-state row in operations.sqlite is imported once and then removed",
   { skip },
-  () => {
+  async () => {
     const directory = mkdtempSync(join(tmpdir(), "goassist-legacy-"));
     try {
       const old = openSqliteDatabase(join(directory, "operations.sqlite"));
@@ -115,13 +123,13 @@ test(
         .run(JSON.stringify(legacyState), new Date().toISOString());
       old.close();
 
-      const first = open(directory);
-      assertImported(first);
+      const first = await open(directory);
+      await assertImported(first);
       first.close();
 
-      const second = open(directory);
+      const second = await open(directory);
       assert.equal(
-        second.cases.count(),
+        await second.cases.count(),
         2,
         "a second start must not import again",
       );
@@ -139,15 +147,15 @@ test(
 test(
   "an old operations.json is imported and renamed so it is not read again",
   { skip },
-  () => {
+  async () => {
     const directory = mkdtempSync(join(tmpdir(), "goassist-legacy-"));
     try {
       writeFileSync(
         join(directory, "operations.json"),
         JSON.stringify(legacyState),
       );
-      const first = open(directory);
-      assertImported(first);
+      const first = await open(directory);
+      await assertImported(first);
       first.close();
       assert.equal(existsSync(join(directory, "operations.json")), false);
       assert.ok(existsSync(join(directory, "operations.json.migrated")));
@@ -164,12 +172,12 @@ test(
 test(
   "a corrupt old file is left in place and does not stop the server starting",
   { skip },
-  () => {
+  async () => {
     const directory = mkdtempSync(join(tmpdir(), "goassist-legacy-"));
     try {
       writeFileSync(join(directory, "operations.json"), "{ not json");
-      const data = open(directory);
-      assert.equal(data.cases.count(), 0);
+      const data = await open(directory);
+      assert.equal(await data.cases.count(), 0);
       assert.ok(existsSync(join(directory, "operations.json")));
       data.close();
     } finally {

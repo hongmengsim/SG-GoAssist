@@ -47,13 +47,13 @@ router.get("/simulator/announcements", (req: Request, res: Response) => {
   });
 });
 
-router.post("/simulator/command", (req: Request, res: Response) => {
+router.post("/simulator/command", async (req: Request, res: Response) => {
   if (!isAutoAcknowledgeEnabled() && req.body?.command === "ACKNOWLEDGE") {
     return res.status(403).json({
       error: "Acknowledgement must come from the bus",
     });
   }
-  const result = processSimulatorCommand(req.body);
+  const result = await processSimulatorCommand(req.body);
   res.status(result.success ? 200 : 400).json(result);
 });
 
@@ -72,7 +72,7 @@ router.post("/simulator/vehicle", (req: Request, res: Response) => {
   res.status(result.success ? 200 : 409).json(result);
 });
 
-router.post("/request", (req: Request, res: Response) => {
+router.post("/request", async (req: Request, res: Response) => {
   try {
     const payload: CreateAssistanceRequestPayload = req.body;
 
@@ -121,7 +121,7 @@ router.post("/request", (req: Request, res: Response) => {
     }
 
     const { request: savedRequest, duplicateOfRequestId } =
-      createStandardizedAssistanceRequestBundle({
+      await createStandardizedAssistanceRequestBundle({
         sessionId: payload.sessionId ?? "demo-session",
         busService: payload.busService,
         busId: payload.busId,
@@ -181,7 +181,7 @@ router.post(
       }
 
       const { request, duplicateOfRequestId } =
-        createStandardizedAssistanceRequest({
+        await createStandardizedAssistanceRequest({
           sessionId: `PHYSICAL_BUTTON:${payload.busId}`,
           busId: payload.busId,
           busService: payload.busService,
@@ -229,8 +229,8 @@ router.post(
   },
 );
 
-router.post("/:requestId/cancel", (req: Request, res: Response) => {
-  const result = cancelRequest(req.params.requestId);
+router.post("/:requestId/cancel", async (req: Request, res: Response) => {
+  const result = await cancelRequest(req.params.requestId);
   res.status(result.success ? 200 : 404).json(result);
 });
 

@@ -21,25 +21,32 @@ export function isStopVehiclePresenceFresh(
   );
 }
 
-export function listStopVehiclePresence(
+export async function listStopVehiclePresence(
   stopCode: string,
   now = Date.now(),
-): StopVehiclePresence[] {
-  return getOperationsData()
-    .telemetry.find("stopCode", stopCode, STOP_PRESENCE_LIMIT)
-    .map((telemetry) => deriveStopVehiclePresence(telemetry, now))
-    .filter((vehicle): vehicle is StopVehiclePresence => Boolean(vehicle));
+): Promise<StopVehiclePresence[]> {
+  const data = await getOperationsData();
+  const present: StopVehiclePresence[] = [];
+  for (const telemetry of await data.telemetry.find(
+    "stopCode",
+    stopCode,
+    STOP_PRESENCE_LIMIT,
+  )) {
+    const vehicle = await deriveStopVehiclePresence(telemetry, now);
+    if (vehicle) present.push(vehicle);
+  }
+  return present;
 }
 
-export function deriveStopVehiclePresence(
+export async function deriveStopVehiclePresence(
   telemetry: SafetyTelemetry,
   now = Date.now(),
-): StopVehiclePresence | null {
+): Promise<StopVehiclePresence | null> {
   if (!telemetry.stopCode) return null;
 
-  const data = getOperationsData();
-  const capability = data.capabilities.get(telemetry.busId);
-  const autonomousVehicle = data.vehicles.get(telemetry.busId);
+  const data = await getOperationsData();
+  const capability = await data.capabilities.get(telemetry.busId);
+  const autonomousVehicle = await data.vehicles.get(telemetry.busId);
   const knownBus = getBusById(telemetry.busId);
   const busService =
     capability?.busService ??
@@ -66,11 +73,11 @@ export function deriveStopVehiclePresence(
   };
 }
 
-export function createDepartedStopVehiclePresence(
+export async function createDepartedStopVehiclePresence(
   telemetry: SafetyTelemetry,
   observedAt = new Date().toISOString(),
-): StopVehiclePresence | null {
-  const vehicle = deriveStopVehiclePresence(telemetry);
+): Promise<StopVehiclePresence | null> {
+  const vehicle = await deriveStopVehiclePresence(telemetry);
   return vehicle
     ? {
         ...vehicle,

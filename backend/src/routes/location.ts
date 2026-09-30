@@ -68,7 +68,7 @@ router.get(
 
 router.get(
   "/bus-stops/:busStopCode/vehicles",
-  (req: Request, res: Response) => {
+  async (req: Request, res: Response) => {
     const busStop = busStopRepository.get(req.params.busStopCode);
     if (!busStop) {
       return res.status(404).json({
@@ -79,7 +79,7 @@ router.get(
 
     res.json({
       stopCode: busStop.busStopCode,
-      vehicles: listStopVehiclePresence(busStop.busStopCode),
+      vehicles: await listStopVehiclePresence(busStop.busStopCode),
     });
   },
 );

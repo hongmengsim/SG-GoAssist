@@ -26,11 +26,11 @@ const SECURE_STOP_SPEED_KPH = 2;
 const MAX_LOCALIZATION_ERROR_METERS = 25;
 const DOOR_LOCALIZATION_ERROR_METERS = 10;
 
-export function assignAutonomousRoute(
+export async function assignAutonomousRoute(
   busId: string,
   assignment: AutonomousRouteAssignment,
-): AutonomousVehicleState {
-  const capability = listVehicleCapabilities().find(
+): Promise<AutonomousVehicleState> {
+  const capability = (await listVehicleCapabilities()).find(
     (item) => item.busId === busId,
   );
   if (!capability?.autonomous) {
@@ -52,7 +52,7 @@ export function assignAutonomousRoute(
     throw new OperationsValidationError("Invalid autonomous route assignment");
   }
 
-  return saveAndPublish({
+  return await saveAndPublish({
     busId,
     busService: assignment.busService.trim(),
     routeId: assignment.routeId.trim(),
@@ -72,27 +72,31 @@ export function assignAutonomousRoute(
   });
 }
 
-export function getAutonomousVehicleState(
+export async function getAutonomousVehicleState(
   busId: string,
-): AutonomousVehicleState {
-  const state = getOperationsData().vehicles.get(busId);
+): Promise<AutonomousVehicleState> {
+  const state = await (await getOperationsData()).vehicles.get(busId);
   if (!state)
     throw new OperationsNotFoundError("Autonomous vehicle state not found");
   return state;
 }
 
-export function listAutonomousVehicles(): AutonomousVehicleState[] {
-  return getOperationsData().vehicles.list(LIST_LIMIT);
+export async function listAutonomousVehicles(): Promise<
+  AutonomousVehicleState[]
+> {
+  return await (await getOperationsData()).vehicles.list(LIST_LIMIT);
 }
 
-export function startAutonomousRoute(busId: string): AutonomousVehicleState {
-  const state = getAutonomousVehicleState(busId);
+export async function startAutonomousRoute(
+  busId: string,
+): Promise<AutonomousVehicleState> {
+  const state = await getAutonomousVehicleState(busId);
   if (state.state !== "ROUTE_ASSIGNED") {
     throw new OperationsValidationError(
       "Only an assigned route can be started",
     );
   }
-  return saveAndPublish({
+  return await saveAndPublish({
     ...state,
     state: "EN_ROUTE",
     speedKph: 0,
@@ -101,11 +105,11 @@ export function startAutonomousRoute(busId: string): AutonomousVehicleState {
   });
 }
 
-export function updateAutonomousMotion(
+export async function updateAutonomousMotion(
   busId: string,
   motion: AutonomousMotionUpdate,
-): AutonomousVehicleState {
-  const state = getAutonomousVehicleState(busId);
+): Promise<AutonomousVehicleState> {
+  const state = await getAutonomousVehicleState(busId);
   if (!isMotionState(state.state) || state.mode !== "AUTONOMOUS") {
     throw new OperationsValidationError(
       "Vehicle is not in an autonomous motion state",
@@ -123,14 +127,14 @@ export function updateAutonomousMotion(
   };
 
   if (updated.obstacleDetected) {
-    return enterSafeStop(
+    return await enterSafeStop(
       updated,
       "EMERGENCY_STOP",
       "Obstacle detected in travel path",
     );
   }
   if (updated.localizationAccuracyMeters > MAX_LOCALIZATION_ERROR_METERS) {
-    return enterSafeStop(
+    return await enterSafeStop(
       updated,
       "BLOCKED",
       "Localization accuracy is insufficient for autonomous movement",
@@ -141,7 +145,7 @@ export function updateAutonomousMotion(
     updated.distanceToTargetMeters <= SECURE_STOP_DISTANCE_METERS &&
     updated.speedKph <= SECURE_STOP_SPEED_KPH
   ) {
-    const docking = getDockingAssessment(busId);
+    const docking = await getDockingAssessment(busId);
     updated.docking = docking;
     if (!docking?.aligned || docking.stopCode !== updated.targetStopCode) {
       updated.state = "PRECISION_STOPPING";
@@ -149,11 +153,11 @@ export function updateAutonomousMotion(
         docking && docking.stopCode !== updated.targetStopCode
           ? "Docking marker belongs to a different stop"
           : (docking?.reason ?? "Waiting for precision docking sensors");
-      return saveAndPublish(updated);
+      return await saveAndPublish(updated);
     }
     updated.state = "STOPPED_SECURE";
     updated.speedKph = 0;
-    publishSafety(updated, {
+    await publishSafety(updated, {
       vehicleStopped: true,
       parkingBrakeActive: true,
       doorOpen: false,
@@ -162,7 +166,7 @@ export function updateAutonomousMotion(
     if (updated.targetStopIndex === 0) {
       processVehicleCommand({ busId, status: VehicleStatus.ARRIVED });
     }
-    return saveAndPublish(updated);
+    return await saveAndPublish(updated);
   }
 
   if (updated.distanceToTargetMeters <= PRECISION_STOP_DISTANCE_METERS) {
@@ -175,11 +179,13 @@ export function updateAutonomousMotion(
   } else {
     updated.state = "EN_ROUTE";
   }
-  return saveAndPublish(updated);
+  return await saveAndPublish(updated);
 }
 
-export function openAutonomousDoors(busId: string): AutonomousVehicleState {
-  const state = getAutonomousVehicleState(busId);
+export async function openAutonomousDoors(
+  busId: string,
+): Promise<AutonomousVehicleState> {
+  const state = await getAutonomousVehicleState(busId);
   if (state.state !== "STOPPED_SECURE") {
     throw new OperationsValidationError(
       "Doors can open only after a verified secure stop",
@@ -193,13 +199,13 @@ export function openAutonomousDoors(busId: string): AutonomousVehicleState {
       "Door alignment or obstruction check is not safe",
     );
   }
-  const docking = getDockingAssessment(busId);
+  const docking = await getDockingAssessment(busId);
   if (!docking?.aligned || docking.stopCode !== state.targetStopCode) {
     throw new OperationsValidationError(
       docking?.reason ?? "Fresh precision docking confirmation is required",
     );
   }
-  const telemetry = getLatestSafetyTelemetry(busId);
+  const telemetry = await getLatestSafetyTelemetry(busId);
   if (
     !telemetry?.vehicleStopped ||
     !telemetry.parkingBrakeActive ||
@@ -210,8 +216,8 @@ export function openAutonomousDoors(busId: string): AutonomousVehicleState {
       "Stopped, brake, and stowed-ramp interlocks are required",
     );
   }
-  publishSafety(state, { doorOpen: true });
-  return saveAndPublish({
+  await publishSafety(state, { doorOpen: true });
+  return await saveAndPublish({
     ...state,
     state: "DOORS_OPEN",
     speedKph: 0,
@@ -219,15 +225,15 @@ export function openAutonomousDoors(busId: string): AutonomousVehicleState {
   });
 }
 
-export function departAutonomousStop(
+export async function departAutonomousStop(
   busId: string,
   nextStopDistanceMeters?: number,
-): AutonomousVehicleState {
-  const state = getAutonomousVehicleState(busId);
+): Promise<AutonomousVehicleState> {
+  const state = await getAutonomousVehicleState(busId);
   if (state.state !== "DOORS_OPEN" && state.state !== "READY_TO_DEPART") {
     throw new OperationsValidationError("Vehicle is not ready to depart");
   }
-  const telemetry = getLatestSafetyTelemetry(busId);
+  const telemetry = await getLatestSafetyTelemetry(busId);
   if (
     !telemetry?.vehicleStopped ||
     !telemetry.parkingBrakeActive ||
@@ -251,7 +257,7 @@ export function departAutonomousStop(
       "Distance to the next stop is required",
     );
   }
-  publishSafety(state, {
+  await publishSafety(state, {
     vehicleStopped: false,
     parkingBrakeActive: false,
     doorOpen: false,
@@ -261,7 +267,7 @@ export function departAutonomousStop(
     processVehicleCommand({ busId, status: VehicleStatus.DEPARTED });
   }
 
-  return saveAndPublish({
+  return await saveAndPublish({
     ...state,
     targetStopIndex: routeComplete ? state.targetStopIndex : nextIndex,
     targetStopCode: routeComplete
@@ -275,23 +281,23 @@ export function departAutonomousStop(
   });
 }
 
-export function applyAutonomyOverride(
+export async function applyAutonomyOverride(
   busId: string,
   action: "STOP" | "RESUME" | "MANUAL",
   clearance?: {
     obstacleCleared?: boolean;
     localizationAccuracyMeters?: number;
   },
-): AutonomousVehicleState {
-  const state = getAutonomousVehicleState(busId);
+): Promise<AutonomousVehicleState> {
+  const state = await getAutonomousVehicleState(busId);
   if (action === "STOP" || action === "MANUAL") {
-    publishSafety(state, {
+    await publishSafety(state, {
       vehicleStopped: true,
       parkingBrakeActive: true,
       doorOpen: false,
       deploymentPathClear: false,
     });
-    return saveAndPublish({
+    return await saveAndPublish({
       ...state,
       mode: action === "MANUAL" ? "MANUAL" : "REMOTE_ASSIST",
       state: "MANUAL_OVERRIDE",
@@ -311,7 +317,7 @@ export function applyAutonomyOverride(
   }
   const localizationAccuracyMeters =
     clearance?.localizationAccuracyMeters ?? state.localizationAccuracyMeters;
-  const safety = getLatestSafetyTelemetry(busId);
+  const safety = await getLatestSafetyTelemetry(busId);
   const obstacleDetected = state.obstacleDetected
     ? clearance?.obstacleCleared !== true ||
       safety?.deploymentPathClear !== true
@@ -331,13 +337,13 @@ export function applyAutonomyOverride(
       "Unsafe condition must clear before autonomous resume",
     );
   }
-  publishSafety(state, {
+  await publishSafety(state, {
     vehicleStopped: false,
     parkingBrakeActive: false,
     doorOpen: false,
     deploymentPathClear: true,
   });
-  return saveAndPublish({
+  return await saveAndPublish({
     ...state,
     mode: "AUTONOMOUS",
     state: "EN_ROUTE",
@@ -348,18 +354,18 @@ export function applyAutonomyOverride(
   });
 }
 
-function enterSafeStop(
+async function enterSafeStop(
   state: AutonomousVehicleState,
   nextState: "EMERGENCY_STOP" | "BLOCKED",
   reason: string,
-): AutonomousVehicleState {
-  publishSafety(state, {
+): Promise<AutonomousVehicleState> {
+  await publishSafety(state, {
     vehicleStopped: true,
     parkingBrakeActive: true,
     doorOpen: false,
     deploymentPathClear: !state.obstacleDetected,
   });
-  return saveAndPublish({
+  return await saveAndPublish({
     ...state,
     state: nextState,
     speedKph: 0,
@@ -367,12 +373,12 @@ function enterSafeStop(
   });
 }
 
-function publishSafety(
+async function publishSafety(
   state: AutonomousVehicleState,
   overrides: Partial<SafetyTelemetry>,
-): void {
-  const current = getLatestSafetyTelemetry(state.busId);
-  ingestSafetyTelemetry({
+): Promise<void> {
+  const current = await getLatestSafetyTelemetry(state.busId);
+  await ingestSafetyTelemetry({
     busId: state.busId,
     stopCode: state.targetStopCode,
     vehicleStopped: current?.vehicleStopped ?? false,
@@ -387,9 +393,11 @@ function publishSafety(
   });
 }
 
-function saveAndPublish(state: AutonomousVehicleState): AutonomousVehicleState {
+async function saveAndPublish(
+  state: AutonomousVehicleState,
+): Promise<AutonomousVehicleState> {
   const normalized = { ...state, updatedAt: new Date().toISOString() };
-  getOperationsData().vehicles.put(normalized);
+  await (await getOperationsData()).vehicles.put(normalized);
   publishOperationsEvent({
     type: "AUTONOMY_STATUS",
     busId: normalized.busId,
@@ -417,9 +425,9 @@ function isMotionState(state: AutonomousVehicleState["state"]): boolean {
   return ["EN_ROUTE", "APPROACHING_STOP", "PRECISION_STOPPING"].includes(state);
 }
 
-function getDockingAssessment(busId: string) {
+async function getDockingAssessment(busId: string) {
   try {
-    return getPrecisionDockingAssessment(busId);
+    return await getPrecisionDockingAssessment(busId);
   } catch (error) {
     if (error instanceof OperationsNotFoundError) return undefined;
     throw error;

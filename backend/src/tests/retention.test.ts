@@ -81,9 +81,9 @@ for (const driver of ["memory", "sqlite"]) {
         : undefined,
   };
 
-  function withData(
+  async function withData(
     retention: RetentionPolicy,
-    work: (data: OperationsData, directory: string) => void,
+    work: (data: OperationsData, directory: string) => Promise<void>,
   ) {
     const directory = mkdtempSync(join(tmpdir(), "goassist-retention-"));
     const data = new OperationsData(directory, {
@@ -92,7 +92,8 @@ for (const driver of ["memory", "sqlite"]) {
       retentionTimer: false,
     });
     try {
-      work(data, directory);
+      await data.ready;
+      await work(data, directory);
     } finally {
       data.close();
       try {
@@ -106,13 +107,13 @@ for (const driver of ["memory", "sqlite"]) {
   test(
     `retention (${driver}): a finished case older than the limit is archived and removed`,
     options,
-    () => {
-      withData(policy, (data) => {
-        data.cases.upsert(makeCase("OLD-DONE", "COMPLETED", 8 * DAY));
-        data.cases.upsert(makeCase("NEW-DONE", "COMPLETED", 1 * DAY));
-        assert.equal(data.runRetention(NOW), 1);
-        assert.equal(data.cases.get("OLD-DONE"), undefined);
-        assert.ok(data.cases.get("NEW-DONE"));
+    async () => {
+      await withData(policy, async (data) => {
+        await data.cases.upsert(makeCase("OLD-DONE", "COMPLETED", 8 * DAY));
+        await data.cases.upsert(makeCase("NEW-DONE", "COMPLETED", 1 * DAY));
+        assert.equal(await data.runRetention(NOW), 1);
+        assert.equal(await data.cases.get("OLD-DONE"), undefined);
+        assert.ok(await data.cases.get("NEW-DONE"));
         const lines = readFileSync(data.archivePath, "utf8")
           .trim()
           .split("\n")
@@ -135,8 +136,8 @@ for (const driver of ["memory", "sqlite"]) {
   test(
     `retention (${driver}): a case that still needs someone is never removed, however old`,
     options,
-    () => {
-      withData(policy, (data) => {
+    async () => {
+      await withData(policy, async (data) => {
         const open = [
           "REQUESTED",
           "VALIDATED",
@@ -149,9 +150,9 @@ for (const driver of ["memory", "sqlite"]) {
           "BLOCKED",
         ] as const;
         for (const name of open)
-          data.cases.upsert(makeCase(name, name, 400 * DAY));
-        assert.equal(data.runRetention(NOW), 0);
-        assert.equal(data.cases.count(), open.length);
+          await data.cases.upsert(makeCase(name, name, 400 * DAY));
+        assert.equal(await data.runRetention(NOW), 0);
+        assert.equal(await data.cases.count(), open.length);
       });
     },
   );
@@ -159,12 +160,12 @@ for (const driver of ["memory", "sqlite"]) {
   test(
     `retention (${driver}): failed and cancelled cases count as finished`,
     options,
-    () => {
-      withData(policy, (data) => {
-        data.cases.upsert(makeCase("F", "FAILED", 9 * DAY));
-        data.cases.upsert(makeCase("C", "CANCELLED", 9 * DAY));
-        assert.equal(data.runRetention(NOW), 2);
-        assert.equal(data.cases.count(), 0);
+    async () => {
+      await withData(policy, async (data) => {
+        await data.cases.upsert(makeCase("F", "FAILED", 9 * DAY));
+        await data.cases.upsert(makeCase("C", "CANCELLED", 9 * DAY));
+        assert.equal(await data.runRetention(NOW), 2);
+        assert.equal(await data.cases.count(), 0);
       });
     },
   );
@@ -172,14 +173,15 @@ for (const driver of ["memory", "sqlite"]) {
   test(
     `retention (${driver}): only the newest finished cases stay when there are too many`,
     options,
-    () => {
-      withData(policy, (data) => {
+    async () => {
+      await withData(policy, async (data) => {
         for (const n of [1, 2, 3, 4, 5])
-          data.cases.upsert(makeCase(`D${n}`, "COMPLETED", n * 60 * 1000));
-        assert.equal(data.runRetention(NOW), 2);
+          await data.cases.upsert(
+            makeCase(`D${n}`, "COMPLETED", n * 60 * 1000),
+          );
+        assert.equal(await data.runRetention(NOW), 2);
         assert.deepEqual(
-          data.cases
-            .list({ limit: 10 })
+          (await data.cases.list({ limit: 10 }))
             .map((item) => item.caseId)
             .sort(),
           ["D1", "D2", "D3"],
@@ -191,19 +193,19 @@ for (const driver of ["memory", "sqlite"]) {
   test(
     `retention (${driver}): commands and statuses of a removed case go with it and are archived with it`,
     options,
-    () => {
-      withData(policy, (data) => {
-        data.cases.upsert(makeCase("GONE", "COMPLETED", 9 * DAY));
-        data.cases.upsert(makeCase("STAYS", "COMPLETED", 1 * DAY));
-        data.putCommand(command("K1", "GONE"));
-        data.putCommand(command("K2", "STAYS"));
-        data.putStatus(status("K1", "GONE"));
-        data.putStatus(status("K2", "STAYS"));
-        data.runRetention(NOW);
-        assert.equal(data.commands.get("K1"), undefined);
-        assert.equal(data.statuses.get("K1"), undefined);
-        assert.ok(data.commands.get("K2"));
-        assert.ok(data.statuses.get("K2"));
+    async () => {
+      await withData(policy, async (data) => {
+        await data.cases.upsert(makeCase("GONE", "COMPLETED", 9 * DAY));
+        await data.cases.upsert(makeCase("STAYS", "COMPLETED", 1 * DAY));
+        await data.putCommand(command("K1", "GONE"));
+        await data.putCommand(command("K2", "STAYS"));
+        await data.putStatus(status("K1", "GONE"));
+        await data.putStatus(status("K2", "STAYS"));
+        await data.runRetention(NOW);
+        assert.equal(await data.commands.get("K1"), undefined);
+        assert.equal(await data.statuses.get("K1"), undefined);
+        assert.ok(await data.commands.get("K2"));
+        assert.ok(await data.statuses.get("K2"));
         const archived = JSON.parse(
           readFileSync(data.archivePath, "utf8").trim(),
         ) as { commands: unknown[]; statuses: unknown[] };
@@ -216,13 +218,13 @@ for (const driver of ["memory", "sqlite"]) {
   test(
     `retention (${driver}): a growing series keeps only its newest records`,
     options,
-    () => {
-      withData(policy, (data) => {
+    async () => {
+      await withData(policy, async (data) => {
         for (const n of [1, 2, 3, 4, 5, 6])
-          data.observations.put(observation(n));
-        data.runRetention(NOW);
+          await data.observations.put(observation(n));
+        await data.runRetention(NOW);
         assert.deepEqual(
-          data.observations.list(10).map((item) => item.signalId),
+          (await data.observations.list(10)).map((item) => item.signalId),
           ["S3", "S4", "S5", "S6"],
         );
       });
@@ -232,15 +234,15 @@ for (const driver of ["memory", "sqlite"]) {
   test(
     `retention (${driver}): one-row-per-thing tables are never trimmed`,
     options,
-    () => {
-      withData(policy, (data) => {
+    async () => {
+      await withData(policy, async (data) => {
         for (let n = 0; n < 20; n += 1) {
-          data.capabilities.put({ busId: `B${n}` } as never);
-          data.devices.put({ deviceId: `D${n}` } as never);
+          await data.capabilities.put({ busId: `B${n}` } as never);
+          await data.devices.put({ deviceId: `D${n}` } as never);
         }
-        data.runRetention(NOW);
-        assert.equal(data.capabilities.count(), 20);
-        assert.equal(data.devices.count(), 20);
+        await data.runRetention(NOW);
+        assert.equal(await data.capabilities.count(), 20);
+        assert.equal(await data.devices.count(), 20);
       });
     },
   );
@@ -248,11 +250,11 @@ for (const driver of ["memory", "sqlite"]) {
   test(
     `retention (${driver}): running it again with nothing to remove changes nothing`,
     options,
-    () => {
-      withData(policy, (data) => {
-        data.cases.upsert(makeCase("A", "COMPLETED", 1 * DAY));
-        assert.equal(data.runRetention(NOW), 0);
-        assert.equal(data.cases.count(), 1);
+    async () => {
+      await withData(policy, async (data) => {
+        await data.cases.upsert(makeCase("A", "COMPLETED", 1 * DAY));
+        assert.equal(await data.runRetention(NOW), 0);
+        assert.equal(await data.cases.count(), 1);
         assert.equal(existsSync(data.archivePath), false);
       });
     },
@@ -261,12 +263,12 @@ for (const driver of ["memory", "sqlite"]) {
   test(
     `retention (${driver}): reset removes the archive with the other files`,
     options,
-    () => {
-      withData(policy, (data) => {
-        data.cases.upsert(makeCase("OLD", "COMPLETED", 9 * DAY));
-        data.runRetention(NOW);
+    async () => {
+      await withData(policy, async (data) => {
+        await data.cases.upsert(makeCase("OLD", "COMPLETED", 9 * DAY));
+        await data.runRetention(NOW);
         assert.ok(existsSync(data.archivePath));
-        data.reset(true);
+        await data.reset(true);
         assert.equal(existsSync(data.archivePath), false);
       });
     },
@@ -276,7 +278,7 @@ for (const driver of ["memory", "sqlite"]) {
 test(
   "a store that opens with more than the policy allows trims it at once",
   { skip: sqliteAvailable ? undefined : "node:sqlite is not available" },
-  () => {
+  async () => {
     const directory = mkdtempSync(join(tmpdir(), "goassist-retention-"));
     const roomy: RetentionPolicy = {
       finishedCaseMaxAgeMs: 400 * DAY,
@@ -289,8 +291,9 @@ test(
         driver: "sqlite",
         retentionTimer: false,
       });
+      await first.ready;
       for (let n = 1; n <= 6; n += 1)
-        first.cases.upsert(
+        await first.cases.upsert(
           makeCase(`X${n}`, "COMPLETED", n * 60 * 1000 + 8 * DAY),
         );
       first.close();
@@ -299,7 +302,8 @@ test(
         driver: "sqlite",
         retentionTimer: false,
       });
-      assert.equal(strict.cases.count(), 2);
+      await strict.ready;
+      assert.equal(await strict.cases.count(), 2);
       assert.ok(existsSync(strict.archivePath));
       strict.close();
     } finally {

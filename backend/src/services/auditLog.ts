@@ -98,8 +98,8 @@ export class AuditLog {
     );
   }
 
-  /** Newest events first. */
-  read(query: AuditQuery): OperationsAuditEvent[] {
+  /** Newest events first. Asynchronous so a network database can back it. */
+  async read(query: AuditQuery): Promise<OperationsAuditEvent[]> {
     return this.database
       ? this.readFromDatabase(query)
       : this.readFromFile(query);

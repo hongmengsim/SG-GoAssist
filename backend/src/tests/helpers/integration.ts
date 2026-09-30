@@ -19,7 +19,7 @@ export async function startTestServer(
   options: Parameters<typeof createApp>[0] = {},
 ): Promise<TestServer> {
   clearAllRequests();
-  clearOperations();
+  await clearOperations();
   resetBusOperations();
   const server = http.createServer(createApp(options));
   initializeWebSocketServer(server, 0);

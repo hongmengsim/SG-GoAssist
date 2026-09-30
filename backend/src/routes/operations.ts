@@ -60,7 +60,7 @@ export const router = Router();
 
 router.post(
   "/passenger-help",
-  route((req, res) => {
+  route(async (req, res) => {
     const stopCode =
       typeof req.body.stopCode === "string" ? req.body.stopCode.trim() : "";
     const anonymousToken =
@@ -78,7 +78,7 @@ router.post(
       req.body.idempotencyKey.trim()
         ? req.body.idempotencyKey.trim().slice(0, 120)
         : `HELP-${crypto.randomUUID()}`;
-    const item = submitSignalObservation({
+    const item = await submitSignalObservation({
       signalId,
       idempotencyKey: signalId,
       source: "APP",
@@ -112,30 +112,30 @@ router.post(
 router.post(
   "/signals",
   verifyDeviceRequest,
-  route((req, res) => {
-    const item = submitSignalObservation(req.body as SignalObservation);
+  route(async (req, res) => {
+    const item = await submitSignalObservation(req.body as SignalObservation);
     res.status(201).json({ case: item });
   }),
 );
 
 router.get(
   "/cases",
-  route((req, res) => {
+  route(async (req, res) => {
     const state =
       typeof req.query.state === "string"
         ? (req.query.state as AssistanceCaseState)
         : undefined;
     const busId =
       typeof req.query.busId === "string" ? req.query.busId : undefined;
-    const cases = listCases({ state, busId });
+    const cases = await listCases({ state, busId });
     res.json({ count: cases.length, cases });
   }),
 );
 
 router.get(
   "/cases/:caseId",
-  route((req, res) => {
-    const item = getCase(req.params.caseId);
+  route(async (req, res) => {
+    const item = await getCase(req.params.caseId);
     if (!item) throw new OperationsNotFoundError("Assistance case not found");
     res.json(item);
   }),
@@ -144,7 +144,7 @@ router.get(
 router.post(
   "/cases/:caseId/operator",
   requireOperator,
-  route((req, res) => {
+  route(async (req, res) => {
     const allowed = [
       "CONFIRM",
       "ESCALATE",
@@ -158,7 +158,7 @@ router.post(
       );
     }
     res.json({
-      case: applyOperatorAction(
+      case: await applyOperatorAction(
         req.params.caseId,
         req.body.action,
         req.body.reason,
@@ -170,9 +170,9 @@ router.post(
 router.post(
   "/cases/:caseId/assign",
   requireOperator,
-  route((req, res) => {
+  route(async (req, res) => {
     res.json({
-      case: assignCaseVehicle(
+      case: await assignCaseVehicle(
         req.params.caseId,
         req.body.busId,
         req.body.busService,
@@ -183,17 +183,17 @@ router.post(
 
 router.post(
   "/cases/:caseId/feedback",
-  route((req, res) => {
+  route(async (req, res) => {
     res.json({
-      case: recordPassengerFeedback(req.params.caseId, req.body.score),
+      case: await recordPassengerFeedback(req.params.caseId, req.body.score),
     });
   }),
 );
 
 router.get(
   "/vehicles/capabilities",
-  route((_req, res) => {
-    const capabilities = listVehicleCapabilities();
+  route(async (_req, res) => {
+    const capabilities = await listVehicleCapabilities();
     res.json({ count: capabilities.length, capabilities });
   }),
 );
@@ -201,8 +201,8 @@ router.get(
 router.put(
   "/vehicles/:busId/capabilities",
   verifyDeviceRequest,
-  route((req, res) => {
-    const capability = registerVehicleCapability({
+  route(async (req, res) => {
+    const capability = await registerVehicleCapability({
       ...req.body,
       busId: req.params.busId,
     } as VehicleCapability);
@@ -212,8 +212,8 @@ router.put(
 
 router.get(
   "/vehicles/:busId/telemetry",
-  route((req, res) => {
-    const telemetry = getLatestSafetyTelemetry(req.params.busId);
+  route(async (req, res) => {
+    const telemetry = await getLatestSafetyTelemetry(req.params.busId);
     if (!telemetry)
       throw new OperationsNotFoundError("Safety telemetry not found");
     res.json(telemetry);
@@ -223,8 +223,8 @@ router.get(
 router.post(
   "/vehicles/:busId/telemetry",
   verifyDeviceRequest,
-  route((req, res) => {
-    const telemetry = ingestSafetyTelemetry({
+  route(async (req, res) => {
+    const telemetry = await ingestSafetyTelemetry({
       ...req.body,
       busId: req.params.busId,
     } as SafetyTelemetry);
@@ -235,17 +235,17 @@ router.post(
 router.get(
   "/vehicles/:busId/ramp-obstacle",
   verifyDeviceRequest,
-  route((req, res) => {
-    res.json(getRampObstacleAssessment(req.params.busId));
+  route(async (req, res) => {
+    res.json(await getRampObstacleAssessment(req.params.busId));
   }),
 );
 
 router.post(
   "/vehicles/:busId/ramp-obstacle/classification",
   verifyDeviceRequest,
-  route((req, res) => {
+  route(async (req, res) => {
     res.status(202).json(
-      recordRampObstacleClassification({
+      await recordRampObstacleClassification({
         ...req.body,
         busId: req.params.busId,
       }),
@@ -256,56 +256,60 @@ router.post(
 router.get(
   "/vehicles/autonomy",
   requireOperator,
-  route((_req, res) => {
-    const vehicles = listAutonomousVehicles();
+  route(async (_req, res) => {
+    const vehicles = await listAutonomousVehicles();
     res.json({ count: vehicles.length, vehicles });
   }),
 );
 
 router.get(
   "/vehicles/:busId/autonomy",
-  route((req, res) => {
-    res.json(getAutonomousVehicleState(req.params.busId));
+  route(async (req, res) => {
+    res.json(await getAutonomousVehicleState(req.params.busId));
   }),
 );
 
 router.put(
   "/vehicles/:busId/autonomy/route",
   requireOperator,
-  route((req, res) => {
-    res.status(201).json(assignAutonomousRoute(req.params.busId, req.body));
+  route(async (req, res) => {
+    res
+      .status(201)
+      .json(await assignAutonomousRoute(req.params.busId, req.body));
   }),
 );
 
 router.post(
   "/vehicles/:busId/autonomy/start",
   requireOperator,
-  route((req, res) => {
-    res.json(startAutonomousRoute(req.params.busId));
+  route(async (req, res) => {
+    res.json(await startAutonomousRoute(req.params.busId));
   }),
 );
 
 router.post(
   "/vehicles/:busId/autonomy/motion",
   verifyDeviceRequest,
-  route((req, res) => {
-    res.status(202).json(updateAutonomousMotion(req.params.busId, req.body));
+  route(async (req, res) => {
+    res
+      .status(202)
+      .json(await updateAutonomousMotion(req.params.busId, req.body));
   }),
 );
 
 router.get(
   "/vehicles/:busId/autonomy/docking",
-  route((req, res) => {
-    res.json(getPrecisionDockingAssessment(req.params.busId));
+  route(async (req, res) => {
+    res.json(await getPrecisionDockingAssessment(req.params.busId));
   }),
 );
 
 router.post(
   "/vehicles/:busId/autonomy/docking",
   verifyDeviceRequest,
-  route((req, res) => {
+  route(async (req, res) => {
     res.status(202).json(
-      recordPrecisionDockingObservation({
+      await recordPrecisionDockingObservation({
         ...req.body,
         busId: req.params.busId,
       }),
@@ -316,19 +320,22 @@ router.post(
 router.post(
   "/vehicles/:busId/autonomy/open-doors",
   verifyDeviceRequest,
-  route((req, res) => {
-    res.status(202).json(openAutonomousDoors(req.params.busId));
+  route(async (req, res) => {
+    res.status(202).json(await openAutonomousDoors(req.params.busId));
   }),
 );
 
 router.post(
   "/vehicles/:busId/autonomy/depart",
   verifyDeviceRequest,
-  route((req, res) => {
+  route(async (req, res) => {
     res
       .status(202)
       .json(
-        departAutonomousStop(req.params.busId, req.body.nextStopDistanceMeters),
+        await departAutonomousStop(
+          req.params.busId,
+          req.body.nextStopDistanceMeters,
+        ),
       );
   }),
 );
@@ -336,7 +343,7 @@ router.post(
 router.post(
   "/vehicles/:busId/autonomy/override",
   requireOperator,
-  route((req, res) => {
+  route(async (req, res) => {
     const allowed = ["STOP", "RESUME", "MANUAL"] as const;
     if (!allowed.includes(req.body.action)) {
       throw new OperationsValidationError(
@@ -344,7 +351,7 @@ router.post(
       );
     }
     res.json(
-      applyAutonomyOverride(req.params.busId, req.body.action, {
+      await applyAutonomyOverride(req.params.busId, req.body.action, {
         obstacleCleared: req.body.obstacleCleared,
         localizationAccuracyMeters: req.body.localizationAccuracyMeters,
       }),
@@ -355,10 +362,10 @@ router.post(
 router.get(
   "/actuators/pending",
   verifyDeviceRequest,
-  route((req, res) => {
+  route(async (req, res) => {
     const busId =
       typeof req.query.busId === "string" ? req.query.busId : undefined;
-    const commands = listPendingActuatorCommands(busId);
+    const commands = await listPendingActuatorCommands(busId);
     res.json({ count: commands.length, commands });
   }),
 );
@@ -366,8 +373,8 @@ router.get(
 router.post(
   "/actuators/:commandId/status",
   verifyDeviceRequest,
-  route((req, res) => {
-    const caseRecord = updateActuatorStatus({
+  route(async (req, res) => {
+    const caseRecord = await updateActuatorStatus({
       ...req.body,
       commandId: req.params.commandId,
     } as ActuatorStatus);
@@ -378,16 +385,16 @@ router.post(
 router.post(
   "/devices/heartbeat",
   verifyDeviceRequest,
-  route((req, res) => {
-    res.status(202).json(recordDeviceHeartbeat(req.body as DeviceHealth));
+  route(async (req, res) => {
+    res.status(202).json(await recordDeviceHeartbeat(req.body as DeviceHealth));
   }),
 );
 
 router.get(
   "/devices",
   requireOperator,
-  route((_req, res) => {
-    const devices = listDevices();
+  route(async (_req, res) => {
+    const devices = await listDevices();
     res.json({ count: devices.length, devices });
   }),
 );
@@ -395,26 +402,30 @@ router.get(
 router.get(
   "/metrics",
   requireOperator,
-  route((_req, res) => {
-    res.json(getAssistanceMetrics());
+  route(async (_req, res) => {
+    res.json(await getAssistanceMetrics());
   }),
 );
 
 router.post(
   "/perception/evaluations",
   requireOperator,
-  route((req, res) => {
+  route(async (req, res) => {
     res
       .status(201)
-      .json(recordPerceptionEvaluation(req.body as PerceptionEvaluationSample));
+      .json(
+        await recordPerceptionEvaluation(
+          req.body as PerceptionEvaluationSample,
+        ),
+      );
   }),
 );
 
 router.get(
   "/perception/metrics",
   requireOperator,
-  route((_req, res) => {
-    res.json(getPerceptionEvaluationMetrics());
+  route(async (_req, res) => {
+    res.json(await getPerceptionEvaluationMetrics());
   }),
 );
 

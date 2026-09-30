@@ -20,7 +20,11 @@ import {
 } from "@buspass/shared";
 import { getBusById } from "../data/buses.mock";
 import { logger } from "./logger";
-import { getOperationsData, resetOperationsData } from "./operationsData";
+import {
+  getAuditLog,
+  getOperationsData,
+  resetOperationsData,
+} from "./operationsData";
 import { fuseRampObstacleAssessment } from "./rampObstacleService";
 import {
   createDepartedStopVehiclePresence,
@@ -70,25 +74,28 @@ export function publishOperationsEvent(message: StatusUpdateMessage): void {
   emit(message);
 }
 
-export function submitSignalObservation(
+export async function submitSignalObservation(
   input: SignalObservation,
-): AssistanceCase {
+): Promise<AssistanceCase> {
   validateObservation(input);
   const observation = sanitizeObservation(input);
   const now = new Date().toISOString();
-  const data = getOperationsData();
+  const data = await getOperationsData();
   const duplicate =
-    data.observations.get(observation.signalId) ??
+    (await data.observations.get(observation.signalId)) ??
     (observation.idempotencyKey
-      ? data.observations.findOne("idempotencyKey", observation.idempotencyKey)
+      ? await data.observations.findOne(
+          "idempotencyKey",
+          observation.idempotencyKey,
+        )
       : undefined);
   if (duplicate) {
-    const existing = data.cases.findBySignalId(duplicate.signalId);
+    const existing = await data.cases.findBySignalId(duplicate.signalId);
     if (existing) return existing;
   }
 
   if (["BOARDING_COMPLETE", "ALIGHTING_COMPLETE"].includes(observation.kind)) {
-    const completionCase = data.cases.findOpen({
+    const completionCase = await data.cases.findOpen({
       stopCode: observation.stopCode,
       ...(observation.busCandidate ? { busId: observation.busCandidate } : {}),
     });
@@ -97,7 +104,7 @@ export function submitSignalObservation(
         "No active assistance case matches the completion signal",
       );
     }
-    data.observations.put(observation);
+    await data.observations.put(observation);
     completionCase.completionDetectedAt = observation.observedAt;
     completionCase.completionConfidence = observation.confidence;
     completionCase.completionConfirmed = observation.confidence >= 0.9;
@@ -105,7 +112,7 @@ export function submitSignalObservation(
       completionCase.state = "NEEDS_CONFIRMATION";
       completionCase.escalationReason =
         "Boarding completion confidence is too low";
-      return saveAndPublish(completionCase);
+      return await saveAndPublish(completionCase);
     }
     audit(
       "ASSISTANCE_COMPLETION_DETECTED",
@@ -113,12 +120,12 @@ export function submitSignalObservation(
       completionCase.caseId,
       completionCase.busId,
     );
-    return progressTerminalTransition(completionCase, "COMPLETED", now);
+    return await progressTerminalTransition(completionCase, "COMPLETED", now);
   }
 
   const explicit = !SENSOR_SOURCES.includes(observation.source);
   const confirmed = observation.confirmed ?? explicit;
-  let target = data.cases.findOpen({
+  let target = await data.cases.findOpen({
     stopCode: observation.stopCode,
     phase: observation.phase ?? "BOARDING",
     busId: observation.busCandidate ?? null,
@@ -175,23 +182,23 @@ export function submitSignalObservation(
   target.state = confirmed ? "VALIDATED" : "NEEDS_CONFIRMATION";
   target.updatedAt = now;
 
-  data.observations.put(observation);
-  data.cases.upsert(target);
+  await data.observations.put(observation);
+  await data.cases.upsert(target);
   audit("SIGNAL_ACCEPTED", observation.source, target.caseId, target.busId, {
     signalId: observation.signalId,
     confirmed,
     assistanceTypes: observation.assistanceCandidates,
   });
   if (observation.kind === "HUMAN_HELP_REQUESTED") {
-    return escalate(target, "Passenger requested immediate human help");
+    return await escalate(target, "Passenger requested immediate human help");
   }
-  return evaluateCase(target.caseId);
+  return await evaluateCase(target.caseId);
 }
 
-export function recordPassengerRequest(
+export async function recordPassengerRequest(
   request: PassengerAssistanceRequest,
-): AssistanceCase {
-  ensureMockVehicleCapability(request.busId, request.busService);
+): Promise<AssistanceCase> {
+  await ensureMockVehicleCapability(request.busId, request.busService);
   const sourceMap: Record<PassengerAssistanceRequest["source"], SignalSource> =
     {
       MOBILE_APP: "APP",
@@ -199,7 +206,7 @@ export function recordPassengerRequest(
       RFID: "NFC",
       AUTOMATIC_DETECTION: "CAMERA",
     };
-  const caseRecord = submitSignalObservation({
+  const caseRecord = await submitSignalObservation({
     signalId: request.requestId,
     idempotencyKey: request.requestId,
     source: sourceMap[request.source],
@@ -220,11 +227,11 @@ export function recordPassengerRequest(
   return caseRecord;
 }
 
-export function synchronizeLegacyCaseStatus(
+export async function synchronizeLegacyCaseStatus(
   caseId: string,
   status: AssistanceRequestStatus,
-): AssistanceCase {
-  const item = requireCase(caseId);
+): Promise<AssistanceCase> {
+  const item = await requireCase(caseId);
   if (TERMINAL_STATES.includes(item.state)) {
     audit(
       `LEGACY_REQUEST_${status}_IGNORED`,
@@ -238,7 +245,7 @@ export function synchronizeLegacyCaseStatus(
   if (status === AssistanceRequestStatus.CANCELLED) {
     item.cancellationRequestedAt = new Date().toISOString();
     audit(`LEGACY_REQUEST_${status}`, "REQUEST_API", caseId, item.busId);
-    return progressTerminalTransition(item, "CANCELLED");
+    return await progressTerminalTransition(item, "CANCELLED");
   } else if (status === AssistanceRequestStatus.FAILED) {
     item.state = "FAILED";
     const reason = "Passenger request delivery failed";
@@ -249,14 +256,14 @@ export function synchronizeLegacyCaseStatus(
     return item;
   }
   item.updatedAt = new Date().toISOString();
-  saveCase(item);
+  await saveCase(item);
   audit(`LEGACY_REQUEST_${status}`, "REQUEST_API", caseId, item.busId);
   return publishCase(item);
 }
 
-export function registerVehicleCapability(
+export async function registerVehicleCapability(
   capability: VehicleCapability,
-): VehicleCapability {
+): Promise<VehicleCapability> {
   if (
     !capability.busId ||
     [
@@ -272,15 +279,20 @@ export function registerVehicleCapability(
     throw new OperationsValidationError("Invalid vehicle capability payload");
   }
   const normalized = { ...capability, updatedAt: new Date().toISOString() };
-  getOperationsData().capabilities.put(normalized);
+  await (await getOperationsData()).capabilities.put(normalized);
   audit("VEHICLE_CAPABILITY_UPDATED", "VEHICLE", undefined, capability.busId);
-  listCases({ busId: capability.busId, refresh: false })
-    .filter((item) => !TERMINAL_STATES.includes(item.state))
-    .forEach((item) => evaluateCase(item.caseId));
+  for (const item of await listCases({
+    busId: capability.busId,
+    refresh: false,
+  })) {
+    if (!TERMINAL_STATES.includes(item.state)) await evaluateCase(item.caseId);
+  }
   return normalized;
 }
 
-export function ingestSafetyTelemetry(input: SafetyTelemetry): SafetyTelemetry {
+export async function ingestSafetyTelemetry(
+  input: SafetyTelemetry,
+): Promise<SafetyTelemetry> {
   if (
     !input.busId ||
     [
@@ -303,9 +315,9 @@ export function ingestSafetyTelemetry(input: SafetyTelemetry): SafetyTelemetry {
   let telemetry = input;
   if (input.rampObstacle) {
     try {
-      const classification = getOperationsData().rampClassifications.get(
-        input.busId,
-      );
+      const classification = await (
+        await getOperationsData()
+      ).rampClassifications.get(input.busId);
       telemetry = {
         ...input,
         rampObstacle: fuseRampObstacleAssessment(
@@ -318,7 +330,7 @@ export function ingestSafetyTelemetry(input: SafetyTelemetry): SafetyTelemetry {
     }
   }
   validateIsoDate(telemetry.observedAt, "observedAt");
-  const current = getOperationsData().telemetry.get(input.busId);
+  const current = await (await getOperationsData()).telemetry.get(input.busId);
   if (
     current &&
     new Date(telemetry.observedAt) < new Date(current.observedAt)
@@ -327,7 +339,7 @@ export function ingestSafetyTelemetry(input: SafetyTelemetry): SafetyTelemetry {
       "Stale telemetry cannot replace newer telemetry",
     );
   }
-  getOperationsData().telemetry.put(telemetry);
+  await (await getOperationsData()).telemetry.put(telemetry);
   emit({
     type: "SAFETY_TELEMETRY",
     busId: telemetry.busId,
@@ -336,7 +348,7 @@ export function ingestSafetyTelemetry(input: SafetyTelemetry): SafetyTelemetry {
     fresh: isTelemetryFresh(telemetry),
     timestamp: new Date().toISOString(),
   });
-  const presence = deriveStopVehiclePresence(telemetry);
+  const presence = await deriveStopVehiclePresence(telemetry);
   if (presence) {
     emit({
       type: "STOP_VEHICLE_PRESENCE",
@@ -346,7 +358,7 @@ export function ingestSafetyTelemetry(input: SafetyTelemetry): SafetyTelemetry {
     });
   }
   if (current?.stopCode && current.stopCode !== telemetry.stopCode) {
-    const departed = createDepartedStopVehiclePresence(current);
+    const departed = await createDepartedStopVehiclePresence(current);
     if (departed) {
       emit({
         type: "STOP_VEHICLE_PRESENCE",
@@ -361,13 +373,18 @@ export function ingestSafetyTelemetry(input: SafetyTelemetry): SafetyTelemetry {
     rampPosition: telemetry.rampPosition,
     rampObstacle: telemetry.rampObstacle?.reason,
   });
-  listCases({ busId: telemetry.busId, refresh: false })
-    .filter((item) => !TERMINAL_STATES.includes(item.state))
-    .forEach((item) => evaluateCase(item.caseId));
+  for (const item of await listCases({
+    busId: telemetry.busId,
+    refresh: false,
+  })) {
+    if (!TERMINAL_STATES.includes(item.state)) await evaluateCase(item.caseId);
+  }
   return telemetry;
 }
 
-export function updateActuatorStatus(input: ActuatorStatus): AssistanceCase {
+export async function updateActuatorStatus(
+  input: ActuatorStatus,
+): Promise<AssistanceCase> {
   if (
     ![
       "ISSUED",
@@ -382,15 +399,15 @@ export function updateActuatorStatus(input: ActuatorStatus): AssistanceCase {
     throw new OperationsValidationError("Invalid actuator state");
   }
   validateIsoDate(input.updatedAt, "updatedAt");
-  const data = getOperationsData();
-  const command = data.commands.get(input.commandId);
+  const data = await getOperationsData();
+  const command = await data.commands.get(input.commandId);
   if (!command) throw new OperationsNotFoundError("Actuator command not found");
   if (command.caseId !== input.caseId || command.busId !== input.busId) {
     throw new OperationsValidationError(
       "Actuator status does not match its command",
     );
   }
-  const currentStatus = data.statuses.get(input.commandId);
+  const currentStatus = await data.statuses.get(input.commandId);
   if (
     currentStatus &&
     ["COMPLETED", "CANCELLED", "BLOCKED", "FAILED"].includes(
@@ -408,7 +425,7 @@ export function updateActuatorStatus(input: ActuatorStatus): AssistanceCase {
     (!currentStatus ||
       ["ISSUED", "ACCEPTED", "IN_PROGRESS"].includes(currentStatus.state))
   ) {
-    expireActuatorCommands(new Date(input.updatedAt).getTime());
+    await expireActuatorCommands(new Date(input.updatedAt).getTime());
     throw new OperationsValidationError(
       "Actuator command expired before this status update",
     );
@@ -419,7 +436,7 @@ export function updateActuatorStatus(input: ActuatorStatus): AssistanceCase {
   ) {
     throw new OperationsValidationError("Stale actuator status rejected");
   }
-  data.putStatus(input);
+  await data.putStatus(input);
   emit({
     type: "ACTUATOR_STATUS",
     caseId: input.caseId,
@@ -432,15 +449,15 @@ export function updateActuatorStatus(input: ActuatorStatus): AssistanceCase {
     state: input.state,
     detail: input.detail,
   });
-  return evaluateCase(input.caseId);
+  return await evaluateCase(input.caseId);
 }
 
-export function applyOperatorAction(
+export async function applyOperatorAction(
   caseId: string,
   action: "CONFIRM" | "ESCALATE" | "CANCEL" | "COMPLETE" | "RETRY",
   reason?: string,
-): AssistanceCase {
-  const item = requireCase(caseId);
+): Promise<AssistanceCase> {
+  const item = await requireCase(caseId);
   const now = new Date().toISOString();
   if (action === "CONFIRM") {
     item.intents = item.intents.map((intent) => ({
@@ -469,22 +486,22 @@ export function applyOperatorAction(
   }
   item.outcome.operatorInterventions += 1;
   item.updatedAt = now;
-  saveCase(item);
+  await saveCase(item);
   audit(`OPERATOR_${action}`, "OPERATOR", caseId, item.busId, { reason });
   if (action === "ESCALATE") emitEscalation(item);
   if (["CONFIRM", "RETRY", "CANCEL", "COMPLETE"].includes(action)) {
-    return evaluateCase(caseId);
+    return await evaluateCase(caseId);
   }
   return publishCase(item);
 }
 
-export function assignCaseVehicle(
+export async function assignCaseVehicle(
   caseId: string,
   busId: string,
   busService?: string,
-): AssistanceCase {
+): Promise<AssistanceCase> {
   if (!busId) throw new OperationsValidationError("busId is required");
-  const item = requireCase(caseId);
+  const item = await requireCase(caseId);
   item.busId = busId;
   item.busService = busService ?? item.busService;
   item.state = item.intents.some((intent) => intent.confirmed)
@@ -493,14 +510,18 @@ export function assignCaseVehicle(
   item.escalationReason = undefined;
   item.outcome.operatorInterventions += 1;
   item.updatedAt = new Date().toISOString();
-  saveCase(item);
-  audit("OPERATOR_ASSIGN_VEHICLE", "OPERATOR", caseId, busId, { busService });
-  return evaluateCase(caseId);
+  await saveCase(item);
+  audit("OPERATOR_ASSIGN_VEHICLE", "OPERATOR", caseId, busId, {
+    busService,
+  });
+  return await evaluateCase(caseId);
 }
 
-export function recordDeviceHeartbeat(input: DeviceHealth): DeviceHealth {
+export async function recordDeviceHeartbeat(
+  input: DeviceHealth,
+): Promise<DeviceHealth> {
   validateIsoDate(input.observedAt, "observedAt");
-  getOperationsData().devices.put(input);
+  await (await getOperationsData()).devices.put(input);
   emit({
     type: "DEVICE_HEALTH",
     busId: input.busId,
@@ -511,77 +532,82 @@ export function recordDeviceHeartbeat(input: DeviceHealth): DeviceHealth {
   return input;
 }
 
-export function recordPassengerFeedback(
+export async function recordPassengerFeedback(
   caseId: string,
   score: 1 | 2 | 3 | 4 | 5,
-): AssistanceCase {
+): Promise<AssistanceCase> {
   if (![1, 2, 3, 4, 5].includes(score)) {
     throw new OperationsValidationError("Feedback score must be from 1 to 5");
   }
-  const item = requireCase(caseId);
+  const item = await requireCase(caseId);
   item.outcome.passengerFeedbackScore = score;
   item.updatedAt = new Date().toISOString();
-  saveCase(item);
+  await saveCase(item);
   audit("PASSENGER_FEEDBACK_RECORDED", "PASSENGER", caseId, item.busId, {
     score,
   });
   return item;
 }
 
-export function getCase(
+export async function getCase(
   caseId: string,
   refresh = true,
-): AssistanceCase | undefined {
-  if (refresh) refreshStaleCases();
-  return getOperationsData().cases.get(caseId);
+): Promise<AssistanceCase | undefined> {
+  if (refresh) await refreshStaleCases();
+  return await (await getOperationsData()).cases.get(caseId);
 }
 
-export function listCases(
+export async function listCases(
   options: {
     busId?: string;
     state?: AssistanceCaseState;
     refresh?: boolean;
   } = {},
-): AssistanceCase[] {
-  if (options.refresh !== false) refreshStaleCases();
-  return getOperationsData().cases.list({
+): Promise<AssistanceCase[]> {
+  if (options.refresh !== false) await refreshStaleCases();
+  return await (
+    await getOperationsData()
+  ).cases.list({
     ...(options.busId ? { busId: options.busId } : {}),
     ...(options.state ? { state: options.state } : {}),
     limit: CASE_LIST_LIMIT,
   });
 }
 
-export function listVehicleCapabilities(): VehicleCapability[] {
-  return getOperationsData().capabilities.list(FLEET_LIST_LIMIT);
+export async function listVehicleCapabilities(): Promise<VehicleCapability[]> {
+  return await (await getOperationsData()).capabilities.list(FLEET_LIST_LIMIT);
 }
 
-export function getLatestSafetyTelemetry(
+export async function getLatestSafetyTelemetry(
   busId: string,
-): SafetyTelemetry | undefined {
-  return getOperationsData().telemetry.get(busId);
+): Promise<SafetyTelemetry | undefined> {
+  return await (await getOperationsData()).telemetry.get(busId);
 }
 
-export function listPendingActuatorCommands(busId?: string): ActuatorCommand[] {
-  refreshStaleCases();
-  expireActuatorCommands();
-  const data = getOperationsData();
-  return data.openCommands(OPEN_COMMAND_LIMIT).filter((command) => {
-    if (busId && command.busId !== busId) return false;
-    const status = data.statuses.get(command.commandId);
-    return (
-      !status || ["ISSUED", "ACCEPTED", "IN_PROGRESS"].includes(status.state)
-    );
-  });
+export async function listPendingActuatorCommands(
+  busId?: string,
+): Promise<ActuatorCommand[]> {
+  await refreshStaleCases();
+  await expireActuatorCommands();
+  const data = await getOperationsData();
+  const pending: ActuatorCommand[] = [];
+  for (const command of await data.openCommands(OPEN_COMMAND_LIMIT)) {
+    if (busId && command.busId !== busId) continue;
+    const status = await data.statuses.get(command.commandId);
+    if (!status || ["ISSUED", "ACCEPTED", "IN_PROGRESS"].includes(status.state))
+      pending.push(command);
+  }
+  return pending;
 }
 
-export function listDevices(): DeviceHealth[] {
-  return getOperationsData().devices.list(FLEET_LIST_LIMIT);
+export async function listDevices(): Promise<DeviceHealth[]> {
+  return await (await getOperationsData()).devices.list(FLEET_LIST_LIMIT);
 }
 
-export function getAssistanceMetrics(): AssistanceMetrics {
-  refreshStaleCases();
-  const data = getOperationsData();
-  const cases = data.cases.list({ limit: METRICS_CASE_LIMIT });
+export async function getAssistanceMetrics(): Promise<AssistanceMetrics> {
+  await refreshStaleCases();
+  const data = await getOperationsData();
+  const cases = await data.cases.list({ limit: METRICS_CASE_LIMIT });
   const acknowledgements = cases
     .map((item) => item.outcome.acknowledgedLatencyMs)
     .filter((value): value is number => value !== undefined)
@@ -599,19 +625,18 @@ export function getAssistanceMetrics(): AssistanceMetrics {
     (sum, item) => sum + item.outcome.operatorInterventions,
     0,
   );
-  const byState = data.cases.countByState();
-  const sensorObservations = SENSOR_SOURCES.reduce(
-    (sum, source) => sum + data.observations.countBy("source", source),
-    0,
-  );
+  const byState = await data.cases.countByState();
+  let sensorObservations = 0;
+  for (const source of SENSOR_SOURCES)
+    sensorObservations += await data.observations.countBy("source", source);
   return {
-    totalCases: data.cases.count(),
+    totalCases: await data.cases.count(),
     activeCases: cases.filter((item) => !TERMINAL_STATES.includes(item.state))
       .length,
     completedCases: byState.COMPLETED ?? 0,
     escalatedCases: byState.ESCALATED ?? 0,
     failedCases: byState.FAILED ?? 0,
-    explicitRequests: data.observations.count() - sensorObservations,
+    explicitRequests: (await data.observations.count()) - sensorObservations,
     sensorObservations,
     acknowledgementP95Ms: percentile(acknowledgements, 0.95),
     medianCompletionMs: percentile(completionTimes, 0.5),
@@ -628,24 +653,26 @@ export function getAssistanceMetrics(): AssistanceMetrics {
   };
 }
 
-export function clearOperations(removePersistentFiles = false): void {
-  resetOperationsData(removePersistentFiles);
+export async function clearOperations(
+  removePersistentFiles = false,
+): Promise<void> {
+  await resetOperationsData(removePersistentFiles);
 }
 
-function evaluateCase(caseId: string): AssistanceCase {
-  const item = requireCase(caseId);
+async function evaluateCase(caseId: string): Promise<AssistanceCase> {
+  const item = await requireCase(caseId);
   if (TERMINAL_STATES.includes(item.state)) return item;
   if (item.cancellationRequestedAt) {
-    return progressTerminalTransition(item, "CANCELLED");
+    return await progressTerminalTransition(item, "CANCELLED");
   }
   if (item.completionDetectedAt) {
     if (!item.completionConfirmed) {
       item.state = "NEEDS_CONFIRMATION";
       item.escalationReason =
         "Boarding or alighting completion needs confirmation";
-      return saveAndPublish(item);
+      return await saveAndPublish(item);
     }
-    return progressTerminalTransition(item, "COMPLETED");
+    return await progressTerminalTransition(item, "COMPLETED");
   }
   const now = new Date().toISOString();
   const confirmedTypes = unique(
@@ -662,28 +689,33 @@ function evaluateCase(caseId: string): AssistanceCase {
     item.state = "NEEDS_CONFIRMATION";
     item.escalationReason =
       "Sensor-only assistance requires passenger or operator confirmation";
-    return saveAndPublish(item);
+    return await saveAndPublish(item);
   }
   if (!item.busId) {
     item.state = "NEEDS_CONFIRMATION";
     item.escalationReason = "A specific vehicle has not been confirmed";
-    return saveAndPublish(item);
+    return await saveAndPublish(item);
   }
-  const capability = getOperationsData().capabilities.get(item.busId);
+  const capability = await (
+    await getOperationsData()
+  ).capabilities.get(item.busId);
   if (!capability) {
-    return escalate(item, "Vehicle capabilities are unavailable");
+    return await escalate(item, "Vehicle capabilities are unavailable");
   }
   const unsupported = item.assistanceTypes.filter(
     (type) => !capabilitySupports(capability, type),
   );
   if (unsupported.length) {
-    return escalate(item, `Vehicle cannot provide: ${unsupported.join(", ")}`);
+    return await escalate(
+      item,
+      `Vehicle cannot provide: ${unsupported.join(", ")}`,
+    );
   }
   if (
     item.assistanceTypes.includes("WHEELCHAIR_RAMP") &&
     capability.wheelchairSpaceCapacity < 1
   ) {
-    return escalate(
+    return await escalate(
       item,
       "No wheelchair space is available on the assigned vehicle",
     );
@@ -696,69 +728,69 @@ function evaluateCase(caseId: string): AssistanceCase {
     item.outcome.acknowledgedLatencyMs =
       Date.now() - new Date(item.createdAt).getTime();
   }
-  issueNonRampCommands(item);
+  await issueNonRampCommands(item);
 
   if (item.assistanceTypes.includes("WHEELCHAIR_RAMP")) {
     if (!confirmedTypes.includes("WHEELCHAIR_RAMP")) {
       item.state = "NEEDS_CONFIRMATION";
       item.escalationReason =
         "Ramp deployment requires confirmed passenger intent";
-      return saveAndPublish(item);
+      return await saveAndPublish(item);
     }
-    const telemetry = getLatestSafetyTelemetry(item.busId);
+    const telemetry = await getLatestSafetyTelemetry(item.busId);
     if (!telemetry) {
-      return block(item, "Vehicle safety telemetry is unavailable");
+      return await block(item, "Vehicle safety telemetry is unavailable");
     }
     if (!isTelemetryFresh(telemetry)) {
-      return block(item, "Vehicle safety telemetry is stale");
+      return await block(item, "Vehicle safety telemetry is stale");
     }
     const safetyFailure = rampSafetyFailure(item, telemetry);
-    if (safetyFailure) return block(item, safetyFailure);
+    if (safetyFailure) return await block(item, safetyFailure);
     item.state = "SAFE_TO_ACTUATE";
-    issueCommand(item, "DEPLOY_RAMP", { phase: item.phase });
+    await issueCommand(item, "DEPLOY_RAMP", { phase: item.phase });
   }
 
-  return finishFromActuatorStatuses(item);
+  return await finishFromActuatorStatuses(item);
 }
 
-function progressTerminalTransition(
+async function progressTerminalTransition(
   item: AssistanceCase,
   terminalState: "COMPLETED" | "CANCELLED",
   requestedAt = new Date().toISOString(),
-): AssistanceCase {
-  const data = getOperationsData();
-  const deployCommand = data.commands.findOne(
+): Promise<AssistanceCase> {
+  const data = await getOperationsData();
+  const deployCommand = await data.commands.findOne(
     "caseCommand",
     `${item.caseId}:DEPLOY_RAMP`,
   );
   if (!item.assistanceTypes.includes("WHEELCHAIR_RAMP") || !deployCommand) {
-    return finalizeTerminalTransition(item, terminalState, requestedAt);
+    return await finalizeTerminalTransition(item, terminalState, requestedAt);
   }
 
-  const deployStatus = data.statuses.get(deployCommand.commandId);
+  const deployStatus = await data.statuses.get(deployCommand.commandId);
   if (
     terminalState === "CANCELLED" &&
     (!deployStatus || deployStatus.state === "ISSUED")
   ) {
-    cancelUnstartedRampDeployment(item, deployCommand);
+    await cancelUnstartedRampDeployment(item, deployCommand);
   }
   const telemetry = item.busId
-    ? getLatestSafetyTelemetry(item.busId)
+    ? await getLatestSafetyTelemetry(item.busId)
     : undefined;
   if (!telemetry || !isTelemetryFresh(telemetry)) {
-    return block(
+    return await block(
       item,
       "Ramp position cannot be verified before closing the assistance case",
     );
   }
   if (telemetry.rampPosition === "STOWED") {
-    return finalizeTerminalTransition(item, terminalState, requestedAt);
+    return await finalizeTerminalTransition(item, terminalState, requestedAt);
   }
   if (
     telemetry.rampPosition === "FAULT" ||
     telemetry.rampPosition === "UNKNOWN"
   ) {
-    return block(
+    return await block(
       item,
       "Ramp must be inspected because its stowed position is not verified",
     );
@@ -767,22 +799,25 @@ function progressTerminalTransition(
     item.state = "ACTUATING";
     item.escalationReason =
       "Waiting for ramp deployment to stop before safe retraction";
-    return saveAndPublish(item);
+    return await saveAndPublish(item);
   }
 
   const safetyFailure = rampRetractionSafetyFailure(item, telemetry);
-  if (safetyFailure) return block(item, safetyFailure);
+  if (safetyFailure) return await block(item, safetyFailure);
   ensureRampRetractionPlan(item);
-  const retractCommand = issueCommand(item, "RETRACT_RAMP", {
+  const retractCommand = await issueCommand(item, "RETRACT_RAMP", {
     terminalState,
     phase: item.phase,
   });
-  const retractStatus = data.statuses.get(retractCommand.commandId);
+  const retractStatus = await data.statuses.get(retractCommand.commandId);
   if (retractStatus?.state === "FAILED") {
-    return fail(item, retractStatus.detail ?? "Ramp retraction failed");
+    return await fail(item, retractStatus.detail ?? "Ramp retraction failed");
   }
   if (retractStatus?.state === "BLOCKED") {
-    return block(item, retractStatus.detail ?? "Ramp retraction was blocked");
+    return await block(
+      item,
+      retractStatus.detail ?? "Ramp retraction was blocked",
+    );
   }
   item.state = "ACTUATING";
   item.escalationReason =
@@ -793,19 +828,19 @@ function progressTerminalTransition(
     retractStatus?.state === "COMPLETED" &&
     Date.now() - Date.parse(retractStatus.updatedAt) > 2_000
   ) {
-    return block(
+    return await block(
       item,
       "Ramp controller completed but the stowed limit switch was not verified",
     );
   }
-  return saveAndPublish(item);
+  return await saveAndPublish(item);
 }
 
-function finalizeTerminalTransition(
+async function finalizeTerminalTransition(
   item: AssistanceCase,
   terminalState: "COMPLETED" | "CANCELLED",
   requestedAt: string,
-): AssistanceCase {
+): Promise<AssistanceCase> {
   const now = new Date().toISOString();
   item.state = terminalState;
   item.escalationReason = undefined;
@@ -829,7 +864,7 @@ function finalizeTerminalTransition(
     item.caseId,
     item.busId,
   );
-  return saveAndPublish(item);
+  return await saveAndPublish(item);
 }
 
 function ensureRampRetractionPlan(item: AssistanceCase): void {
@@ -842,14 +877,14 @@ function ensureRampRetractionPlan(item: AssistanceCase): void {
   });
 }
 
-function cancelUnstartedRampDeployment(
+async function cancelUnstartedRampDeployment(
   item: AssistanceCase,
   command: ActuatorCommand,
-): void {
+): Promise<void> {
   const now = new Date().toISOString();
-  const data = getOperationsData();
-  if (!data.statuses.get(command.commandId)) {
-    data.putStatus({
+  const data = await getOperationsData();
+  if (!(await data.statuses.get(command.commandId))) {
+    await data.putStatus({
       commandId: command.commandId,
       caseId: item.caseId,
       busId: command.busId,
@@ -882,37 +917,45 @@ function rampRetractionSafetyFailure(
   return undefined;
 }
 
-function finishFromActuatorStatuses(item: AssistanceCase): AssistanceCase {
-  const data = getOperationsData();
-  const commands = data.commands.find("caseId", item.caseId, PER_CASE_LIMIT);
-  const statuses = commands.map((command) => ({
-    command,
-    status: data.statuses.get(command.commandId),
-  }));
+async function finishFromActuatorStatuses(
+  item: AssistanceCase,
+): Promise<AssistanceCase> {
+  const data = await getOperationsData();
+  const commands = await data.commands.find(
+    "caseId",
+    item.caseId,
+    PER_CASE_LIMIT,
+  );
+  const statuses = [];
+  for (const command of commands)
+    statuses.push({
+      command,
+      status: await data.statuses.get(command.commandId),
+    });
   const failure = statuses.find(
     ({ status }) => status && ["BLOCKED", "FAILED"].includes(status.state),
   );
   if (failure?.status) {
     return failure.status.state === "FAILED"
-      ? fail(item, failure.status.detail ?? "Actuator reported a fault")
-      : block(item, failure.status.detail ?? "Actuator was blocked");
+      ? await fail(item, failure.status.detail ?? "Actuator reported a fault")
+      : await block(item, failure.status.detail ?? "Actuator was blocked");
   }
-  if (commands.length === 0) return saveAndPublish(item);
+  if (commands.length === 0) return await saveAndPublish(item);
   item.state = "ACTUATING";
   const allComplete = statuses.every(
     ({ status }) => status?.state === "COMPLETED",
   );
-  if (!allComplete) return saveAndPublish(item);
+  if (!allComplete) return await saveAndPublish(item);
   if (commands.some((command) => command.command === "DEPLOY_RAMP")) {
     const telemetry = item.busId
-      ? getLatestSafetyTelemetry(item.busId)
+      ? await getLatestSafetyTelemetry(item.busId)
       : undefined;
     if (
       !telemetry ||
       !isTelemetryFresh(telemetry) ||
       telemetry.rampPosition !== "DEPLOYED"
     ) {
-      return block(
+      return await block(
         item,
         "Ramp completion was not verified by the deployed limit switch",
       );
@@ -923,18 +966,18 @@ function finishFromActuatorStatuses(item: AssistanceCase): AssistanceCase {
     ...plan,
     status: "READY",
   }));
-  return saveAndPublish(item);
+  return await saveAndPublish(item);
 }
 
-function expireActuatorCommands(nowMs = Date.now()): void {
-  const data = getOperationsData();
-  const expired = data.openCommands(OPEN_COMMAND_LIMIT).filter((command) => {
-    if (new Date(command.expiresAt).getTime() >= nowMs) return false;
-    const status = data.statuses.get(command.commandId);
-    return (
-      !status || ["ISSUED", "ACCEPTED", "IN_PROGRESS"].includes(status.state)
-    );
-  });
+async function expireActuatorCommands(nowMs = Date.now()): Promise<void> {
+  const data = await getOperationsData();
+  const expired: ActuatorCommand[] = [];
+  for (const command of await data.openCommands(OPEN_COMMAND_LIMIT)) {
+    if (new Date(command.expiresAt).getTime() >= nowMs) continue;
+    const status = await data.statuses.get(command.commandId);
+    if (!status || ["ISSUED", "ACCEPTED", "IN_PROGRESS"].includes(status.state))
+      expired.push(command);
+  }
   if (expired.length === 0) return;
 
   const updatedAt = new Date(nowMs).toISOString();
@@ -947,7 +990,7 @@ function expireActuatorCommands(nowMs = Date.now()): void {
       detail: "Actuator command expired before completion",
       updatedAt,
     };
-    data.putStatus(failedStatus);
+    await data.putStatus(failedStatus);
   }
 
   for (const command of expired) {
@@ -962,32 +1005,34 @@ function expireActuatorCommands(nowMs = Date.now()): void {
         expiresAt: command.expiresAt,
       },
     );
-    evaluateCase(command.caseId);
+    await evaluateCase(command.caseId);
   }
 }
 
-function issueNonRampCommands(item: AssistanceCase): void {
+async function issueNonRampCommands(item: AssistanceCase): Promise<void> {
   if (item.assistanceTypes.includes("EXTENDED_DWELL_TIME")) {
-    issueCommand(item, "EXTEND_DWELL", { seconds: 30 });
+    await issueCommand(item, "EXTEND_DWELL", { seconds: 30 });
   }
   if (item.assistanceTypes.includes("BUS_AUDIO_IDENTIFICATION")) {
-    issueCommand(item, "PLAY_EXTERNAL_AUDIO", {
+    await issueCommand(item, "PLAY_EXTERNAL_AUDIO", {
       message: `Bus ${item.busService ?? item.busId ?? "assigned"}`,
     });
-    issueCommand(item, "SHOW_VISUAL_MESSAGE", {
+    await issueCommand(item, "SHOW_VISUAL_MESSAGE", {
       message: `Bus ${item.busService ?? item.busId ?? "assigned"}`,
     });
-    issueCommand(item, "VIBRATE_STOP_CONTROL", { pattern: "BUS_APPROACHING" });
+    await issueCommand(item, "VIBRATE_STOP_CONTROL", {
+      pattern: "BUS_APPROACHING",
+    });
   }
 }
 
-function issueCommand(
+async function issueCommand(
   item: AssistanceCase,
   commandType: ActuatorCommandType,
   payload?: Record<string, string | number | boolean>,
-): ActuatorCommand {
-  const data = getOperationsData();
-  const existing = data.commands.findOne(
+): Promise<ActuatorCommand> {
+  const data = await getOperationsData();
+  const existing = await data.commands.findOne(
     "caseCommand",
     `${item.caseId}:${commandType}`,
   );
@@ -1004,7 +1049,7 @@ function issueCommand(
     issuedAt,
     expiresAt: new Date(Date.now() + 30_000).toISOString(),
   };
-  data.putCommand(command);
+  await data.putCommand(command);
   const plan = item.actionPlan.find(
     (candidate) =>
       candidate.action === commandType && candidate.status === "PLANNED",
@@ -1041,7 +1086,10 @@ function rampSafetyFailure(
   return undefined;
 }
 
-function block(item: AssistanceCase, reason: string): AssistanceCase {
+async function block(
+  item: AssistanceCase,
+  reason: string,
+): Promise<AssistanceCase> {
   const isNewBlock =
     item.state !== "BLOCKED" || item.escalationReason !== reason;
   item.state = "BLOCKED";
@@ -1052,25 +1100,31 @@ function block(item: AssistanceCase, reason: string): AssistanceCase {
       : plan,
   );
   if (isNewBlock) item.outcome.safetyBlocks += 1;
-  const saved = saveAndPublish(item);
+  const saved = await saveAndPublish(item);
   emitEscalation(saved);
   return saved;
 }
 
-function fail(item: AssistanceCase, reason: string): AssistanceCase {
+async function fail(
+  item: AssistanceCase,
+  reason: string,
+): Promise<AssistanceCase> {
   item.state = "FAILED";
   item.escalationReason = reason;
   if (!item.outcome.failures.includes(reason))
     item.outcome.failures.push(reason);
-  const saved = saveAndPublish(item);
+  const saved = await saveAndPublish(item);
   emitEscalation(saved);
   return saved;
 }
 
-function escalate(item: AssistanceCase, reason: string): AssistanceCase {
+async function escalate(
+  item: AssistanceCase,
+  reason: string,
+): Promise<AssistanceCase> {
   item.state = "ESCALATED";
   item.escalationReason = reason;
-  const saved = saveAndPublish(item);
+  const saved = await saveAndPublish(item);
   emitEscalation(saved);
   return saved;
 }
@@ -1101,15 +1155,15 @@ function publishCase(item: AssistanceCase): AssistanceCase {
   return item;
 }
 
-function saveAndPublish(item: AssistanceCase): AssistanceCase {
+async function saveAndPublish(item: AssistanceCase): Promise<AssistanceCase> {
   item.updatedAt = new Date().toISOString();
-  saveCase(item);
+  await saveCase(item);
   return publishCase(item);
 }
 
-function saveCase(item: AssistanceCase): void {
-  item.boardingIntent = deriveBoardingIntent(item);
-  getOperationsData().cases.upsert(item);
+async function saveCase(item: AssistanceCase): Promise<void> {
+  item.boardingIntent = await deriveBoardingIntent(item);
+  await (await getOperationsData()).cases.upsert(item);
 }
 
 function emptyBoardingIntent(
@@ -1126,12 +1180,15 @@ function emptyBoardingIntent(
   };
 }
 
-function deriveBoardingIntent(item: AssistanceCase): BoardingIntentAssessment {
-  const stored = getOperationsData().observations;
-  const observations = item.intents.flatMap((intent) => {
-    const observation = stored.get(intent.signalId);
-    return observation ? [observation] : [];
-  });
+async function deriveBoardingIntent(
+  item: AssistanceCase,
+): Promise<BoardingIntentAssessment> {
+  const stored = (await getOperationsData()).observations;
+  const observations: SignalObservation[] = [];
+  for (const intent of item.intents) {
+    const observation = await stored.get(intent.signalId);
+    if (observation) observations.push(observation);
+  }
   const evidence = observations.map((observation) => {
     const intent = item.intents.find(
       (candidate) => candidate.signalId === observation.signalId,
@@ -1180,7 +1237,7 @@ function deriveBoardingIntent(item: AssistanceCase): BoardingIntentAssessment {
     ].includes(candidate.kind),
   );
   const telemetry = item.busId
-    ? getLatestSafetyTelemetry(item.busId)
+    ? await getLatestSafetyTelemetry(item.busId)
     : undefined;
   const assignedBusAtStop = Boolean(
     telemetry &&
@@ -1219,31 +1276,36 @@ function deriveBoardingIntent(item: AssistanceCase): BoardingIntentAssessment {
   };
 }
 
-function refreshStaleCases(): void {
-  const data = getOperationsData();
-  for (const item of data.cases.listOpen(OPEN_CASE_LIMIT)) {
+async function refreshStaleCases(): Promise<void> {
+  const data = await getOperationsData();
+  for (const item of await data.cases.listOpen(OPEN_CASE_LIMIT)) {
     if (
       item.assistanceTypes.includes("WHEELCHAIR_RAMP") &&
       ["SAFE_TO_ACTUATE", "ACTUATING"].includes(item.state)
     ) {
-      const telemetry = item.busId ? data.telemetry.get(item.busId) : undefined;
+      const telemetry = item.busId
+        ? await data.telemetry.get(item.busId)
+        : undefined;
       if (telemetry && !isTelemetryFresh(telemetry)) {
-        block(item, "Vehicle safety telemetry is stale");
+        await block(item, "Vehicle safety telemetry is stale");
       }
     }
   }
 }
 
-function requireCase(caseId: string): AssistanceCase {
-  const item = getOperationsData().cases.get(caseId);
+async function requireCase(caseId: string): Promise<AssistanceCase> {
+  const item = await (await getOperationsData()).cases.get(caseId);
   if (!item) throw new OperationsNotFoundError("Assistance case not found");
   return item;
 }
 
-function ensureMockVehicleCapability(busId: string, busService?: string): void {
-  if (getOperationsData().capabilities.get(busId)) return;
+async function ensureMockVehicleCapability(
+  busId: string,
+  busService?: string,
+): Promise<void> {
+  if (await (await getOperationsData()).capabilities.get(busId)) return;
   const bus = getBusById(busId);
-  registerVehicleCapability({
+  await registerVehicleCapability({
     busId,
     busService,
     ramp: bus?.isAccessible ?? false,
@@ -1409,7 +1471,7 @@ function audit(
   busId?: string,
   detail?: Record<string, unknown>,
 ): void {
-  getOperationsData().audit.append({
+  getAuditLog().append({
     eventId: createId("EVENT"),
     eventType,
     caseId,

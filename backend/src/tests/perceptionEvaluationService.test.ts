@@ -15,11 +15,11 @@ import {
 
 let dataDirectory = "";
 
-beforeEach(() => {
+beforeEach(async () => {
   dataDirectory = fs.mkdtempSync(
     path.join(os.tmpdir(), "goassist-perception-"),
   );
-  configureOperationsData(dataDirectory, { retentionTimer: false });
+  await configureOperationsData(dataDirectory, { retentionTimer: false });
 });
 
 afterEach(() => {
@@ -27,12 +27,12 @@ afterEach(() => {
   fs.rmSync(dataDirectory, { recursive: true, force: true });
 });
 
-test("perception trials report reproducible precision and recall", () => {
-  record("sample-1", ["WHEELCHAIR"], ["WHEELCHAIR"]);
-  record("sample-2", ["WHEELCHAIR", "LUGGAGE"], ["LUGGAGE"]);
-  record("sample-3", [], ["WALKING_AID"]);
+test("perception trials report reproducible precision and recall", async () => {
+  await record("sample-1", ["WHEELCHAIR"], ["WHEELCHAIR"]);
+  await record("sample-2", ["WHEELCHAIR", "LUGGAGE"], ["LUGGAGE"]);
+  await record("sample-3", [], ["WALKING_AID"]);
 
-  const metrics = getPerceptionEvaluationMetrics();
+  const metrics = await getPerceptionEvaluationMetrics();
   assert.equal(metrics.sampleCount, 3);
   assert.equal(metrics.microPrecision, 2 / 3);
   assert.equal(metrics.microRecall, 2 / 3);
@@ -49,15 +49,15 @@ test("perception trials report reproducible precision and recall", () => {
   );
 });
 
-test("evaluation samples are idempotent and reject unknown classes", () => {
-  const first = record("same-sample", ["STROLLER"], ["STROLLER"]);
-  const duplicate = record("same-sample", ["STROLLER"], ["STROLLER"]);
+test("evaluation samples are idempotent and reject unknown classes", async () => {
+  const first = await record("same-sample", ["STROLLER"], ["STROLLER"]);
+  const duplicate = await record("same-sample", ["STROLLER"], ["STROLLER"]);
   assert.deepEqual(duplicate, first);
-  assert.equal(getPerceptionEvaluationMetrics().sampleCount, 1);
+  assert.equal((await getPerceptionEvaluationMetrics()).sampleCount, 1);
 
-  assert.throws(
-    () =>
-      recordPerceptionEvaluation({
+  await assert.rejects(
+    async () =>
+      await recordPerceptionEvaluation({
         sampleId: "invalid",
         predicted: ["FACE" as never],
         actual: [],
@@ -67,12 +67,12 @@ test("evaluation samples are idempotent and reject unknown classes", () => {
   );
 });
 
-function record(
+async function record(
   sampleId: string,
   predicted: Parameters<typeof recordPerceptionEvaluation>[0]["predicted"],
   actual: Parameters<typeof recordPerceptionEvaluation>[0]["actual"],
 ) {
-  return recordPerceptionEvaluation({
+  return await recordPerceptionEvaluation({
     sampleId,
     predicted,
     actual,

@@ -95,7 +95,7 @@ function syntheticCase(index) {
   };
 }
 
-function measure(label, driver) {
+async function measure(label, driver) {
   const directory = mkdtempSync(join(tmpdir(), PREFIX));
   createdDirectories.push(directory);
   // Retention is set far above the sizes measured, so it never trims during the run.
@@ -109,20 +109,25 @@ function measure(label, driver) {
     },
   });
   try {
+    await data.ready;
     let stored = 0;
     const rows = [];
     for (const target of sizes) {
       for (let i = stored; i < target; i += 1)
-        data.cases.upsert(syntheticCase(i));
+        await data.cases.upsert(syntheticCase(i));
       stored = Math.max(stored, target);
       const first = syntheticCase(0);
       const updateStart = process.hrtime.bigint();
       for (let r = 0; r < reps; r += 1)
-        data.cases.upsert({ ...first, updatedAt: new Date().toISOString() });
+        await data.cases.upsert({
+          ...first,
+          updatedAt: new Date().toISOString(),
+        });
       const updateMs =
         Number(process.hrtime.bigint() - updateStart) / 1e6 / reps;
       const readStart = process.hrtime.bigint();
-      for (let r = 0; r < reps; r += 1) data.cases.get(`CASE-${stored - 1}`);
+      for (let r = 0; r < reps; r += 1)
+        await data.cases.get(`CASE-${stored - 1}`);
       const readMs = Number(process.hrtime.bigint() - readStart) / 1e6 / reps;
       rows.push({
         cases: stored,
@@ -137,7 +142,10 @@ function measure(label, driver) {
   }
 }
 
-const results = [measure("SQLite", "sqlite"), measure("Memory", "memory")];
+const results = [
+  await measure("SQLite", "sqlite"),
+  await measure("Memory", "memory"),
+];
 
 console.log(
   `Machine: ${cpus()[0]?.model ?? "unknown CPU"}, Node ${process.version}, ${reps} repetitions per size.\n`,

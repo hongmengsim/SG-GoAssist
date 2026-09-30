@@ -28,22 +28,22 @@ const HEADING_TOLERANCE_DEGREES = Number(
   process.env.GOASSIST_DOCK_HEADING_TOLERANCE_DEGREES ?? 6,
 );
 
-export function recordPrecisionDockingObservation(
+export async function recordPrecisionDockingObservation(
   input: PrecisionDockingObservation,
-): PrecisionDockingAssessment {
+): Promise<PrecisionDockingAssessment> {
   validate(input);
-  const current = getOperationsData().docking.get(input.busId);
+  const current = await (await getOperationsData()).docking.get(input.busId);
   if (current && new Date(input.observedAt) < new Date(current.observedAt)) {
     throw new OperationsValidationError("Stale docking observation rejected");
   }
-  getOperationsData().docking.put(input);
+  await (await getOperationsData()).docking.put(input);
   return assessPrecisionDocking(input);
 }
 
-export function getPrecisionDockingAssessment(
+export async function getPrecisionDockingAssessment(
   busId: string,
-): PrecisionDockingAssessment {
-  const observation = getOperationsData().docking.get(busId);
+): Promise<PrecisionDockingAssessment> {
+  const observation = await (await getOperationsData()).docking.get(busId);
   if (!observation) {
     throw new OperationsNotFoundError(
       "Precision docking observation not found",

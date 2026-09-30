@@ -6,7 +6,7 @@ import {
   type TestServer,
 } from "./helpers/integration";
 
-describe("passenger context and journey planning", () => {
+describe("passenger context and journey planning", async () => {
   let server: TestServer;
 
   before(async () => {
@@ -17,7 +17,7 @@ describe("passenger context and journey planning", () => {
     await server.close();
   });
 
-  it("returns three prioritized stops with verified amenities and provenance", async () => {
+  await it("returns three prioritized stops with verified amenities and provenance", async () => {
     const response = await requestJson(
       server.baseUrl,
       "/api/passenger/context?lat=1.297385&lng=103.780927&radius=200",
@@ -34,7 +34,7 @@ describe("passenger context and journey planning", () => {
     assert.equal(response.body.radiusMeters, 200);
   });
 
-  it("keeps unknown amenity values explicitly unknown", async () => {
+  await it("keeps unknown amenity values explicitly unknown", async () => {
     const response = await requestJson(
       server.baseUrl,
       "/api/passenger/context?lat=1.2937&lng=103.7842&radius=1200",
@@ -49,7 +49,7 @@ describe("passenger context and journey planning", () => {
     }
   });
 
-  it("validates coordinates and clamps context radius", async () => {
+  await it("validates coordinates and clamps context radius", async () => {
     const invalid = await requestJson(
       server.baseUrl,
       "/api/passenger/context?lat=999&lng=103.77",
@@ -64,7 +64,7 @@ describe("passenger context and journey planning", () => {
     assert.equal(clamped.body.radiusMeters, 1200);
   });
 
-  it("returns up to three ranked direct or one-transfer options", async () => {
+  await it("returns up to three ranked direct or one-transfer options", async () => {
     const response = await requestJson(server.baseUrl, "/api/journeys/plan", {
       method: "POST",
       body: JSON.stringify({
@@ -90,7 +90,7 @@ describe("passenger context and journey planning", () => {
     );
   });
 
-  it("rejects malformed journey planning requests", async () => {
+  await it("rejects malformed journey planning requests", async () => {
     const response = await requestJson(server.baseUrl, "/api/journeys/plan", {
       method: "POST",
       body: JSON.stringify({ origin: { latitude: 1.3 } }),

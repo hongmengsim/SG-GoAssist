@@ -26,14 +26,14 @@ export function onAssistanceEvent(callback: EventListener) {
   return () => listeners.delete(callback);
 }
 
-export function waitForRequestStatus(
+export async function waitForRequestStatus(
   requestId: string,
   status: AssistanceRequestStatus,
   timeoutMs: number,
 ): Promise<PassengerAssistanceRequest | undefined> {
   const existing = getRequest(requestId);
   if (existing?.status === status) {
-    return Promise.resolve(existing);
+    return await Promise.resolve(existing);
   }
 
   return new Promise((resolve) => {
@@ -154,10 +154,10 @@ export function getAnnouncementEvents(): ExternalAnnouncementMessage[] {
   return announcementEvents;
 }
 
-function updateRequestStatus(
+async function updateRequestStatus(
   requestId: string,
   newStatus: AssistanceRequestStatus,
-): PassengerAssistanceRequest | null {
+): Promise<PassengerAssistanceRequest | null> {
   const request = activeRequests.get(requestId);
   if (!request) {
     logger.warn("Request not found for status update", requestId);
@@ -199,7 +199,7 @@ function updateRequestStatus(
     (newStatus === AssistanceRequestStatus.CANCELLED ||
       newStatus === AssistanceRequestStatus.FAILED)
   ) {
-    synchronizeLegacyCaseStatus(request.caseId, newStatus);
+    await synchronizeLegacyCaseStatus(request.caseId, newStatus);
   }
   logger.info(
     `Request status transition: ${oldStatus} -> ${newStatus}`,
@@ -209,11 +209,13 @@ function updateRequestStatus(
   return request;
 }
 
-export function processSimulatorCommand(command: SimulatorCommand): {
+export async function processSimulatorCommand(
+  command: SimulatorCommand,
+): Promise<{
   success: boolean;
   message: string;
   request?: PassengerAssistanceRequest;
-} {
+}> {
   const commandToStatus: Record<
     SimulatorCommand["command"],
     AssistanceRequestStatus
@@ -254,7 +256,7 @@ export function processSimulatorCommand(command: SimulatorCommand): {
     };
   }
 
-  const request = updateRequestStatus(command.requestId, nextStatus);
+  const request = await updateRequestStatus(command.requestId, nextStatus);
 
   return {
     success: true,
@@ -263,8 +265,8 @@ export function processSimulatorCommand(command: SimulatorCommand): {
   };
 }
 
-export function cancelRequest(requestId: string) {
-  return processSimulatorCommand({ requestId, command: "CANCEL" });
+export async function cancelRequest(requestId: string) {
+  return await processSimulatorCommand({ requestId, command: "CANCEL" });
 }
 
 export function processVehicleCommand(command: VehicleSimulatorCommand): {

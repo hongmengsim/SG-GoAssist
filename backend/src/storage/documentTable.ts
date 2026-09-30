@@ -25,25 +25,29 @@ export interface TableSpec<T> {
 export const MAX_INDEXES = 4;
 
 export interface DocumentTable<T> {
-  get(key: string): T | undefined;
+  get(key: string): Promise<T | undefined>;
   /** Creates the document, or replaces it in place. Its indexes are recomputed from it. */
-  put(doc: T): void;
+  put(doc: T): Promise<void>;
   /** Insertion order, at most `limit`. */
-  list(limit: number): T[];
+  list(limit: number): Promise<T[]>;
   /** Documents whose index has this value, in insertion order, at most `limit`. */
-  find(index: string, value: string, limit: number): T[];
-  findOne(index: string, value: string): T | undefined;
-  count(): number;
-  countBy(index: string, value: string): number;
+  find(index: string, value: string, limit: number): Promise<T[]>;
+  findOne(index: string, value: string): Promise<T | undefined>;
+  count(): Promise<number>;
+  countBy(index: string, value: string): Promise<number>;
   /**
    * Changes one index value of one document without rewriting it (for example to mark a
    * command closed). The next `put` of the same key recomputes it from the document.
    */
-  setIndex(key: string, index: string, value: string | undefined): void;
-  delete(key: string): void;
+  setIndex(
+    key: string,
+    index: string,
+    value: string | undefined,
+  ): Promise<void>;
+  delete(key: string): Promise<void>;
   /** Deletes the oldest rows until `keep` remain. Returns how many were deleted. */
-  trimOldest(keep: number): number;
-  clear(): void;
+  trimOldest(keep: number): Promise<number>;
+  clear(): Promise<void>;
 }
 
 const NAME = /^[a-z_]+$/;
@@ -79,25 +83,25 @@ export class MemoryDocumentTable<T> implements DocumentTable<T> {
     if (!this.names.includes(index)) throw new Error(`Unknown index: ${index}`);
   }
 
-  get(key: string): T | undefined {
+  async get(key: string): Promise<T | undefined> {
     const row = this.rows.get(key);
     return row ? structuredClone(row.doc) : undefined;
   }
 
-  put(doc: T): void {
+  async put(doc: T): Promise<void> {
     const indexes: Record<string, string | undefined> = {};
     for (const name of this.names)
       indexes[name] = this.spec.indexes![name](doc);
     this.rows.set(this.spec.key(doc), { doc: structuredClone(doc), indexes });
   }
 
-  list(limit: number): T[] {
+  async list(limit: number): Promise<T[]> {
     return [...this.rows.values()]
       .slice(0, limit)
       .map((row) => structuredClone(row.doc));
   }
 
-  find(index: string, value: string, limit: number): T[] {
+  async find(index: string, value: string, limit: number): Promise<T[]> {
     this.require(index);
     return [...this.rows.values()]
       .filter((row) => row.indexes[index] === value)
@@ -105,15 +109,15 @@ export class MemoryDocumentTable<T> implements DocumentTable<T> {
       .map((row) => structuredClone(row.doc));
   }
 
-  findOne(index: string, value: string): T | undefined {
-    return this.find(index, value, 1)[0];
+  async findOne(index: string, value: string): Promise<T | undefined> {
+    return (await this.find(index, value, 1))[0];
   }
 
-  count(): number {
+  async count(): Promise<number> {
     return this.rows.size;
   }
 
-  countBy(index: string, value: string): number {
+  async countBy(index: string, value: string): Promise<number> {
     this.require(index);
     let total = 0;
     for (const row of this.rows.values())
@@ -121,17 +125,21 @@ export class MemoryDocumentTable<T> implements DocumentTable<T> {
     return total;
   }
 
-  setIndex(key: string, index: string, value: string | undefined): void {
+  async setIndex(
+    key: string,
+    index: string,
+    value: string | undefined,
+  ): Promise<void> {
     this.require(index);
     const row = this.rows.get(key);
     if (row) row.indexes[index] = value;
   }
 
-  delete(key: string): void {
+  async delete(key: string): Promise<void> {
     this.rows.delete(key);
   }
 
-  trimOldest(keep: number): number {
+  async trimOldest(keep: number): Promise<number> {
     let removed = 0;
     for (const key of [...this.rows.keys()]) {
       if (this.rows.size <= keep) break;
@@ -141,7 +149,7 @@ export class MemoryDocumentTable<T> implements DocumentTable<T> {
     return removed;
   }
 
-  clear(): void {
+  async clear(): Promise<void> {
     this.rows.clear();
   }
 }
@@ -229,12 +237,12 @@ export class SqliteDocumentTable<T> implements DocumentTable<T> {
     return `i${position}`;
   }
 
-  get(key: string): T | undefined {
+  async get(key: string): Promise<T | undefined> {
     const row = this.selectOne.get(key);
     return row ? parse<T>(row) : undefined;
   }
 
-  put(doc: T): void {
+  async put(doc: T): Promise<void> {
     this.upsertOne.run(
       this.spec.key(doc),
       ...this.names.map((name) => this.spec.indexes![name](doc) ?? null),
@@ -242,11 +250,11 @@ export class SqliteDocumentTable<T> implements DocumentTable<T> {
     );
   }
 
-  list(limit: number): T[] {
+  async list(limit: number): Promise<T[]> {
     return this.listAll.all(limit).map((row) => parse<T>(row));
   }
 
-  find(index: string, value: string, limit: number): T[] {
+  async find(index: string, value: string, limit: number): Promise<T[]> {
     const column = this.column(index);
     let statement = this.findStatements.get(column);
     if (!statement) {
@@ -258,15 +266,15 @@ export class SqliteDocumentTable<T> implements DocumentTable<T> {
     return statement.all(value, limit).map((row) => parse<T>(row));
   }
 
-  findOne(index: string, value: string): T | undefined {
-    return this.find(index, value, 1)[0];
+  async findOne(index: string, value: string): Promise<T | undefined> {
+    return (await this.find(index, value, 1))[0];
   }
 
-  count(): number {
+  async count(): Promise<number> {
     return (this.countAll.get() as { total: number }).total;
   }
 
-  countBy(index: string, value: string): number {
+  async countBy(index: string, value: string): Promise<number> {
     const column = this.column(index);
     let statement = this.countByStatements.get(column);
     if (!statement) {
@@ -278,7 +286,11 @@ export class SqliteDocumentTable<T> implements DocumentTable<T> {
     return (statement.get(value) as { total: number }).total;
   }
 
-  setIndex(key: string, index: string, value: string | undefined): void {
+  async setIndex(
+    key: string,
+    index: string,
+    value: string | undefined,
+  ): Promise<void> {
     const column = this.column(index);
     let statement = this.setIndexStatements.get(column);
     if (!statement) {
@@ -290,18 +302,18 @@ export class SqliteDocumentTable<T> implements DocumentTable<T> {
     statement.run(value ?? null, key);
   }
 
-  delete(key: string): void {
+  async delete(key: string): Promise<void> {
     this.deleteOne.run(key);
   }
 
-  trimOldest(keep: number): number {
-    const excess = this.count() - keep;
+  async trimOldest(keep: number): Promise<number> {
+    const excess = (await this.count()) - keep;
     if (excess <= 0) return 0;
     this.trimStatement.run(excess);
     return excess;
   }
 
-  clear(): void {
+  async clear(): Promise<void> {
     this.deleteAll.run();
   }
 }

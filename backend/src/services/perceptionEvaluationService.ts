@@ -18,20 +18,21 @@ const CLASS_SET = new Set<PerceptionNeedClass>(CLASSES);
 
 export class PerceptionEvaluationValidationError extends Error {}
 
-export function recordPerceptionEvaluation(
+export async function recordPerceptionEvaluation(
   input: PerceptionEvaluationSample,
-): PerceptionEvaluationSample {
+): Promise<PerceptionEvaluationSample> {
   const normalized = validateAndNormalize(input);
-  const samples = getOperationsData().perceptionSamples;
-  const existing = samples.get(normalized.sampleId);
+  const samples = (await getOperationsData()).perceptionSamples;
+  const existing = await samples.get(normalized.sampleId);
   if (existing) return existing;
-  samples.put(normalized);
+  await samples.put(normalized);
   return normalized;
 }
 
-export function getPerceptionEvaluationMetrics(): PerceptionEvaluationMetrics {
-  const samples =
-    getOperationsData().perceptionSamples.list(METRICS_SAMPLE_LIMIT);
+export async function getPerceptionEvaluationMetrics(): Promise<PerceptionEvaluationMetrics> {
+  const samples = await (
+    await getOperationsData()
+  ).perceptionSamples.list(METRICS_SAMPLE_LIMIT);
   const classes = CLASSES.map((className) => {
     let truePositives = 0;
     let falsePositives = 0;

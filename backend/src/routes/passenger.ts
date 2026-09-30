@@ -4,7 +4,7 @@ import { getPassengerContext } from "../services/passengerContextService";
 
 export const router = Router();
 
-router.get("/context", (req: Request, res: Response) => {
+router.get("/context", async (req: Request, res: Response) => {
   const latitude = queryNumber(req, "lat");
   const longitude = queryNumber(req, "lng");
   if (
@@ -24,7 +24,7 @@ router.get("/context", (req: Request, res: Response) => {
 
   const requestedRadius = queryNumber(req, "radius") ?? 200;
   const radiusMeters = Math.min(1_200, Math.max(50, requestedRadius));
-  return res.json(getPassengerContext(latitude, longitude, radiusMeters));
+  return res.json(await getPassengerContext(latitude, longitude, radiusMeters));
 });
 
 function queryNumber(req: Request, key: string): number | null {

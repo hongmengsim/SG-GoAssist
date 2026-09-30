@@ -31,24 +31,24 @@ export interface CaseListFilter {
  * than the limit, and a returned case cannot alter what is stored.
  */
 export interface CaseRepository {
-  get(caseId: string): AssistanceCase | undefined;
+  get(caseId: string): Promise<AssistanceCase | undefined>;
   /** Creates the case, or replaces it in place (its position in insertion order is kept). */
-  upsert(item: AssistanceCase): void;
+  upsert(item: AssistanceCase): Promise<void>;
   /** The case that holds an intent created from this signal. */
-  findBySignalId(signalId: string): AssistanceCase | undefined;
+  findBySignalId(signalId: string): Promise<AssistanceCase | undefined>;
   /** The oldest open case that matches every given field. */
-  findOpen(query: OpenCaseQuery): AssistanceCase | undefined;
+  findOpen(query: OpenCaseQuery): Promise<AssistanceCase | undefined>;
   /** Newest update first. */
-  list(filter: CaseListFilter): AssistanceCase[];
+  list(filter: CaseListFilter): Promise<AssistanceCase[]>;
   /** Open cases, oldest first, at most `limit`. */
-  listOpen(limit: number): AssistanceCase[];
+  listOpen(limit: number): Promise<AssistanceCase[]>;
   /** Finished cases, least recently updated first, at most `limit`. */
-  listFinishedOldest(limit: number): AssistanceCase[];
+  listFinishedOldest(limit: number): Promise<AssistanceCase[]>;
   /** Finished cases last updated before this ISO time, oldest first, at most `limit`. */
-  listFinishedBefore(isoTime: string, limit: number): AssistanceCase[];
-  countFinished(): number;
-  delete(caseId: string): void;
-  count(): number;
-  countByState(): Partial<Record<AssistanceCaseState, number>>;
-  clear(): void;
+  listFinishedBefore(isoTime: string, limit: number): Promise<AssistanceCase[]>;
+  countFinished(): Promise<number>;
+  delete(caseId: string): Promise<void>;
+  count(): Promise<number>;
+  countByState(): Promise<Partial<Record<AssistanceCaseState, number>>>;
+  clear(): Promise<void>;
 }

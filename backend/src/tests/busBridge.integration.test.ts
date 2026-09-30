@@ -11,8 +11,8 @@ import {
 const BUS = "AV-095-01";
 const STOP = "18331";
 
-function busStatus(baseUrl: string, movement: string) {
-  return requestJson(baseUrl, `/api/operations/vehicles/${BUS}/status`, {
+async function busStatus(baseUrl: string, movement: string) {
+  return await requestJson(baseUrl, `/api/operations/vehicles/${BUS}/status`, {
     method: "POST",
     body: JSON.stringify({
       busService: "95",
@@ -81,7 +81,7 @@ test("bus movement reaches a passenger's app as the vehicle events it already un
 test("a Pi halt reported through telemetry blocks deployment until the path is clear again", async () => {
   const server = await startTestServer();
   try {
-    registerVehicleCapability({
+    await registerVehicleCapability({
       busId: BUS,
       busService: "95",
       ramp: true,
@@ -98,7 +98,7 @@ test("a Pi halt reported through telemetry blocks deployment until the path is c
       ],
       updatedAt: new Date().toISOString(),
     });
-    const item = submitSignalObservation({
+    const item = await submitSignalObservation({
       signalId: "bridge-signal",
       source: "APP",
       kind: "EXPLICIT_ASSISTANCE_REQUEST",
@@ -110,20 +110,24 @@ test("a Pi halt reported through telemetry blocks deployment until the path is c
       anonymousToken: "bridge-passenger",
       observedAt: new Date().toISOString(),
     });
-    const telemetry = (deploymentPathClear: boolean) =>
-      requestJson(server.baseUrl, `/api/operations/vehicles/${BUS}/telemetry`, {
-        method: "POST",
-        body: JSON.stringify({
-          stopCode: STOP,
-          vehicleStopped: true,
-          parkingBrakeActive: true,
-          doorOpen: true,
-          deploymentPathClear,
-          rampPosition: "STOWED",
-          networkOnline: true,
-          observedAt: new Date().toISOString(),
-        }),
-      });
+    const telemetry = async (deploymentPathClear: boolean) =>
+      await requestJson(
+        server.baseUrl,
+        `/api/operations/vehicles/${BUS}/telemetry`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            stopCode: STOP,
+            vehicleStopped: true,
+            parkingBrakeActive: true,
+            doorOpen: true,
+            deploymentPathClear,
+            rampPosition: "STOWED",
+            networkOnline: true,
+            observedAt: new Date().toISOString(),
+          }),
+        },
+      );
     const pending = async () =>
       (
         await requestJson(
@@ -133,11 +137,11 @@ test("a Pi halt reported through telemetry blocks deployment until the path is c
       ).body.count as number;
 
     assert.equal((await telemetry(false)).status, 202);
-    assert.equal(getCase(item.caseId)?.state, "BLOCKED");
+    assert.equal((await getCase(item.caseId))?.state, "BLOCKED");
     assert.equal(await pending(), 0);
 
     assert.equal((await telemetry(true)).status, 202);
-    assert.equal(getCase(item.caseId)?.state, "ACTUATING");
+    assert.equal((await getCase(item.caseId))?.state, "ACTUATING");
     assert.equal(await pending(), 1);
   } finally {
     await server.close();

@@ -28,10 +28,10 @@ test("supported assistance types are explicitly validated", () => {
   assert.equal(isAssistanceType("RAMP_DEPLOYMENT"), false);
 });
 
-test("app-selected arrival bus IDs can create standardized assistance requests", () => {
+test("app-selected arrival bus IDs can create standardized assistance requests", async () => {
   clearAllRequests();
 
-  const result = createStandardizedAssistanceRequest(
+  const result = await createStandardizedAssistanceRequest(
     {
       sessionId: "app-flow",
       busId: "AV-191-03",
@@ -49,12 +49,12 @@ test("app-selected arrival bus IDs can create standardized assistance requests",
   assert.deepEqual(result.request.assistanceTypes, ["WHEELCHAIR_RAMP"]);
 });
 
-test("wheelchair ramp requests are rejected for non-accessible vehicles", () => {
+test("wheelchair ramp requests are rejected for non-accessible vehicles", async () => {
   clearAllRequests();
 
-  assert.throws(
-    () =>
-      createStandardizedAssistanceRequest(
+  await assert.rejects(
+    async () =>
+      await createStandardizedAssistanceRequest(
         {
           sessionId: "not-accessible",
           busId: "AV-014-01",
@@ -70,10 +70,10 @@ test("wheelchair ramp requests are rejected for non-accessible vehicles", () => 
   );
 });
 
-test("terminal request statuses cannot be overwritten by later simulator commands", () => {
+test("terminal request statuses cannot be overwritten by later simulator commands", async () => {
   clearAllRequests();
 
-  const result = createStandardizedAssistanceRequest(
+  const result = await createStandardizedAssistanceRequest(
     {
       sessionId: "terminal-status",
       busId: "AV-191-04",
@@ -84,11 +84,11 @@ test("terminal request statuses cannot be overwritten by later simulator command
     { autoAcknowledge: false },
   );
 
-  processSimulatorCommand({
+  await processSimulatorCommand({
     requestId: result.request.requestId,
     command: "FAIL",
   });
-  const afterAck = processSimulatorCommand({
+  const afterAck = await processSimulatorCommand({
     requestId: result.request.requestId,
     command: "ACKNOWLEDGE",
   });
@@ -96,10 +96,10 @@ test("terminal request statuses cannot be overwritten by later simulator command
   assert.equal(afterAck.request?.status, AssistanceRequestStatus.FAILED);
 });
 
-test("extended dwell time is treated as bus-facing assistance without ramp validation", () => {
+test("extended dwell time is treated as bus-facing assistance without ramp validation", async () => {
   clearAllRequests();
 
-  const result = createStandardizedAssistanceRequest(
+  const result = await createStandardizedAssistanceRequest(
     {
       sessionId: "dwell-time",
       busId: "AV-014-01",
@@ -116,10 +116,10 @@ test("extended dwell time is treated as bus-facing assistance without ramp valid
   assert.equal(result.request.status, AssistanceRequestStatus.SENDING);
 });
 
-test("verification status is stored separately from selected assistance needs", () => {
+test("verification status is stored separately from selected assistance needs", async () => {
   clearAllRequests();
 
-  const result = createStandardizedAssistanceRequest(
+  const result = await createStandardizedAssistanceRequest(
     {
       sessionId: "verified-profile",
       busId: "AV-191-03",
@@ -141,10 +141,10 @@ test("verification status is stored separately from selected assistance needs", 
   assert.equal(result.request.verificationMethod, "DEMO_CREDENTIAL");
 });
 
-test("multiple selected needs share one request lifecycle", () => {
+test("multiple selected needs share one request lifecycle", async () => {
   clearAllRequests();
 
-  const result = createStandardizedAssistanceRequestBundle(
+  const result = await createStandardizedAssistanceRequestBundle(
     {
       sessionId: "multi-need-app-flow",
       busId: "AV-191-03",
@@ -170,10 +170,10 @@ test("multiple selected needs share one request lifecycle", () => {
   ]);
 });
 
-test("an existing partial request does not swallow a newly added need", () => {
+test("an existing partial request does not swallow a newly added need", async () => {
   clearAllRequests();
 
-  const rampOnly = createStandardizedAssistanceRequest(
+  const rampOnly = await createStandardizedAssistanceRequest(
     {
       sessionId: "ramp-only",
       busId: "AV-191-03",
@@ -183,7 +183,7 @@ test("an existing partial request does not swallow a newly added need", () => {
     },
     { autoAcknowledge: false },
   );
-  const rampAndAudio = createStandardizedAssistanceRequestBundle(
+  const rampAndAudio = await createStandardizedAssistanceRequestBundle(
     {
       sessionId: "ramp-and-audio",
       busId: "AV-191-03",
@@ -219,10 +219,10 @@ test("assistance preferences map differently for boarding and alighting", () => 
   ]);
 });
 
-test("standardized alighting requests preserve phase and stop code", () => {
+test("standardized alighting requests preserve phase and stop code", async () => {
   clearAllRequests();
 
-  const result = createStandardizedAssistanceRequest(
+  const result = await createStandardizedAssistanceRequest(
     {
       sessionId: "alighting",
       busId: "AV-095-01",

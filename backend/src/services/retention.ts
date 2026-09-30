@@ -67,20 +67,27 @@ export function retentionPolicyFromEnv(
 }
 
 /** Archives, then deletes, the given cases with their commands and statuses. */
-function archiveAndDelete(data: OperationsData, cases: AssistanceCase[]): void {
+async function archiveAndDelete(
+  data: OperationsData,
+  cases: AssistanceCase[],
+): Promise<void> {
   if (cases.length === 0) return;
-  const entries: ArchivedCase[] = cases.map((item) => ({
-    case: item,
-    commands: data.commands.find("caseId", item.caseId, PER_CASE_LIMIT),
-    statuses: data.statuses.find("caseId", item.caseId, PER_CASE_LIMIT),
-  }));
+  const entries: ArchivedCase[] = [];
+  for (const item of cases) {
+    entries.push({
+      case: item,
+      commands: await data.commands.find("caseId", item.caseId, PER_CASE_LIMIT),
+      statuses: await data.statuses.find("caseId", item.caseId, PER_CASE_LIMIT),
+    });
+  }
   // Written first, so nothing is lost if a delete fails half way.
   data.archive(entries);
   for (const entry of entries) {
     for (const command of entry.commands)
-      data.commands.delete(command.commandId);
-    for (const status of entry.statuses) data.statuses.delete(status.commandId);
-    data.cases.delete(entry.case.caseId);
+      await data.commands.delete(command.commandId);
+    for (const status of entry.statuses)
+      await data.statuses.delete(status.commandId);
+    await data.cases.delete(entry.case.caseId);
   }
 }
 
@@ -89,30 +96,30 @@ function archiveAndDelete(data: OperationsData, cases: AssistanceCase[]): void {
  * and deletes in bounded batches, using indexes, so the cost follows what is removed and not
  * everything stored. Cases that still need someone are never touched.
  */
-export function enforceRetention(
+export async function enforceRetention(
   data: OperationsData,
   policy: RetentionPolicy,
   nowMs: number,
-): number {
+): Promise<number> {
   let archived = 0;
   const cutoff = new Date(nowMs - policy.finishedCaseMaxAgeMs).toISOString();
   for (;;) {
-    const batch = data.cases.listFinishedBefore(cutoff, BATCH);
+    const batch = await data.cases.listFinishedBefore(cutoff, BATCH);
     if (batch.length === 0) break;
-    archiveAndDelete(data, batch);
+    await archiveAndDelete(data, batch);
     archived += batch.length;
   }
   for (;;) {
-    const excess = data.cases.countFinished() - policy.maxFinishedCases;
+    const excess = (await data.cases.countFinished()) - policy.maxFinishedCases;
     if (excess <= 0) break;
-    const batch = data.cases.listFinishedOldest(Math.min(excess, BATCH));
-    archiveAndDelete(data, batch);
+    const batch = await data.cases.listFinishedOldest(Math.min(excess, BATCH));
+    await archiveAndDelete(data, batch);
     archived += batch.length;
   }
   const keep = policy.maxSeriesRecords;
-  data.observations.trimOldest(keep);
-  data.perceptionSamples.trimOldest(keep);
-  data.commands.trimOldest(keep);
-  data.statuses.trimOldest(keep);
+  await data.observations.trimOldest(keep);
+  await data.perceptionSamples.trimOldest(keep);
+  await data.commands.trimOldest(keep);
+  await data.statuses.trimOldest(keep);
   return archived;
 }

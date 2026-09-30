@@ -14,16 +14,16 @@ export class MemoryCaseRepository implements CaseRepository {
   // A Map keeps insertion order, and set() on an existing key keeps its position.
   private readonly cases = new Map<string, AssistanceCase>();
 
-  get(caseId: string): AssistanceCase | undefined {
+  async get(caseId: string): Promise<AssistanceCase | undefined> {
     const found = this.cases.get(caseId);
     return found ? structuredClone(found) : undefined;
   }
 
-  upsert(item: AssistanceCase): void {
+  async upsert(item: AssistanceCase): Promise<void> {
     this.cases.set(item.caseId, structuredClone(item));
   }
 
-  findBySignalId(signalId: string): AssistanceCase | undefined {
+  async findBySignalId(signalId: string): Promise<AssistanceCase | undefined> {
     for (const item of this.cases.values()) {
       if (item.intents.some((intent) => intent.signalId === signalId))
         return structuredClone(item);
@@ -31,7 +31,7 @@ export class MemoryCaseRepository implements CaseRepository {
     return undefined;
   }
 
-  findOpen(query: OpenCaseQuery): AssistanceCase | undefined {
+  async findOpen(query: OpenCaseQuery): Promise<AssistanceCase | undefined> {
     for (const item of this.cases.values()) {
       if (
         isOpen(item) &&
@@ -44,7 +44,7 @@ export class MemoryCaseRepository implements CaseRepository {
     return undefined;
   }
 
-  list(filter: CaseListFilter): AssistanceCase[] {
+  async list(filter: CaseListFilter): Promise<AssistanceCase[]> {
     // Newest update first; equal times list the later-inserted case first, as SQLite does.
     return [...this.cases.values()]
       .reverse()
@@ -58,14 +58,14 @@ export class MemoryCaseRepository implements CaseRepository {
       .map((item) => structuredClone(item));
   }
 
-  listOpen(limit: number): AssistanceCase[] {
+  async listOpen(limit: number): Promise<AssistanceCase[]> {
     return [...this.cases.values()]
       .filter(isOpen)
       .slice(0, limit)
       .map((item) => structuredClone(item));
   }
 
-  listFinishedOldest(limit: number): AssistanceCase[] {
+  async listFinishedOldest(limit: number): Promise<AssistanceCase[]> {
     return [...this.cases.values()]
       .filter((item) => !isOpen(item))
       .sort((a, b) => a.updatedAt.localeCompare(b.updatedAt))
@@ -73,34 +73,37 @@ export class MemoryCaseRepository implements CaseRepository {
       .map((item) => structuredClone(item));
   }
 
-  listFinishedBefore(isoTime: string, limit: number): AssistanceCase[] {
-    return this.listFinishedOldest(Number.MAX_SAFE_INTEGER)
+  async listFinishedBefore(
+    isoTime: string,
+    limit: number,
+  ): Promise<AssistanceCase[]> {
+    return (await this.listFinishedOldest(Number.MAX_SAFE_INTEGER))
       .filter((item) => item.updatedAt < isoTime)
       .slice(0, limit);
   }
 
-  countFinished(): number {
+  async countFinished(): Promise<number> {
     let total = 0;
     for (const item of this.cases.values()) if (!isOpen(item)) total += 1;
     return total;
   }
 
-  delete(caseId: string): void {
+  async delete(caseId: string): Promise<void> {
     this.cases.delete(caseId);
   }
 
-  count(): number {
+  async count(): Promise<number> {
     return this.cases.size;
   }
 
-  countByState(): Partial<Record<AssistanceCaseState, number>> {
+  async countByState(): Promise<Partial<Record<AssistanceCaseState, number>>> {
     const counts: Partial<Record<AssistanceCaseState, number>> = {};
     for (const item of this.cases.values())
       counts[item.state] = (counts[item.state] ?? 0) + 1;
     return counts;
   }
 
-  clear(): void {
+  async clear(): Promise<void> {
     this.cases.clear();
   }
 }

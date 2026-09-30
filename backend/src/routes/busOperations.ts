@@ -11,7 +11,7 @@ import {
   BusOperationsConflictError,
   BusOperationsValidationError,
 } from "../busOperations/busOperationsService";
-import { getOperationsData } from "../services/operationsData";
+import { getAuditLog } from "../services/operationsData";
 import {
   flushBusOperationsAudit,
   getBusOperations,
@@ -65,7 +65,7 @@ router.post(
 router.post(
   "/vehicles/:busId/assist-ack",
   verifyDeviceRequest,
-  (req: Request, res: Response) => {
+  handle(async (req: Request, res: Response) => {
     const requestId = req.body?.requestId;
     if (typeof requestId !== "string" || !requestId) {
       res.status(400).json({ error: "requestId is required" });
@@ -80,7 +80,7 @@ router.post(
       res.status(409).json({ error: "Request belongs to a different bus" });
       return;
     }
-    const result = processSimulatorCommand({
+    const result = await processSimulatorCommand({
       requestId,
       command: "ACKNOWLEDGE",
     });
@@ -88,7 +88,7 @@ router.post(
       success: result.success,
       status: result.request?.status,
     });
-  },
+  }),
 );
 
 /** Fallback for a bus that missed the push (reconnect, restart): requests still waiting for it. */
@@ -169,20 +169,24 @@ function queryText(value: unknown): string | undefined {
   return typeof value === "string" && value ? value : undefined;
 }
 
-router.get("/audit", requireOperator, (req: Request, res: Response) => {
-  const requested = Number(queryText(req.query.limit));
-  const limit =
-    Number.isFinite(requested) && requested >= 1
-      ? Math.min(Math.trunc(requested), MAX_AUDIT_LIMIT)
-      : DEFAULT_AUDIT_LIMIT;
-  flushBusOperationsAudit();
-  const events = getOperationsData().audit.read({
-    limit,
-    caseId: queryText(req.query.caseId),
-    busId: queryText(req.query.busId),
-  });
-  res.json({ count: events.length, events });
-});
+router.get(
+  "/audit",
+  requireOperator,
+  handle(async (req: Request, res: Response) => {
+    const requested = Number(queryText(req.query.limit));
+    const limit =
+      Number.isFinite(requested) && requested >= 1
+        ? Math.min(Math.trunc(requested), MAX_AUDIT_LIMIT)
+        : DEFAULT_AUDIT_LIMIT;
+    flushBusOperationsAudit();
+    const events = await getAuditLog().read({
+      limit,
+      caseId: queryText(req.query.caseId),
+      busId: queryText(req.query.busId),
+    });
+    res.json({ count: events.length, events });
+  }),
+);
 
 /**
  * The bus posts each of these as a device-signed request; an operator reads the latest

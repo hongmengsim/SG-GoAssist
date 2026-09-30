@@ -25,27 +25,14 @@ export function isAssistanceType(value: string): value is AssistanceType {
   return supportedAssistanceTypes.includes(value as AssistanceType);
 }
 
-export function createStandardizedAssistanceRequest(
-  input: AssistanceRequestInput,
-): {
-  request: PassengerAssistanceRequest;
-  duplicateOfRequestId?: string;
-};
-export function createStandardizedAssistanceRequest(
-  input: AssistanceRequestInput,
-  options: { autoAcknowledge?: boolean },
-): {
-  request: PassengerAssistanceRequest;
-  duplicateOfRequestId?: string;
-};
-export function createStandardizedAssistanceRequest(
+export async function createStandardizedAssistanceRequest(
   input: AssistanceRequestInput,
   options: { autoAcknowledge?: boolean } = { autoAcknowledge: true },
-): {
+): Promise<{
   request: PassengerAssistanceRequest;
   duplicateOfRequestId?: string;
-} {
-  return createStandardizedAssistanceRequestBundle(
+}> {
+  return await createStandardizedAssistanceRequestBundle(
     {
       ...input,
       assistanceTypes: [input.assistanceType],
@@ -54,15 +41,15 @@ export function createStandardizedAssistanceRequest(
   );
 }
 
-export function createStandardizedAssistanceRequestBundle(
+export async function createStandardizedAssistanceRequestBundle(
   input: Omit<AssistanceRequestInput, "assistanceType"> & {
     assistanceTypes: AssistanceType[];
   },
   options: { autoAcknowledge?: boolean } = { autoAcknowledge: true },
-): {
+): Promise<{
   request: PassengerAssistanceRequest;
   duplicateOfRequestId?: string;
-} {
+}> {
   const bus = getBusById(input.busId);
   if (!bus) {
     throw new Error(`Bus not found: ${input.busId}`);
@@ -97,7 +84,7 @@ export function createStandardizedAssistanceRequestBundle(
   };
 
   const savedRequest = createRequest(candidate);
-  const assistanceCase = recordPassengerRequest(candidate);
+  const assistanceCase = await recordPassengerRequest(candidate);
   savedRequest.caseId = assistanceCase.caseId;
   savedRequest.assistanceCaseState = assistanceCase.state;
   const duplicateOfRequestId =
@@ -130,10 +117,20 @@ export function createStandardizedAssistanceRequestBundle(
     isAutoAcknowledgeEnabled()
   ) {
     setTimeout(() => {
-      processSimulatorCommand({
-        requestId: savedRequest.requestId,
-        command: "ACKNOWLEDGE",
-      });
+      void (async () => {
+        try {
+          await processSimulatorCommand({
+            requestId: savedRequest.requestId,
+            command: "ACKNOWLEDGE",
+          });
+        } catch (error) {
+          logger.error(
+            "Simulated acknowledgement failed",
+            savedRequest.requestId,
+            { error: String(error) },
+          );
+        }
+      })();
     }, 300);
   }
 
