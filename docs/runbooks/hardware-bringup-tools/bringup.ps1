@@ -32,10 +32,19 @@ function Get-Encoded([string]$script) {
 if ($Record -and $Record -notmatch '^[A-Za-z0-9_-]+$') { throw '-Record may contain only letters, digits, dash and underscore.' }
 $recordArg = if ($Record) { " --record recordings/$Record" } else { '' }
 
+$remoteAgent = @'
+echo Paste the device secret, then press Enter; read -rs DEVICE_SHARED_SECRET; echo; if [ ${#DEVICE_SHARED_SECRET} -eq 0 ]; then echo NO SECRET RECEIVED - the agent was NOT started. Close this tab and open it again.; exit 1; fi; echo secret fingerprint on the Pi: $(printf %s $DEVICE_SHARED_SECRET | sha256sum | cut -c1-8) - it must equal the SCRATCH tab fingerprint; export DEVICE_SHARED_SECRET; cd ~/SG-GoAssist/pi/bus-agent && python3 -m bus_agent --real --config agent.json --status-port 8770
+'@
+
 $secretCheck = @'
 if (-not $env:DEVICE_SHARED_SECRET -or -not $env:OPERATOR_API_TOKEN) {
   Write-Host 'SECRETS MISSING in this tab: close every Windows Terminal window and run bringup.ps1 again.' -ForegroundColor Yellow
 }
+'@
+
+$fingerprintShow = @'
+$fp = ([BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash([Text.Encoding]::UTF8.GetBytes($env:DEVICE_SHARED_SECRET)))).Replace('-', '').Substring(0, 8).ToLower()
+Write-Host ('Device secret fingerprint: ' + $fp + '   (the PI AGENT tab prints its own after you paste; the two must be identical)')
 '@
 
 $matchCheck = @'
@@ -58,11 +67,12 @@ Write-Host 'SCRATCH: one-off commands only (scp, git).'
 Write-Host 'Secrets are copied from HERE, on demand, like this (then clear the clipboard with: Set-Clipboard `$null):'
 Write-Host '  Operator token, for the console page:   Set-Clipboard `$env:OPERATOR_API_TOKEN'
 Write-Host '  Device secret, for the PI AGENT tab:    Set-Clipboard `$env:DEVICE_SHARED_SECRET'
+$fingerprintShow
 $matchCheck
 "@ }
 )
 if (-not $NoPi) {
-    $tabs += @{ Title = 'PI AGENT'; Script = "Write-Host 'PI AGENT: first copy the device secret in the SCRATCH tab (Set-Clipboard `$env:DEVICE_SHARED_SECRET), then paste it below when asked.'; ssh -t $pi 'echo Paste the device secret, then press Enter; read -rs DEVICE_SHARED_SECRET; export DEVICE_SHARED_SECRET; cd ~/SG-GoAssist/pi/bus-agent && python3 -m bus_agent --real --config agent.json --status-port 8770$recordArg'" }
+    $tabs += @{ Title = 'PI AGENT'; Script = ("Write-Host 'PI AGENT: first copy the device secret in the SCRATCH tab (Set-Clipboard `$env:DEVICE_SHARED_SECRET), then paste it below when asked.'; ssh -t $pi '" + $remoteAgent.Trim() + $recordArg + "'") }
     $tabs += @{ Title = 'PI CHECKS'; Script = "ssh $pi" }
 }
 
