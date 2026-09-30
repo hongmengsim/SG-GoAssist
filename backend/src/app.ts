@@ -1,3 +1,4 @@
+import { isTestRun } from "./platform/runtime";
 import { LockBusyError, LockTimeoutError } from "./concurrency/keyedLock";
 import express from "express";
 import cors from "cors";
@@ -42,8 +43,7 @@ export interface AppOptions {
 /** Off in tests unless asked for, so rapid test traffic is never throttled by accident. */
 function defaultRateLimit(): LimitConfig | false {
   if (process.env.GOASSIST_RATE_LIMIT === "off") return false;
-  if (process.env.NODE_TEST_CONTEXT && process.env.GOASSIST_RATE_LIMIT !== "on")
-    return false;
+  if (isTestRun() && process.env.GOASSIST_RATE_LIMIT !== "on") return false;
   return DEFAULT_LIMITS;
 }
 

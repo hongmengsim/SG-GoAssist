@@ -1,3 +1,4 @@
+import { isTestRun } from "../platform/runtime";
 import crypto from "crypto";
 import fs from "fs";
 import path from "path";
@@ -217,7 +218,7 @@ function defaultOptions(): BusOperationsOptions {
   const driver: StorageDriver =
     forced === "sqlite" || forced === "memory" || forced === "postgres"
       ? forced
-      : process.env.NODE_TEST_CONTEXT
+      : isTestRun()
         ? "memory"
         : hasDatabaseUrl
           ? "postgres"

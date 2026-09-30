@@ -28,11 +28,13 @@ import {
   getAuditLog,
   getOperationsData,
 } from "./services/operationsData";
-import { assertSecureStart } from "./startupGuard";
+import { assertSecureStart, redisWarnings } from "./startupGuard";
 import { configureEventHub, eventBusFromEnvironment } from "./events/eventHub";
 
 // Load environment variables
 dotenv.config();
+
+for (const warning of redisWarnings(process.env)) logger.warn(warning);
 
 // A server that would be open to anyone by accident does not start (see startupGuard.ts).
 try {

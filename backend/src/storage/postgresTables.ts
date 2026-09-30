@@ -1,6 +1,6 @@
 import type { DocumentTable, TableSpec } from "./documentTable";
 import { MAX_INDEXES } from "./documentTable";
-import { inTransaction, toNumber, type PgPool } from "./postgres";
+import { DDL_LOCK_SQL, inTransaction, toNumber, type PgPool } from "./postgres";
 
 const NAME = /^[a-z_]+$/;
 const INDEX_NAME = /^[A-Za-z][A-Za-z0-9_]*$/;
@@ -45,7 +45,7 @@ export class PostgresDocumentTable<T> implements DocumentTable<T> {
   private prepareTable(): Promise<void> {
     const columns = this.names.map((_, position) => `i${position} TEXT`);
     return inTransaction(this.pool, async (client) => {
-      await client.query("SELECT pg_advisory_xact_lock(727001)");
+      await client.query(DDL_LOCK_SQL);
       await client.query(
         "CREATE TABLE IF NOT EXISTS doc_meta (doc_table TEXT PRIMARY KEY, index_names TEXT NOT NULL)",
       );

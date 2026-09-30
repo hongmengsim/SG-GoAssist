@@ -106,12 +106,16 @@ export async function inTransaction<T>(
  * concurrently can fail inside Postgres, so the statements run in one transaction behind an
  * advisory lock that every process takes first.
  */
+/** Named, so this lock cannot collide with another application's advisory lock in the same database. */
+export const DDL_LOCK_SQL =
+  "SELECT pg_advisory_xact_lock(hashtext('goassist_ddl'))";
+
 export function createSchemaObjects(
   pool: PgPool,
   statements: string[],
 ): Promise<void> {
   return inTransaction(pool, async (client) => {
-    await client.query("SELECT pg_advisory_xact_lock(727001)");
+    await client.query(DDL_LOCK_SQL);
     for (const statement of statements) await client.query(statement);
   });
 }

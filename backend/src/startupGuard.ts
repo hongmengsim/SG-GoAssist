@@ -40,6 +40,27 @@ export function checkSecurity(env: GuardEnvironment): SecurityCheck {
   return { shared, problems, overridden: on(env.GOASSIST_ALLOW_INSECURE) };
 }
 
+/** Hosts that only this machine can reach. */
+const LOOPBACK = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
+
+/**
+ * Warnings about the Redis address: an event bus with no password on an address other
+ * machines can reach lets anyone on that network publish operator and bus events.
+ */
+export function redisWarnings(env: GuardEnvironment): string[] {
+  const raw = env.GOASSIST_REDIS_URL?.trim();
+  if (!raw) return [];
+  try {
+    const url = new URL(raw);
+    if (LOOPBACK.has(url.hostname) || url.password) return [];
+    return [
+      `GOASSIST_REDIS_URL points at ${url.hostname} with no password; anyone who can reach it can publish events`,
+    ];
+  } catch {
+    return ["GOASSIST_REDIS_URL is not a valid URL"];
+  }
+}
+
 /**
  * Throws when a shared or production environment is missing its secrets. When the override is
  * set it returns the problems instead, for the caller to log loudly.

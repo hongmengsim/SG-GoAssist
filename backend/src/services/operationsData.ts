@@ -1,3 +1,4 @@
+import { isTestRun } from "../platform/runtime";
 import fs from "fs";
 import path from "path";
 import type {
@@ -220,7 +221,7 @@ export class OperationsData {
     // Postgres when a pool is given or GOASSIST_DATABASE_URL is set (and memory was not asked for).
     // Tests use their own data directories and ignore the environment's database, so a variable
     // left set in a shell or a CI job cannot make them share one; they pass `postgres` instead.
-    const databaseUrl = process.env.NODE_TEST_CONTEXT
+    const databaseUrl = isTestRun()
       ? undefined
       : process.env.GOASSIST_DATABASE_URL?.trim();
     this.postgres = wantMemory
@@ -423,7 +424,7 @@ function defaultDataDirectory(): string {
   const baseDirectory = path.resolve(
     process.env.GOASSIST_DATA_DIR ?? path.join(process.cwd(), ".runtime"),
   );
-  return process.env.NODE_TEST_CONTEXT
+  return isTestRun()
     ? path.join(baseDirectory, `test-${process.pid}`)
     : baseDirectory;
 }
