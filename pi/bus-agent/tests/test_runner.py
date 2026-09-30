@@ -142,7 +142,7 @@ class StatusPublishingTests(unittest.TestCase):
         built, backend, clock = rig()
         board = StatusBoard()
         runner = Runner(built, queue.Queue(), board=board, clock=clock)
-        self.assertEqual({}, board.read())
+        self.assertEqual({"ageSeconds": None}, board.read())
         clock.now += 0.2
         runner.step()
         data = board.read()

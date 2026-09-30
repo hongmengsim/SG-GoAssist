@@ -16,12 +16,14 @@ import json
 import queue
 import re
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Optional
 
 MAX_BODY_BYTES = 2048
-MAX_DRAIN_BYTES = 1_048_576
+# A client that connects and then says nothing is dropped after this long.
+SOCKET_TIMEOUT_SECONDS = 5
 PAGE = Path(__file__).with_name("status.html")
 
 MOVEMENT_WORDS = {
@@ -118,14 +120,21 @@ class StatusBoard:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._latest: dict = {}
+        self._published_at: Optional[float] = None
 
     def publish(self, data: dict) -> None:
         with self._lock:
             self._latest = data
+            self._published_at = time.monotonic()
 
     def read(self) -> dict:
+        """The latest snapshot with ``ageSeconds``: a loop that has died still shows its last
+        decision, so the page must be able to say how old that is (None: nothing published)."""
         with self._lock:
-            return dict(self._latest)
+            data = dict(self._latest)
+            published = self._published_at
+        data["ageSeconds"] = None if published is None else round(time.monotonic() - published, 2)
+        return data
 
 
 _STOP = re.compile(r"^[A-Za-z0-9-]{1,40}$")
@@ -190,6 +199,8 @@ class StatusServer:
         server = self
 
         class Handler(BaseHTTPRequestHandler):
+            timeout = SOCKET_TIMEOUT_SECONDS
+
             def log_message(self, *args) -> None:  # the code must never reach a log
                 pass
 
@@ -224,24 +235,28 @@ class StatusServer:
                     self.reply(404, {"error": "Not found"})
 
             def do_POST(self) -> None:
-                # Always read (a bounded amount of) the body first, so the client receives our
-                # answer instead of a reset connection whatever the answer is.
-                try:
-                    length = int(self.headers.get("Content-Length", "0"))
-                except ValueError:
-                    length = -1
-                raw = self.rfile.read(min(length, MAX_DRAIN_BYTES)) if length > 0 else b""
+                # Nothing is read from an unauthorised or oversized request: the answer goes out
+                # and the connection is closed, so a client cannot make this thread wait for a body.
+                self.close_connection = True
                 if self.path != "/api/control":
                     self.reply(404, {"error": "Not found"})
                     return
                 if not self.authorised() or not server._controls:
                     self.reply(403, {"error": "Controls need the start-up code and simulate mode."})
                     return
+                try:
+                    length = int(self.headers.get("Content-Length", "0"))
+                except ValueError:
+                    length = -1
                 if not 0 <= length <= MAX_BODY_BYTES:
                     self.reply(413, {"error": "Request too large"})
                     return
+                raw = self.rfile.read(length) if length > 0 else b""
                 try:
                     line = parse_control(json.loads(raw or b"null"))
+                except RecursionError:
+                    self.reply(400, {"error": "Invalid control request"})
+                    return
                 except ValueError as error:
                     self.reply(400, {"error": str(error)})
                     return
