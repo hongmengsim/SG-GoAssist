@@ -12,6 +12,7 @@ import {
   createRequest,
   getRequest,
   getRequestsForBus,
+  getRequestsForBusWithStatus,
   processSimulatorCommand,
   processVehicleCommand,
   waitForRequestStatus,
@@ -150,4 +151,36 @@ test("attaching a case does not overwrite a status change made in between", asyn
     await attachCaseToRequest("NO-SUCH", "CASE-9", "VALIDATED"),
     undefined,
   );
+});
+
+test("a bus with more than 500 stored requests still sees its newest waiting request and its newest acknowledged one", async () => {
+  const data = await getOperationsData();
+  for (let n = 0; n < 520; n += 1)
+    await data.requests.put({
+      ...baseRequest(`REQ-OLD-${n}`, "BUS-BUSY"),
+      status: AssistanceRequestStatus.CANCELLED,
+    });
+  await data.requests.put(baseRequest("REQ-NEWEST-WAITING", "BUS-BUSY"));
+  const waiting = await getRequestsForBusWithStatus(
+    "BUS-BUSY",
+    AssistanceRequestStatus.SENDING,
+  );
+  assert.deepEqual(
+    waiting.map((request) => request.requestId),
+    ["REQ-NEWEST-WAITING"],
+  );
+  // Duplicate suppression must also see it, however many finished requests come before it.
+  const duplicate = await createRequest(
+    baseRequest("REQ-DUPLICATE", "BUS-BUSY"),
+  );
+  assert.equal(duplicate.requestId, "REQ-NEWEST-WAITING");
+});
+
+test("two identical requests made at the same instant become one request", async () => {
+  const [first, second] = await Promise.all([
+    createRequest(baseRequest("REQ-TAP-1", "BUS-TAP")),
+    createRequest(baseRequest("REQ-TAP-2", "BUS-TAP")),
+  ]);
+  assert.equal(first.requestId, second.requestId);
+  assert.equal((await getRequestsForBus("BUS-TAP")).length, 1);
 });

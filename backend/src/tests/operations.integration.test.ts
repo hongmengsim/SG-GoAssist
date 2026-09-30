@@ -161,7 +161,7 @@ test("device authentication verifies the exact JSON bytes sent by firmware", asy
     const body = `{"signalId":"signed-signal","source":"PHYSICAL_BUTTON","kind":"EXPLICIT_ASSISTANCE_REQUEST","stopCode":"18331","busCandidate":"BUS-DEMO","busService":"95","assistanceCandidates":["WHEELCHAIR_RAMP"],"confidence":1.00,"anonymousToken":"signed-passenger","observedAt":"${new Date().toISOString()}"}`;
     const signature = crypto
       .createHmac("sha256", secret)
-      .update(`${deviceId}.${timestamp}.${body}`)
+      .update(`${deviceId}.${timestamp}.POST./api/operations/signals.${body}`)
       .digest("hex");
 
     const accepted = await requestJson(
@@ -184,7 +184,9 @@ test("device authentication verifies the exact JSON bytes sent by firmware", asy
     assert.notEqual(changedBytes, body);
     const wrongSignature = crypto
       .createHmac("sha256", secret)
-      .update(`${deviceId}.${timestamp}.${changedBytes}`)
+      .update(
+        `${deviceId}.${timestamp}.POST./api/operations/signals.${changedBytes}`,
+      )
       .digest("hex");
     const rejected = await requestJson(
       server.baseUrl,

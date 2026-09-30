@@ -16,6 +16,11 @@ export interface BusStatusFilter {
 export interface BusStatusRepository {
   get(busId: string): Promise<BusStatus | undefined>;
   upsert(status: BusStatus): Promise<void>;
+  /** Writes `next` only if the stored status is still exactly `expected` (undefined: only if none). Atomic. */
+  compareAndUpsert(
+    expected: BusStatus | undefined,
+    next: BusStatus,
+  ): Promise<boolean>;
   list(filter: BusStatusFilter): Promise<BusStatus[]>;
   count(): Promise<number>;
   clear(): Promise<void>;
@@ -46,6 +51,8 @@ export interface BusRecord {
 export interface BusRecordRepository<T extends BusRecord = BusRecord> {
   get(busId: string): Promise<T | undefined>;
   upsert(record: T): Promise<void>;
+  /** Writes `next` only if the stored record is still exactly `expected` (undefined: only if none). Atomic. */
+  compareAndUpsert(expected: T | undefined, next: T): Promise<boolean>;
   list(limit: number): Promise<T[]>;
   count(): Promise<number>;
   clear(): Promise<void>;

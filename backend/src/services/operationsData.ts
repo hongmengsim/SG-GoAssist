@@ -43,6 +43,22 @@ import {
   type RetentionPolicy,
 } from "./retention";
 
+/** The archive is rotated past this size, and this many files are kept. */
+const ARCHIVE_MAX_BYTES = 20 * 1024 * 1024;
+const ARCHIVE_KEEP_FILES = 3;
+
+/** Copies of a record with every passenger token removed, at any depth. */
+function withoutPassengerTokens<T>(value: T): T {
+  if (Array.isArray(value)) return value.map(withoutPassengerTokens) as T;
+  if (value !== null && typeof value === "object") {
+    const copy: Record<string, unknown> = {};
+    for (const [key, inner] of Object.entries(value))
+      if (key !== "anonymousToken") copy[key] = withoutPassengerTokens(inner);
+    return copy as T;
+  }
+  return value;
+}
+
 /** How often the retention limits are applied while the server runs. */
 const RETENTION_INTERVAL_MS = 60_000;
 
@@ -69,7 +85,12 @@ const specs = {
   requests: {
     name: "requests",
     key: (doc) => doc.requestId,
-    indexes: { busId: (doc) => doc.busId, status: (doc) => doc.status },
+    indexes: {
+      busId: (doc) => doc.busId,
+      status: (doc) => doc.status,
+      // One bus's requests in one state, found through the index however many others exist.
+      busStatus: (doc) => `${doc.busId}:${doc.status}`,
+    },
   } satisfies TableSpec<PassengerAssistanceRequest>,
   vehicleStatuses: {
     name: "vehicle_statuses",
@@ -197,7 +218,11 @@ export class OperationsData {
     // "json" is the name the old store used for its no-SQLite mode; it now means memory too.
     const wantMemory = requested === "memory" || requested === "json";
     // Postgres when a pool is given or GOASSIST_DATABASE_URL is set (and memory was not asked for).
-    const databaseUrl = process.env.GOASSIST_DATABASE_URL?.trim();
+    // Tests use their own data directories and ignore the environment's database, so a variable
+    // left set in a shell or a CI job cannot make them share one; they pass `postgres` instead.
+    const databaseUrl = process.env.NODE_TEST_CONTEXT
+      ? undefined
+      : process.env.GOASSIST_DATABASE_URL?.trim();
     this.postgres = wantMemory
       ? undefined
       : (options.postgres ??
@@ -291,17 +316,41 @@ export class OperationsData {
     return await this.commands.find("open", OPEN, limit);
   }
 
-  /** Appends removed cases to the archive file (one line each, with when it was archived). */
+  /**
+   * Appends removed cases to the archive file (one line each, with when it was archived). The
+   * file is readable only by its owner, passenger tokens are left out, and once it passes
+   * `ARCHIVE_MAX_BYTES` it is rotated (the newest `ARCHIVE_KEEP_FILES` are kept), so the archive
+   * cannot outlive the retention it exists to serve or grow without limit. Under Postgres it is
+   * still a local file: on a host that does not keep its disk, treat it as best effort.
+   */
   archive(entries: ArchivedCase[]): void {
     if (entries.length === 0) return;
     const archivedAt = new Date().toISOString();
+    this.rotateArchive();
     fs.appendFileSync(
       this.archivePath,
       entries
-        .map((entry) => `${JSON.stringify({ archivedAt, ...entry })}\n`)
+        .map(
+          (entry) =>
+            `${JSON.stringify(withoutPassengerTokens({ archivedAt, ...entry }))}\n`,
+        )
         .join(""),
-      "utf8",
+      { encoding: "utf8", mode: 0o600 },
     );
+  }
+
+  private rotateArchive(): void {
+    try {
+      if (fs.statSync(this.archivePath).size < ARCHIVE_MAX_BYTES) return;
+    } catch {
+      return; // no archive yet
+    }
+    for (let n = ARCHIVE_KEEP_FILES - 1; n >= 1; n -= 1) {
+      const from = n === 1 ? this.archivePath : `${this.archivePath}.${n - 1}`;
+      const to = `${this.archivePath}.${n}`;
+      if (fs.existsSync(to)) fs.unlinkSync(to);
+      if (fs.existsSync(from)) fs.renameSync(from, to);
+    }
   }
 
   /** Applies the retention limits now; returns how many cases were archived. */

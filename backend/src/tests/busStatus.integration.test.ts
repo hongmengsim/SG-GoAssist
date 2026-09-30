@@ -37,7 +37,10 @@ function signedHeaders(
   const timestamp = String(Date.now());
   const signature = crypto
     .createHmac("sha256", secret)
-    .update(`${deviceId}.${timestamp}.`)
+    // The signature covers the method and path too (POST to this bus's status route).
+    .update(
+      `${deviceId}.${timestamp}.POST./api/operations/vehicles/${deviceId}/status.`,
+    )
     .update(raw)
     .digest("hex");
   return {

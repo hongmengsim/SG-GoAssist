@@ -18,12 +18,44 @@ import { logger } from "./services/logger";
 import { createApp } from "./app";
 import { flushBusOperationsAudit } from "./busOperations/composition";
 import { busStopRepository } from "./bus-stops/repository";
-import { configureLock, lockFromEnvironment } from "./concurrency/locks";
-import { getOperationsData } from "./services/operationsData";
+import {
+  configureLock,
+  getLock,
+  lockFromEnvironment,
+} from "./concurrency/locks";
+import {
+  closeOperationsData,
+  getAuditLog,
+  getOperationsData,
+} from "./services/operationsData";
+import { assertSecureStart } from "./startupGuard";
 import { configureEventHub, eventBusFromEnvironment } from "./events/eventHub";
 
 // Load environment variables
 dotenv.config();
+
+// A server that would be open to anyone by accident does not start (see startupGuard.ts).
+try {
+  const openProblems = assertSecureStart(process.env);
+  for (const problem of openProblems)
+    logger.warn(
+      `Running open on purpose (GOASSIST_ALLOW_INSECURE): ${problem}`,
+    );
+} catch (error) {
+  logger.error(String(error instanceof Error ? error.message : error));
+  process.exit(1);
+}
+
+// A promise nobody handled is a bug worth knowing about, but it must not take the whole server
+// (and every bus's connection) down with it.
+process.on("unhandledRejection", (reason) => {
+  logger.error("Unhandled promise rejection", undefined, {
+    error:
+      reason instanceof Error
+        ? (reason.stack ?? reason.message)
+        : String(reason),
+  });
+});
 
 const PORT = process.env.PORT || 3000;
 const ALLOWED_ORIGINS = (
@@ -70,18 +102,29 @@ getOperationsData()
     process.exit(1);
   });
 
-// Graceful shutdown
-process.on("SIGTERM", () => {
-  logger.info("SIGTERM signal received: closing HTTP server");
-  flushBusOperationsAudit();
-  httpServer.close(() => {
-    logger.info("HTTP server closed");
-    process.exit(0);
-  });
-});
-
-// Ctrl+C: write any audit events still waiting to be batched before exiting.
-process.on("SIGINT", () => {
-  flushBusOperationsAudit();
+// Graceful shutdown: stop taking connections, write what is still buffered (audit events),
+// give back the lock leases this process holds so peers do not wait for them to expire, and
+// close the storage. A second signal, or ten seconds, ends it.
+let shuttingDown = false;
+async function shutdown(signal: string): Promise<void> {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  logger.info(`${signal} received: shutting down`);
+  setTimeout(() => process.exit(1), 10_000).unref();
+  try {
+    await new Promise<void>((done) => {
+      httpServer.close(() => done());
+      httpServer.closeAllConnections?.();
+    });
+    flushBusOperationsAudit();
+    await getAuditLog().flush?.();
+    await getLock().close?.();
+    closeOperationsData();
+  } catch (error) {
+    logger.error("Error during shutdown", undefined, { error: String(error) });
+  }
+  logger.info("Shutdown complete");
   process.exit(0);
-});
+}
+process.on("SIGTERM", () => void shutdown("SIGTERM"));
+process.on("SIGINT", () => void shutdown("SIGINT"));

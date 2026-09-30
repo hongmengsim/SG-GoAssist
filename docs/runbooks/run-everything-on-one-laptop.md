@@ -5,7 +5,7 @@ Everything below is simulated: no camera, ESP32, Raspberry Pi or physical ramp i
 ## One command: the scripted scenario
 
 ```
-npm install                      # from PowerShell on Windows (see CLAUDE.md for why)
+npm install                      # from PowerShell on Windows (Git Bash's tar breaks the llama.rn download)
 npm run build --workspace @buspass/backend
 pip install -r pi/bus-agent/requirements.txt
 npm run e2e:scenario
@@ -52,3 +52,7 @@ It starts the backend on a free port with a device secret and `GOASSIST_AUTO_ACK
 - Real sensors: the beam and camera are simulated and labelled so in every report.
 - A deployment timeout or a help-required alert (roadmap R1): the timeout value is not agreed and is not invented here.
 - Nothing else is missing from the operator side: `npm run console` and `?mode=live` show the same data as the endpoints above, and covers case actions.
+
+## Beyond one process
+
+The same scenario can run across two backend processes sharing Postgres, Redis and locks (`npm run e2e:scenario:two`); setup and limits are in [`multi-process.md`](multi-process.md).

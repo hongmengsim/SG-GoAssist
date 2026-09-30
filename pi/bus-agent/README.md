@@ -1,6 +1,6 @@
 # pi/bus-agent
 
-**Status: runs as a simulated bus against the real backend (verified by a one-off smoke run on 30 Sep 2026; the repeatable end-to-end script is the next item). Local status page, real-sensor start-up, configuration file and record/replay are built and tested with fakes. Never run on a Pi or with real sensors: the hardware-facing loaders are unverified.**
+**Status: runs as a simulated bus against the real backend, verified by the repeatable end-to-end scenario (`npm run e2e:scenario`, and across two backend processes on Postgres and Redis with `npm run e2e:scenario:two`; both simulated sensors and a simulated ramp). The local status page, real-sensor start-up, configuration file and record/replay are built and tested with fakes. Never run on a Pi or with real sensors: the hardware-facing loaders are unverified.**
 
 ## Purpose
 
@@ -41,8 +41,7 @@ The ramp is simulated only. States are `STOWED`, `DEPLOYMENT_REQUESTED`, `DEPLOY
 
 ## Not done yet
 
-- The repeatable end-to-end scenario script (roadmap E1).
-- Agreed values for the deployment timeout and the link-loss halt (below). The mechanisms are built and **off** until configured: `deploymentTimeoutSeconds` (a deployment unfinished after this long raises help-required, fails its actuator command and halts with `DEPLOYMENT_TIMEOUT`) and `linkLossHaltSeconds` (a backend that has not been reached for this long halts the ramp with `BACKEND_LINK_LOST`). Both can only add a halt.
+- Confirmation of the timeout values with the team. CE2 chose 30 s (deployment) and 10 s (link loss) on 30 Sep 2026 and they are set in `agent.example.json`; in code both stay **off** unless a config sets them: `deploymentTimeoutSeconds` (a deployment unfinished after this long raises help-required, fails its actuator command and halts with `DEPLOYMENT_TIMEOUT`) and `linkLossHaltSeconds` (a backend that has not been reached for this long halts the ramp with `BACKEND_LINK_LOST`). Both can only add a halt.
 - Running any of the real-sensor code on hardware (the loaders for the Pi camera, OpenCV and the model are unverified).
 
 ## Run it alone
@@ -64,7 +63,7 @@ From this directory (needs `pip install -r requirements.txt` for the contract ch
 python -m unittest
 ```
 
-153 tests: ramp, signing and posting policy; the HTTP client against a fake transport (paths, signatures over the exact bytes, 409 as refusal, malformed responses); the WebSocket listener against a local server (subscribe, filter, reconnect); the console and runner; the agent scenarios (acknowledge, deploy, halt on an unsafe object, blocked beam, sensor dropout, covered or missing camera, operator halt, backend down, bay wait and grant, departure blocked with the ramp out, duplicate commands and requests, retry, heartbeat); and a check that every posted report validates against `contracts/schema`.
+170 tests: ramp, signing and posting policy; the HTTP client against a fake transport (paths, signatures over the exact bytes, 409 as refusal, malformed responses); the WebSocket listener against a local server (subscribe, filter, reconnect); the console and runner; the agent scenarios (acknowledge, deploy, halt on an unsafe object, blocked beam, sensor dropout, covered or missing camera, operator halt, backend down, bay wait and grant, departure blocked with the ramp out, duplicate commands and requests, retry, heartbeat); and a check that every posted report validates against `contracts/schema`.
 
 ## Known gaps
 

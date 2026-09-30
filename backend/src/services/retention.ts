@@ -3,6 +3,8 @@ import type {
   ActuatorStatus,
   AssistanceCase,
 } from "@buspass/shared";
+import { CASE_SERVICE_LOCK, RETENTION_LOCK } from "../concurrency/keys";
+import { withLock } from "../concurrency/locks";
 import type { OperationsData } from "./operationsData";
 
 /**
@@ -66,37 +68,75 @@ export function retentionPolicyFromEnv(
   };
 }
 
-/** Archives, then deletes, the given cases with their commands and statuses. */
+/**
+ * Archives, then deletes, the given cases with their commands, statuses and the observations
+ * that created their intents. Each case is checked again under the case lock just before it
+ * goes: if an operator reopened it since it was listed, or another pass already removed it, it
+ * is left alone. Returns how many were removed.
+ */
 async function archiveAndDelete(
   data: OperationsData,
   cases: AssistanceCase[],
-): Promise<void> {
-  if (cases.length === 0) return;
-  const entries: ArchivedCase[] = [];
-  for (const item of cases) {
-    entries.push({
-      case: item,
-      commands: await data.commands.find("caseId", item.caseId, PER_CASE_LIMIT),
-      statuses: await data.statuses.find("caseId", item.caseId, PER_CASE_LIMIT),
-    });
-  }
-  // Written first, so nothing is lost if a delete fails half way.
-  data.archive(entries);
-  for (const entry of entries) {
-    for (const command of entry.commands)
-      await data.commands.delete(command.commandId);
-    for (const status of entry.statuses)
-      await data.statuses.delete(status.commandId);
-    await data.cases.delete(entry.case.caseId);
-  }
+): Promise<number> {
+  if (cases.length === 0) return 0;
+  return withLock(CASE_SERVICE_LOCK, async () => {
+    const entries: ArchivedCase[] = [];
+    for (const listed of cases) {
+      const item = await data.cases.get(listed.caseId);
+      if (!item || !FINISHED_STATES.has(item.state)) continue;
+      entries.push({
+        case: item,
+        commands: await data.commands.find(
+          "caseId",
+          item.caseId,
+          PER_CASE_LIMIT,
+        ),
+        statuses: await data.statuses.find(
+          "caseId",
+          item.caseId,
+          PER_CASE_LIMIT,
+        ),
+      });
+    }
+    // Written first, so nothing is lost if a delete fails half way.
+    data.archive(entries);
+    for (const entry of entries) {
+      for (const command of entry.commands)
+        await data.commands.delete(command.commandId);
+      for (const status of entry.statuses)
+        await data.statuses.delete(status.commandId);
+      for (const intent of entry.case.intents)
+        await data.observations.delete(intent.signalId);
+      await data.cases.delete(entry.case.caseId);
+    }
+    return entries.length;
+  });
 }
+
+/** A case that no longer needs anyone; anything else is never removed. */
+const FINISHED_STATES: ReadonlySet<string> = new Set([
+  "COMPLETED",
+  "FAILED",
+  "CANCELLED",
+]);
 
 /**
  * Trims the data to the policy and returns how many cases were archived. Each step reads
  * and deletes in bounded batches, using indexes, so the cost follows what is removed and not
- * everything stored. Cases that still need someone are never touched.
+ * everything stored. Cases that still need someone are never touched, and a case's commands
+ * and statuses go only with the case (never by global order, which could take the command of
+ * a case that is still open). It runs under its own lock so two passes, in this process or
+ * another, do not overlap.
  */
-export async function enforceRetention(
+export function enforceRetention(
+  data: OperationsData,
+  policy: RetentionPolicy,
+  nowMs: number,
+): Promise<number> {
+  return withLock(RETENTION_LOCK, () => trim(data, policy, nowMs));
+}
+
+async function trim(
   data: OperationsData,
   policy: RetentionPolicy,
   nowMs: number,
@@ -106,21 +146,22 @@ export async function enforceRetention(
   for (;;) {
     const batch = await data.cases.listFinishedBefore(cutoff, BATCH);
     if (batch.length === 0) break;
-    await archiveAndDelete(data, batch);
-    archived += batch.length;
+    const removed = await archiveAndDelete(data, batch);
+    archived += removed;
+    // Nothing removable in a full batch (all revived): stop rather than read it again for ever.
+    if (removed === 0) break;
   }
   for (;;) {
     const excess = (await data.cases.countFinished()) - policy.maxFinishedCases;
     if (excess <= 0) break;
     const batch = await data.cases.listFinishedOldest(Math.min(excess, BATCH));
-    await archiveAndDelete(data, batch);
-    archived += batch.length;
+    const removed = await archiveAndDelete(data, batch);
+    archived += removed;
+    if (removed === 0) break;
   }
   const keep = policy.maxSeriesRecords;
   await data.observations.trimOldest(keep);
   await data.perceptionSamples.trimOldest(keep);
-  await data.commands.trimOldest(keep);
-  await data.statuses.trimOldest(keep);
   await data.requests.trimOldest(keep);
   await data.announcements.trimOldest(keep);
   await data.diagnostics.trimOldest(keep);

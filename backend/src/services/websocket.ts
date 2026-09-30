@@ -2,7 +2,12 @@ import WebSocket from "ws";
 import http from "http";
 import { StatusUpdateMessage } from "@buspass/shared";
 import { logger } from "./logger";
-import { DEVICE_SUBSCRIBE_BODY, verifyDeviceSignature } from "../routes/auth";
+import {
+  DEVICE_SUBSCRIBE_BODY,
+  deviceSecretFor,
+  safeEqual,
+  verifyDeviceSignature,
+} from "../routes/auth";
 import { getRequest, onAssistanceEvent } from "./aviator";
 import { getCase, onOperationsEvent } from "./assistanceCaseService";
 import { listStopVehiclePresence } from "./stopVehiclePresenceService";
@@ -26,6 +31,17 @@ interface WebSocketClient {
 }
 
 const clients: Set<WebSocketClient> = new Set();
+
+/** The largest message a client may send, and how many sockets one address may hold open. */
+export const MAX_MESSAGE_BYTES = 4096;
+export const MAX_CONNECTIONS_PER_ADDRESS = 100;
+/** Ids in subscribe messages are short; anything longer is refused rather than stored. */
+const MAX_ID_LENGTH = 80;
+
+const isId = (value: unknown): value is string =>
+  typeof value === "string" &&
+  value.length > 0 &&
+  value.length <= MAX_ID_LENGTH;
 let stateChangeListenerReady = false;
 
 // One JSON string per message, shared by every client that receives it.
@@ -92,9 +108,26 @@ export function initializeWebSocketServer(
   httpServer: http.Server,
   port: number,
 ) {
-  const wss = new WebSocket.Server({ server: httpServer });
+  // Messages here are small commands; refuse anything larger than a few KB (ws defaults to 100 MiB).
+  const wss = new WebSocket.Server({
+    server: httpServer,
+    maxPayload: MAX_MESSAGE_BYTES,
+  });
+  const perAddress = new Map<string, number>();
 
-  wss.on("connection", (ws: WebSocket) => {
+  wss.on("connection", (ws: WebSocket, req: http.IncomingMessage) => {
+    const address = req.socket.remoteAddress ?? "unknown";
+    const open = perAddress.get(address) ?? 0;
+    if (open >= MAX_CONNECTIONS_PER_ADDRESS) {
+      ws.close(1013, "Too many connections from this address");
+      return;
+    }
+    perAddress.set(address, open + 1);
+    ws.on("close", () => {
+      const left = (perAddress.get(address) ?? 1) - 1;
+      if (left <= 0) perAddress.delete(address);
+      else perAddress.set(address, left);
+    });
     const client: WebSocketClient = {
       ws,
       subscriptions: new Map(),
@@ -110,16 +143,17 @@ export function initializeWebSocketServer(
         const message = JSON.parse(data);
 
         if (message.type === "SUBSCRIBE") {
+          if (!isId(message.requestId)) {
+            ws.send(JSON.stringify({ type: "INVALID_SUBSCRIPTION" }));
+            return;
+          }
           client.requestId = message.requestId;
+          // Listen first, then read the current status: a change made between the two is
+          // delivered instead of lost.
+          setSubscription(client, "request", topic.request(message.requestId));
           const request = await getRequest(message.requestId);
+          if (ws.readyState !== WebSocket.OPEN) return;
           client.busId = request?.busId;
-          setSubscription(
-            client,
-            "request",
-            typeof message.requestId === "string"
-              ? topic.request(message.requestId)
-              : undefined,
-          );
           setSubscription(
             client,
             "bus",
@@ -151,14 +185,22 @@ export function initializeWebSocketServer(
           }
         }
         if (message.type === "SUBSCRIBE_CASE") {
+          if (!isId(message.caseId)) {
+            ws.send(JSON.stringify({ type: "INVALID_SUBSCRIPTION" }));
+            return;
+          }
           client.caseId = message.caseId;
-          client.busId = message.busId;
+          // Only what the server knows about the case decides which bus is followed; a client
+          // cannot name any bus it likes.
+          client.busId = undefined;
+          setSubscription(client, "case", topic.case(message.caseId));
           ws.send(
             JSON.stringify({ type: "SUBSCRIBED_CASE", caseId: client.caseId }),
           );
           const caseRecord = await getCase(message.caseId);
+          if (ws.readyState !== WebSocket.OPEN) return;
           if (caseRecord) {
-            client.busId = caseRecord.busId ?? client.busId;
+            client.busId = caseRecord.busId;
             ws.send(
               JSON.stringify({
                 type: "CASE_STATUS",
@@ -173,13 +215,6 @@ export function initializeWebSocketServer(
               }),
             );
           }
-          setSubscription(
-            client,
-            "case",
-            typeof client.caseId === "string"
-              ? topic.case(client.caseId)
-              : undefined,
-          );
           setSubscription(
             client,
             "bus",
@@ -199,7 +234,9 @@ export function initializeWebSocketServer(
             client.stopCode = stopCode;
             setSubscription(client, "stop", topic.stop(stopCode));
             ws.send(JSON.stringify({ type: "SUBSCRIBED_STOP", stopCode }));
-            (await listStopVehiclePresence(stopCode)).forEach((vehicle) => {
+            const present = await listStopVehiclePresence(stopCode);
+            if (ws.readyState !== WebSocket.OPEN) return;
+            present.forEach((vehicle) => {
               ws.send(
                 JSON.stringify({
                   type: "STOP_VEHICLE_PRESENCE",
@@ -215,9 +252,9 @@ export function initializeWebSocketServer(
           // A bus subscribes to its own bus only, proving who it is with the device secret
           // instead of holding the operator token.
           const busId = message.busId;
-          const secret = process.env.DEVICE_SHARED_SECRET;
           const valid =
             typeof busId === "string" && busId.length > 0 && busId.length <= 64;
+          const secret = valid ? deviceSecretFor(busId) : undefined;
           if (!valid) {
             ws.send(JSON.stringify({ type: "INVALID_DEVICE_SUBSCRIPTION" }));
           } else if (
@@ -246,7 +283,10 @@ export function initializeWebSocketServer(
         }
         if (message.type === "SUBSCRIBE_OPERATIONS") {
           const expectedToken = process.env.OPERATOR_API_TOKEN;
-          if (expectedToken && message.token !== expectedToken) {
+          if (
+            expectedToken &&
+            !safeEqual(String(message.token ?? ""), expectedToken)
+          ) {
             ws.send(JSON.stringify({ type: "AUTH_REQUIRED" }));
           } else {
             const scope = parseOperatorScope(message);

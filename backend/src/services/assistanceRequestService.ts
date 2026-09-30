@@ -147,6 +147,7 @@ export async function createStandardizedAssistanceRequestBundle(
 
 function generateRequestId(): string {
   const timestamp = new Date().toISOString().split("T")[0].replace(/-/g, "");
-  const random = crypto.randomBytes(3).toString("hex").toUpperCase();
+  // 64 random bits: a request id is the only thing that lets a passenger follow or cancel a request.
+  const random = crypto.randomBytes(8).toString("hex").toUpperCase();
   return `REQ-${timestamp}-${random}`;
 }

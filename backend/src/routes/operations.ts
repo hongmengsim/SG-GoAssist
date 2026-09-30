@@ -120,6 +120,7 @@ router.post(
 
 router.get(
   "/cases",
+  requireOperator,
   route(async (req, res) => {
     const state =
       typeof req.query.state === "string"
@@ -134,6 +135,7 @@ router.get(
 
 router.get(
   "/cases/:caseId",
+  requireOperator,
   route(async (req, res) => {
     const item = await getCase(req.params.caseId);
     if (!item) throw new OperationsNotFoundError("Assistance case not found");
@@ -183,6 +185,7 @@ router.post(
 
 router.post(
   "/cases/:caseId/feedback",
+  requireOperator,
   route(async (req, res) => {
     res.json({
       case: await recordPassengerFeedback(req.params.caseId, req.body.score),
@@ -192,6 +195,7 @@ router.post(
 
 router.get(
   "/vehicles/capabilities",
+  requireOperator,
   route(async (_req, res) => {
     const capabilities = await listVehicleCapabilities();
     res.json({ count: capabilities.length, capabilities });
@@ -264,6 +268,7 @@ router.get(
 
 router.get(
   "/vehicles/:busId/autonomy",
+  requireOperator,
   route(async (req, res) => {
     res.json(await getAutonomousVehicleState(req.params.busId));
   }),
@@ -299,6 +304,7 @@ router.post(
 
 router.get(
   "/vehicles/:busId/autonomy/docking",
+  requireOperator,
   route(async (req, res) => {
     res.json(await getPrecisionDockingAssessment(req.params.busId));
   }),

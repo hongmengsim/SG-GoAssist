@@ -227,3 +227,108 @@ test(
     }
   },
 );
+
+for (const adapter of adapters) {
+  const label = `BusStatusRepository (${adapter.name})`;
+  const options = { skip: adapter.skip };
+
+  test(
+    `${label}: compareAndUpsert inserts only when absent`,
+    options,
+    async () => {
+      const { repository, cleanup } = adapter.create();
+      assert.equal(
+        await repository.compareAndUpsert(undefined, status("B1")),
+        true,
+      );
+      assert.equal(
+        await repository.compareAndUpsert(
+          undefined,
+          status("B1", { movement: "DEPARTING" }),
+        ),
+        false,
+      );
+      assert.equal(
+        (await repository.get("B1"))?.movement,
+        "TRAVELLING_TO_STOP",
+      );
+      cleanup();
+    },
+  );
+
+  test(
+    `${label}: compareAndUpsert writes only if the stored status is still what the caller read`,
+    options,
+    async () => {
+      const { repository, cleanup } = adapter.create();
+      const first = status("B1", {
+        bayId: "BAY-A",
+        observedAt: "2026-09-30T00:00:01.000Z",
+      });
+      await repository.upsert(first);
+      const refreshed = { ...first, observedAt: "2026-09-30T00:00:09.000Z" };
+      assert.equal(await repository.compareAndUpsert(first, refreshed), true);
+      assert.equal(
+        (await repository.get("B1"))?.observedAt,
+        "2026-09-30T00:00:09.000Z",
+      );
+      // Someone else changed it meanwhile: a swap based on the old read must fail and change nothing.
+      assert.equal(
+        await repository.compareAndUpsert(first, {
+          ...first,
+          movement: "DEPARTING",
+        }),
+        false,
+      );
+      assert.equal(
+        (await repository.get("B1"))?.movement,
+        "TRAVELLING_TO_STOP",
+      );
+      cleanup();
+    },
+  );
+
+  test(
+    `${label}: compareAndUpsert treats a missing optional field as equal to itself`,
+    options,
+    async () => {
+      const { repository, cleanup } = adapter.create();
+      const bare = {
+        busId: "B1",
+        busService: "95",
+        movement: "TRAVELLING_TO_STOP" as const,
+        simulated: false,
+        observedAt: "2026-09-30T00:00:01.000Z",
+      };
+      await repository.upsert(bare);
+      assert.equal(
+        await repository.compareAndUpsert(bare, {
+          ...bare,
+          observedAt: "2026-09-30T00:00:02.000Z",
+        }),
+        true,
+      );
+      cleanup();
+    },
+  );
+
+  test(
+    `${label}: of many simultaneous swaps from the same read, exactly one wins`,
+    options,
+    async () => {
+      const { repository, cleanup } = adapter.create();
+      const first = status("B1", { observedAt: "2026-09-30T00:00:01.000Z" });
+      await repository.upsert(first);
+      const results = await Promise.all(
+        Array.from({ length: 10 }, (_, n) =>
+          repository.compareAndUpsert(first, {
+            ...first,
+            observedAt: `2026-09-30T00:00:${String(10 + n)}.000Z`,
+          }),
+        ),
+      );
+      assert.equal(results.filter(Boolean).length, 1);
+      cleanup();
+    },
+  );
+}

@@ -15,6 +15,12 @@ import { clearAllRequests, countRequests } from "./services/aviator";
 import { clearOperations } from "./services/assistanceCaseService";
 import { getEventHub } from "./events/eventHub";
 import { getOperationsData } from "./services/operationsData";
+import { installAsyncErrorHandling } from "./routes/asyncErrors";
+import {
+  checkDeviceRequest,
+  deviceAuthEnabled,
+  safeEqual,
+} from "./routes/auth";
 import { getBusOperations } from "./busOperations/composition";
 import { Metrics } from "./platform/metrics";
 import {
@@ -43,6 +49,8 @@ function defaultRateLimit(): LimitConfig | false {
 const READ_ONLY_CACHE_SECONDS = 300;
 
 export function createApp(options: AppOptions = {}) {
+  // A rejected async handler must become a 500, not an unhandled rejection that ends the process.
+  installAsyncErrorHandling();
   const roles = parseRoles(options.roles ?? process.env.GOASSIST_ROLES);
   const limits =
     options.rateLimit === undefined ? defaultRateLimit() : options.rateLimit;
@@ -86,7 +94,12 @@ export function createApp(options: AppOptions = {}) {
   // Metrics and load shedding see every request. Devices are keyed by their id (or address),
   // everyone else by address, so one noisy client cannot use up another's allowance.
   app.use((req, res, next) => {
-    const klass = classifyRequest(req.method, req.path);
+    // A bus is trusted, and keyed by its id, only when its signature checks out; otherwise it is
+    // treated like any other client (keyed by address), so a made-up device id gets no burst
+    // of its own and no safety priority. In development (no secret) the header is used as before.
+    const device = checkDeviceRequest(req);
+    const trustedDevice = device.ok && (device.signed || !deviceAuthEnabled());
+    const klass = classifyRequest(req.method, req.path, trustedDevice);
     const started = process.hrtime.bigint();
     metrics.started();
     limiter?.enter();
@@ -100,7 +113,10 @@ export function createApp(options: AppOptions = {}) {
       );
     });
     if (limiter) {
-      const key = String(req.headers["x-device-id"] ?? req.ip ?? "unknown");
+      const key =
+        trustedDevice && device.ok && device.deviceId
+          ? device.deviceId
+          : String(req.ip ?? "unknown");
       const admission = limiter.admit(klass, key);
       if (!admission.ok) {
         res.setHeader("Retry-After", String(admission.retryAfterSeconds));
@@ -154,13 +170,19 @@ export function createApp(options: AppOptions = {}) {
       await (await getOperationsData()).ping();
       checks.operationsStore = "ok";
     } catch (error) {
-      checks.operationsStore = `failed: ${String(error)}`;
+      logger.error("Readiness: operations data failed", undefined, {
+        error: String(error),
+      });
+      checks.operationsStore = "failed";
     }
     try {
       await getBusOperations().listBusStatus({ limit: 1 });
       checks.busOperations = "ok";
     } catch (error) {
-      checks.busOperations = `failed: ${String(error)}`;
+      logger.error("Readiness: bus operations failed", undefined, {
+        error: String(error),
+      });
+      checks.busOperations = "failed";
     }
     const ready = Object.values(checks).every((value) => value === "ok");
     res.status(ready ? 200 : 503).json({ ready, checks });
@@ -168,7 +190,10 @@ export function createApp(options: AppOptions = {}) {
 
   const requireAdmin: express.RequestHandler = (req, res, next) => {
     const token = process.env.OPERATOR_API_TOKEN;
-    if (token && req.headers.authorization !== `Bearer ${token}`) {
+    if (
+      token &&
+      !safeEqual(String(req.headers.authorization ?? ""), `Bearer ${token}`)
+    ) {
       res.status(401).json({ error: "Operator authentication required" });
       return;
     }

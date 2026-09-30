@@ -18,6 +18,23 @@ export class MemoryBusStatusRepository implements BusStatusRepository {
     this.records.set(status.busId, { ...status });
   }
 
+  async compareAndUpsert(
+    expected: BusStatus | undefined,
+    next: BusStatus,
+  ): Promise<boolean> {
+    const current = this.records.get(next.busId);
+    if (expected === undefined) {
+      if (current !== undefined) return false;
+    } else if (
+      current === undefined ||
+      JSON.stringify(current) !== JSON.stringify(expected)
+    ) {
+      return false;
+    }
+    this.records.set(next.busId, { ...next });
+    return true;
+  }
+
   async list(filter: BusStatusFilter): Promise<BusStatus[]> {
     return [...this.records.values()]
       .filter(

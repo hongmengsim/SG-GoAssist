@@ -75,6 +75,19 @@ class SigningTests(unittest.TestCase):
         signature = sign_body("test-secret", "AV-095-01", "1800000000000", b'{"a":1}')
         self.assertEqual("3504562de6d878f1d72e1f42f89660730f8524c4fe8496b9d72049437b9eb607", signature)
 
+    def test_the_http_signature_binds_the_method_and_path_and_matches_the_backend(self) -> None:
+        # Computed with Node's crypto over "AV-095-01.1800000000000.POST./api/operations/vehicles/AV-095-01/status."
+        # followed by the body, the way backend/src/routes/auth.ts does.
+        path = "/api/operations/vehicles/AV-095-01/status"
+        signature = sign_body("test-secret", "AV-095-01", "1800000000000", b'{"a":1}', "POST", path)
+        self.assertEqual("92b4562afbc3383a62d656d9cf320c436fc45679cb34edb5ec309bf7cf40cd54", signature)
+        for other in (
+            sign_body("test-secret", "AV-095-01", "1800000000000", b'{"a":1}', "GET", path),
+            sign_body("test-secret", "AV-095-01", "1800000000000", b'{"a":1}', "POST", path + "x"),
+            sign_body("test-secret", "AV-095-01", "1800000000000", b'{"a":1}'),
+        ):
+            self.assertNotEqual(signature, other)
+
     def test_headers_carry_the_device_id_timestamp_and_signature(self) -> None:
         headers = signed_headers("s", "AV-095-01", b"{}", now_ms=1_800_000_000_000)
         self.assertEqual("AV-095-01", headers["x-device-id"])

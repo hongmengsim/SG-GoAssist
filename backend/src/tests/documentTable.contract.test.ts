@@ -1,4 +1,4 @@
-import test from "node:test";
+﻿import test from "node:test";
 import assert from "node:assert/strict";
 import {
   MemoryDocumentTable,
@@ -205,3 +205,65 @@ test("a table or index name that is not lower-case letters is refused", () => {
       }),
   );
 });
+
+for (const adapter of adapters) {
+  const options = { skip: adapter.skip };
+  const label = `DocumentTable (${adapter.name})`;
+
+  test(
+    `${label}: compareAndPut inserts only when absent and updates the indexes it writes`,
+    options,
+    async () => {
+      const table = adapter.create();
+      assert.equal(await table.compareAndPut(undefined, doc("A", "g1")), true);
+      assert.equal(await table.compareAndPut(undefined, doc("A", "g2")), false);
+      assert.equal(await table.count(), 1);
+      const read = (await table.get("A"))!;
+      assert.equal(
+        await table.compareAndPut(read, { ...read, group: "g9" }),
+        true,
+      );
+      assert.equal(await table.countBy("group", "g1"), 0);
+      assert.equal((await table.findOne("group", "g9"))?.id, "A");
+    },
+  );
+
+  test(
+    `${label}: compareAndPut fails, and changes nothing, if the document changed since it was read`,
+    options,
+    async () => {
+      const table = adapter.create();
+      await table.put(doc("A", "g1"));
+      const read = (await table.get("A"))!;
+      await table.put({ ...read, kind: "changed by someone else" });
+      assert.equal(
+        await table.compareAndPut(read, { ...read, group: "g5" }),
+        false,
+      );
+      assert.equal((await table.get("A"))?.kind, "changed by someone else");
+      assert.equal(
+        await table.compareAndPut(
+          { ...read, id: "MISSING" },
+          { ...read, id: "MISSING" },
+        ),
+        false,
+      );
+    },
+  );
+
+  test(
+    `${label}: of many simultaneous swaps from the same read, exactly one wins`,
+    options,
+    async () => {
+      const table = adapter.create();
+      await table.put(doc("A", "g1"));
+      const read = (await table.get("A"))!;
+      const results = await Promise.all(
+        Array.from({ length: 10 }, (_, n) =>
+          table.compareAndPut(read, { ...read, kind: `writer ${n}` }),
+        ),
+      );
+      assert.equal(results.filter(Boolean).length, 1);
+    },
+  );
+}

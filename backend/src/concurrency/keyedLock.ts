@@ -17,6 +17,8 @@ import { logger } from "../services/logger";
  */
 export interface KeyedLock {
   run<T>(key: string, work: () => Promise<T>): Promise<T>;
+  /** Gives back every lease this process holds (at shutdown), so peers do not wait for them to expire. */
+  close?(): Promise<void>;
 }
 
 export class LockTimeoutError extends Error {
@@ -74,7 +76,8 @@ export interface DistributedLockOptions {
 
 const DEFAULTS = {
   ttlMs: 15_000,
-  acquireTimeoutMs: 10_000,
+  // Longer than the lease, so a peer that died holding a lock is waited out instead of failing.
+  acquireTimeoutMs: 20_000,
   retryMs: 5,
   maxRetryMs: 100,
 };
@@ -94,6 +97,7 @@ const sleep = (ms: number) =>
 export class DistributedKeyedLock implements KeyedLock {
   private readonly local = new InProcessKeyedLock();
   private readonly options: Required<DistributedLockOptions>;
+  private readonly held = new Set<{ key: string; owner: string }>();
 
   constructor(
     private readonly leases: LeaseStore,
@@ -111,6 +115,8 @@ export class DistributedKeyedLock implements KeyedLock {
   private async withLease<T>(key: string, work: () => Promise<T>): Promise<T> {
     const owner = crypto.randomUUID();
     await this.acquire(key, owner);
+    const lease = { key, owner };
+    this.held.add(lease);
     const renew = setInterval(
       () => {
         this.leases
@@ -139,6 +145,7 @@ export class DistributedKeyedLock implements KeyedLock {
       return await work();
     } finally {
       clearInterval(renew);
+      this.held.delete(lease);
       await this.leases.release(key, owner).catch((error: unknown) =>
         logger.error("A lock lease could not be released", undefined, {
           key,
@@ -146,6 +153,12 @@ export class DistributedKeyedLock implements KeyedLock {
         }),
       );
     }
+  }
+
+  async close(): Promise<void> {
+    for (const { key, owner } of [...this.held])
+      await this.leases.release(key, owner).catch(() => undefined);
+    this.held.clear();
   }
 
   private async acquire(key: string, owner: string): Promise<void> {

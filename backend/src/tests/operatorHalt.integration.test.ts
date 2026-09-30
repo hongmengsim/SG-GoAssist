@@ -197,7 +197,9 @@ test("setting a halt needs the operator token, and a bus read needs its signatur
     const timestamp = String(Date.now());
     const signature = crypto
       .createHmac("sha256", "halt-secret")
-      .update(`${BUS}.${timestamp}.`)
+      .update(
+        `${BUS}.${timestamp}.GET./api/operations/vehicles/${BUS}/operator-halt.`,
+      )
       .update("{}")
       .digest("hex");
     const signed = await getHalt(server.baseUrl, BUS, {

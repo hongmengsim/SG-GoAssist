@@ -13,4 +13,12 @@ What is still missing and in what order: [`roadmap.md`](roadmap.md).
 
 The message contract itself is code: [`contracts/src/index.ts`](../contracts/src/index.ts).
 
-Current status and checklist: [status.md](status.md). Runbooks live in `docs/runbooks/`: [run everything on one laptop](runbooks/run-everything-on-one-laptop.md). Each module documents how to run and test itself in its own README.
+Current status and checklist: [status.md](status.md). Each module documents how to run and test itself in its own README.
+
+Runbooks (`docs/runbooks/`):
+
+- [Run everything on one laptop](runbooks/run-everything-on-one-laptop.md): the backend, the console and simulated buses, no hardware.
+- [Hardware bring-up](runbooks/hardware-bring-up.md): ESP32, camera, model and the real Pi, stage by stage, with a fallback at each stage. Nothing in it has been run on hardware yet.
+- [Multi-process](runbooks/multi-process.md): Postgres, Redis and shared locks; how to run and check more than one backend process.
+
+Decisions worth knowing: [0004](decisions/0004-design-for-scale-build-in-stages.md) (design for scale, build in stages) and [0005](decisions/0005-scale-ready-storage-and-processes.md) (async storage, shared event bus, shared locks, Postgres, the lock-free hot path, and what has and has not been shown across processes).

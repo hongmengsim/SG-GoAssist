@@ -69,6 +69,7 @@ async function withTwoProcesses(extraEnv, work) {
             GOASSIST_OPERATOR_TOKEN: "",
             GOASSIST_DEVICE_SECRET: "",
             GOASSIST_RATE_LIMIT: "off",
+            GOASSIST_ALLOW_INSECURE: "true",
             // Part 1 must not inherit the shared database: each process keeps its own data.
             GOASSIST_DATABASE_URL: "",
             GOASSIST_LOCKS: "memory",

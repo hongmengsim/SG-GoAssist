@@ -1,6 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, existsSync, rmSync } from "node:fs";
+import {
+  mkdtempSync,
+  readFileSync,
+  existsSync,
+  rmSync,
+  statSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
@@ -332,4 +338,145 @@ test("the policy comes from the environment, and a bad value falls back to the d
   });
   assert.deepEqual(bad, DEFAULT_RETENTION_POLICY);
   assert.deepEqual(retentionPolicyFromEnv({}), DEFAULT_RETENTION_POLICY);
+});
+
+// ---- review fixes (1 Oct 2026) ----
+
+test("commands and statuses are removed only with their case: a long-open case keeps its deploy command however many others exist", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "goassist-retention-"));
+  try {
+    const data = new OperationsData(directory, {
+      retention: {
+        finishedCaseMaxAgeMs: 400 * DAY,
+        maxFinishedCases: 1000,
+        maxSeriesRecords: 3,
+      },
+      driver: "memory",
+      retentionTimer: false,
+    });
+    await data.ready;
+    await data.cases.upsert(makeCase("LONG-OPEN", "BLOCKED", 30 * DAY));
+    await data.putCommand(command("K-OPEN", "LONG-OPEN"));
+    for (let n = 0; n < 10; n += 1) {
+      await data.cases.upsert(makeCase(`DONE-${n}`, "COMPLETED", 60 * 1000));
+      await data.putCommand(command(`K-${n}`, `DONE-${n}`));
+      await data.putStatus(status(`K-${n}`, `DONE-${n}`));
+    }
+    await data.runRetention(NOW);
+    assert.ok(
+      await data.commands.get("K-OPEN"),
+      "the open case still has its command",
+    );
+    assert.equal(
+      await data.commands.count(),
+      11,
+      "no command was trimmed away from a live or finished case",
+    );
+    data.close();
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("a case that an operator revived after it was listed is not deleted, and nothing is archived twice", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "goassist-retention-"));
+  try {
+    const data = new OperationsData(directory, {
+      retention: {
+        finishedCaseMaxAgeMs: 7 * DAY,
+        maxFinishedCases: 1000,
+        maxSeriesRecords: 100,
+      },
+      driver: "memory",
+      retentionTimer: false,
+    });
+    await data.ready;
+    await data.cases.upsert(makeCase("REVIVED", "COMPLETED", 9 * DAY));
+    await data.cases.upsert(makeCase("GONE", "COMPLETED", 9 * DAY));
+    // Between the listing and the delete, the operator reopens one of the two.
+    const real = data.cases.listFinishedBefore.bind(data.cases);
+    data.cases.listFinishedBefore = async (iso, limit) => {
+      const listed = await real(iso, limit);
+      await data.cases.upsert(makeCase("REVIVED", "ESCALATED", 1 * 60 * 1000));
+      return listed;
+    };
+    await Promise.all([data.runRetention(NOW), data.runRetention(NOW)]);
+    assert.ok(await data.cases.get("REVIVED"), "an open case must survive");
+    assert.equal(await data.cases.get("GONE"), undefined);
+    const archived = readFileSync(data.archivePath, "utf8").trim().split("\n");
+    assert.equal(
+      archived.length,
+      1,
+      "each removed case is archived exactly once",
+    );
+    data.close();
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("the archive holds no passenger token and is readable only by its owner", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "goassist-retention-"));
+  try {
+    const data = new OperationsData(directory, {
+      retention: {
+        finishedCaseMaxAgeMs: 7 * DAY,
+        maxFinishedCases: 1000,
+        maxSeriesRecords: 100,
+      },
+      driver: "memory",
+      retentionTimer: false,
+    });
+    await data.ready;
+    await data.cases.upsert({
+      ...makeCase("TOKENS", "COMPLETED", 9 * DAY),
+      intents: [
+        {
+          intentId: "I1",
+          signalId: "S1",
+          anonymousToken: "passenger-secret-token",
+        },
+      ],
+    } as unknown as AssistanceCase);
+    await data.runRetention(NOW);
+    const text = readFileSync(data.archivePath, "utf8");
+    assert.ok(!text.includes("passenger-secret-token"));
+    assert.ok(text.includes("TOKENS"));
+    if (process.platform !== "win32")
+      assert.equal(statSync(data.archivePath).mode & 0o077, 0);
+    data.close();
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("a finished case takes its observations with it", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "goassist-retention-"));
+  try {
+    const data = new OperationsData(directory, {
+      retention: {
+        finishedCaseMaxAgeMs: 7 * DAY,
+        maxFinishedCases: 1000,
+        maxSeriesRecords: 100,
+      },
+      driver: "memory",
+      retentionTimer: false,
+    });
+    await data.ready;
+    await data.cases.upsert({
+      ...makeCase("WITH-SIGNAL", "COMPLETED", 9 * DAY),
+      intents: [{ intentId: "I1", signalId: "S-OWN" }],
+    } as unknown as AssistanceCase);
+    await data.observations.put(observation(1));
+    await data.observations.put({ ...observation(2), signalId: "S-OWN" });
+    await data.runRetention(NOW);
+    assert.equal(await data.observations.get("S-OWN"), undefined);
+    assert.ok(
+      await data.observations.get("S1"),
+      "an unrelated observation stays",
+    );
+    data.close();
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });

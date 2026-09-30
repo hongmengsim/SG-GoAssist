@@ -1,6 +1,6 @@
 import type { DocumentTable, TableSpec } from "./documentTable";
 import { MAX_INDEXES } from "./documentTable";
-import { createSchemaObjects, toNumber, type PgPool } from "./postgres";
+import { inTransaction, toNumber, type PgPool } from "./postgres";
 
 const NAME = /^[a-z_]+$/;
 const INDEX_NAME = /^[A-Za-z][A-Za-z0-9_]*$/;
@@ -32,22 +32,90 @@ export class PostgresDocumentTable<T> implements DocumentTable<T> {
       if (!INDEX_NAME.test(name)) throw new Error(`Bad index name: ${name}`);
     this.table = `doc_${spec.name}`;
     this.order = spec.orderBy === "key" ? "doc_key" : "seq";
-    const columns = this.names.map((_, position) => `i${position} TEXT`);
-    this.ready = createSchemaObjects(pool, [
-      `CREATE TABLE IF NOT EXISTS ${this.table} (
-        seq BIGSERIAL,
-        doc_key TEXT PRIMARY KEY,
-        ${columns.map((column) => `${column},`).join("\n        ")}
-        body_json TEXT NOT NULL
-      )`,
-      `CREATE UNIQUE INDEX IF NOT EXISTS ${this.table}_seq ON ${this.table} (seq)`,
-      ...this.names.map(
-        (_, position) =>
-          `CREATE INDEX IF NOT EXISTS ${this.table}_i${position} ON ${this.table} (i${position})`,
-      ),
-    ]);
+    this.ready = this.prepareTable();
     // A failed start-up must surface on the first use, not as an unhandled rejection here.
     this.ready.catch(() => undefined);
+  }
+
+  /**
+   * Creates the table, or brings one made by an older version up to the current index set
+   * (see SqliteDocumentTable.migrateIndexes), inside the same advisory-locked transaction as
+   * every other table so processes starting together do not collide.
+   */
+  private prepareTable(): Promise<void> {
+    const columns = this.names.map((_, position) => `i${position} TEXT`);
+    return inTransaction(this.pool, async (client) => {
+      await client.query("SELECT pg_advisory_xact_lock(727001)");
+      await client.query(
+        "CREATE TABLE IF NOT EXISTS doc_meta (doc_table TEXT PRIMARY KEY, index_names TEXT NOT NULL)",
+      );
+      await client.query(
+        `CREATE TABLE IF NOT EXISTS ${this.table} (
+          seq BIGSERIAL,
+          doc_key TEXT PRIMARY KEY,
+          ${columns.map((column) => `${column},`).join("\n          ")}
+          body_json TEXT NOT NULL
+        )`,
+      );
+      await client.query(
+        `CREATE UNIQUE INDEX IF NOT EXISTS ${this.table}_seq ON ${this.table} (seq)`,
+      );
+      const recorded = await client.query(
+        "SELECT index_names FROM doc_meta WHERE doc_table = $1",
+        [this.table],
+      );
+      const previous = recorded.rows[0]
+        ? (JSON.parse(String(recorded.rows[0].index_names)) as string[])
+        : undefined;
+      const present = new Set(
+        (
+          await client.query(
+            "SELECT column_name FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = $1",
+            [this.table],
+          )
+        ).rows.map((row) => String(row.column_name)),
+      );
+      const refill: number[] = [];
+      for (const [position, name] of this.names.entries()) {
+        if (!present.has(`i${position}`)) {
+          await client.query(
+            `ALTER TABLE ${this.table} ADD COLUMN i${position} TEXT`,
+          );
+          refill.push(position);
+        } else if (previous && previous[position] !== name) {
+          refill.push(position);
+        }
+        await client.query(
+          `CREATE INDEX IF NOT EXISTS ${this.table}_i${position} ON ${this.table} (i${position})`,
+        );
+      }
+      if (refill.length > 0) {
+        const rows = await client.query(
+          `SELECT doc_key, body_json FROM ${this.table}`,
+        );
+        for (const row of rows.rows) {
+          const doc = JSON.parse(String(row.body_json)) as T;
+          const assignments = refill.map(
+            (position, n) => `i${position} = $${n + 1}`,
+          );
+          await client.query(
+            `UPDATE ${this.table} SET ${assignments.join(", ")} WHERE doc_key = $${refill.length + 1}`,
+            [
+              ...refill.map(
+                (position) =>
+                  this.spec.indexes![this.names[position]](doc) ?? null,
+              ),
+              row.doc_key,
+            ],
+          );
+        }
+      }
+      await client.query(
+        `INSERT INTO doc_meta (doc_table, index_names) VALUES ($1, $2)
+         ON CONFLICT (doc_table) DO UPDATE SET index_names = EXCLUDED.index_names`,
+        [this.table, JSON.stringify(this.names)],
+      );
+    });
   }
 
   private column(index: string): string {
@@ -90,6 +158,38 @@ export class PostgresDocumentTable<T> implements DocumentTable<T> {
         JSON.stringify(doc),
       ],
     );
+  }
+
+  async compareAndPut(expected: T | undefined, next: T): Promise<boolean> {
+    const key = this.spec.key(next);
+    const indexValues = this.names.map(
+      (name) => this.spec.indexes![name](next) ?? null,
+    );
+    const body = JSON.stringify(next);
+    if (expected === undefined) {
+      const columns = [
+        "doc_key",
+        ...this.names.map((_, position) => `i${position}`),
+        "body_json",
+      ];
+      const result = await this.query(
+        `INSERT INTO ${this.table} (${columns.join(", ")})
+         VALUES (${columns.map((_, position) => `$${position + 1}`).join(", ")})
+         ON CONFLICT (doc_key) DO NOTHING`,
+        [key, ...indexValues, body],
+      );
+      return result.rowCount === 1;
+    }
+    const assignments = [
+      ...this.names.map((_, position) => `i${position} = $${position + 1}`),
+      `body_json = $${this.names.length + 1}`,
+    ];
+    const result = await this.query(
+      `UPDATE ${this.table} SET ${assignments.join(", ")}
+       WHERE doc_key = $${this.names.length + 2} AND body_json = $${this.names.length + 3}`,
+      [...indexValues, body, key, JSON.stringify(expected)],
+    );
+    return result.rowCount === 1;
   }
 
   async list(limit: number): Promise<T[]> {

@@ -52,6 +52,8 @@ function toStatus(row: BusStatusRow): BusStatus {
 export class SqliteBusStatusRepository implements BusStatusRepository {
   private readonly selectOne: SqliteStatement;
   private readonly upsertOne: SqliteStatement;
+  private readonly insertIfAbsent: SqliteStatement;
+  private readonly swap: SqliteStatement;
   private readonly listAll: SqliteStatement;
   private readonly listByStop: SqliteStatement;
   private readonly countAll: SqliteStatement;
@@ -67,6 +69,16 @@ export class SqliteBusStatusRepository implements BusStatusRepository {
        ON CONFLICT(bus_id) DO UPDATE SET
          bus_service = excluded.bus_service, stop_code = excluded.stop_code, bay_id = excluded.bay_id,
          movement = excluded.movement, simulated = excluded.simulated, observed_at = excluded.observed_at`,
+    );
+    this.insertIfAbsent = database.prepare(
+      `INSERT INTO bus_status (${COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(bus_id) DO NOTHING`,
+    );
+    // Every column must still match what the caller read; IS compares NULLs as equal.
+    this.swap = database.prepare(
+      `UPDATE bus_status SET bus_service = ?, stop_code = ?, bay_id = ?, movement = ?, simulated = ?, observed_at = ?
+       WHERE bus_id = ? AND bus_service IS ? AND stop_code IS ? AND bay_id IS ?
+         AND movement IS ? AND simulated IS ? AND observed_at IS ?`,
     );
     this.listAll = database.prepare(
       `SELECT ${COLUMNS} FROM bus_status ORDER BY bus_id LIMIT ?`,
@@ -95,6 +107,26 @@ export class SqliteBusStatusRepository implements BusStatusRepository {
       status.simulated ? 1 : 0,
       status.observedAt,
     );
+  }
+
+  async compareAndUpsert(
+    expected: BusStatus | undefined,
+    next: BusStatus,
+  ): Promise<boolean> {
+    const values = (status: BusStatus) => [
+      status.busService,
+      status.stopCode ?? null,
+      status.bayId ?? null,
+      status.movement,
+      status.simulated ? 1 : 0,
+      status.observedAt,
+    ];
+    const result = (
+      expected === undefined
+        ? this.insertIfAbsent.run(next.busId, ...values(next))
+        : this.swap.run(...values(next), next.busId, ...values(expected))
+    ) as { changes: number | bigint };
+    return Number(result.changes) === 1;
   }
 
   async list(filter: BusStatusFilter): Promise<BusStatus[]> {

@@ -16,6 +16,20 @@ export class MemoryBusRecordRepository<
     this.records.set(record.busId, structuredClone(record));
   }
 
+  async compareAndUpsert(expected: T | undefined, next: T): Promise<boolean> {
+    const current = this.records.get(next.busId);
+    if (expected === undefined) {
+      if (current !== undefined) return false;
+    } else if (
+      current === undefined ||
+      JSON.stringify(current) !== JSON.stringify(expected)
+    ) {
+      return false;
+    }
+    this.records.set(next.busId, structuredClone(next));
+    return true;
+  }
+
   async list(limit: number): Promise<T[]> {
     return [...this.records.values()]
       .sort((a, b) => (a.busId < b.busId ? -1 : a.busId > b.busId ? 1 : 0))
@@ -40,6 +54,8 @@ export class SqliteBusRecordRepository<
 > implements BusRecordRepository<T> {
   private readonly selectOne: SqliteStatement;
   private readonly upsertOne: SqliteStatement;
+  private readonly insertIfAbsent: SqliteStatement;
+  private readonly swap: SqliteStatement;
   private readonly listAll: SqliteStatement;
   private readonly countAll: SqliteStatement;
   private readonly deleteAll: SqliteStatement;
@@ -56,6 +72,13 @@ export class SqliteBusRecordRepository<
       `INSERT INTO ${table} (bus_id, observed_at, record_json) VALUES (?, ?, ?)
        ON CONFLICT(bus_id) DO UPDATE SET observed_at = excluded.observed_at, record_json = excluded.record_json`,
     );
+    this.insertIfAbsent = database.prepare(
+      `INSERT INTO ${table} (bus_id, observed_at, record_json) VALUES (?, ?, ?)
+       ON CONFLICT(bus_id) DO NOTHING`,
+    );
+    this.swap = database.prepare(
+      `UPDATE ${table} SET observed_at = ?, record_json = ? WHERE bus_id = ? AND record_json = ?`,
+    );
     this.listAll = database.prepare(
       `SELECT record_json FROM ${table} ORDER BY bus_id LIMIT ?`,
     );
@@ -71,6 +94,21 @@ export class SqliteBusRecordRepository<
 
   async upsert(record: T): Promise<void> {
     this.upsertOne.run(record.busId, record.observedAt, JSON.stringify(record));
+  }
+
+  async compareAndUpsert(expected: T | undefined, next: T): Promise<boolean> {
+    const body = JSON.stringify(next);
+    const result = (
+      expected === undefined
+        ? this.insertIfAbsent.run(next.busId, next.observedAt, body)
+        : this.swap.run(
+            next.observedAt,
+            body,
+            next.busId,
+            JSON.stringify(expected),
+          )
+    ) as { changes: number | bigint };
+    return Number(result.changes) === 1;
   }
 
   async list(limit: number): Promise<T[]> {

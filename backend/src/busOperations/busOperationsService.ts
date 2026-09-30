@@ -9,6 +9,9 @@ import { getLock } from "../concurrency/locks";
 import { applyBusReport, emptyBay, grantNext } from "./bayCoordinator";
 import type { BayRepository, BusStatusRepository } from "./ports";
 
+/** How many times a report retries after losing a compare-and-swap to a newer refresh. */
+const MAX_WRITE_ATTEMPTS = 5;
+
 export class BusOperationsValidationError extends Error {}
 
 /** The request is well formed but the current state does not allow it (HTTP 409). */
@@ -139,7 +142,22 @@ export class BusOperationsService {
 
   async reportBusStatus(input: unknown, busId: string): Promise<ReportResult> {
     const status = parseBusStatus(input, busId, this.deps.now());
-    return this.exclusive(busId, async () => {
+    const quick = await this.withoutLock(status, busId);
+    if (quick) return quick;
+    return this.exclusive(busId, () => this.applyReport(status, busId, 0));
+  }
+
+  /**
+   * The locked path. The write is a compare-and-swap on what this read, because a repeat
+   * report may refresh the time without the lock in between; if the swap loses, read again
+   * (the bay step is safe to repeat) instead of overwriting the newer record.
+   */
+  private async applyReport(
+    status: BusStatus,
+    busId: string,
+    attempt: number,
+  ): Promise<ReportResult> {
+    {
       const existing = await this.deps.busStatus.get(busId);
       if (
         existing &&
@@ -149,7 +167,13 @@ export class BusOperationsService {
       }
       await this.applyBay(existing, status);
       const changed = existing === undefined || !sameFacts(existing, status);
-      await this.deps.busStatus.upsert(status);
+      if (!(await this.deps.busStatus.compareAndUpsert(existing, status))) {
+        if (attempt >= MAX_WRITE_ATTEMPTS)
+          throw new BusOperationsConflictError(
+            "The bus status is changing too fast to store this report; send it again",
+          );
+        return this.applyReport(status, busId, attempt + 1);
+      }
       if (!changed) return { outcome: "HEARTBEAT", status };
 
       this.deps.audit({
@@ -171,7 +195,30 @@ export class BusOperationsService {
       });
       await this.deps.onMovement?.(status);
       return { outcome: "CHANGED", status };
-    });
+    }
+  }
+
+  /**
+   * Answers the two cheap cases with no lock: a report older than the stored one, and a
+   * repeat with the same facts (most reports are these heartbeats), which only refreshes the
+   * time. The refresh is one compare-and-swap, so if anything changed the status since it was
+   * read the swap fails and the report takes the locked path. A repeat does not touch the
+   * bay: the bay only changes when the bus's facts do.
+   */
+  private async withoutLock(
+    status: BusStatus,
+    busId: string,
+  ): Promise<ReportResult | undefined> {
+    const existing = await this.deps.busStatus.get(busId);
+    if (!existing) return undefined;
+    if (Date.parse(status.observedAt) < Date.parse(existing.observedAt))
+      return { outcome: "STALE", status: existing };
+    if (!sameFacts(existing, status)) return undefined;
+    const swapped = await this.deps.busStatus.compareAndUpsert(
+      existing,
+      status,
+    );
+    return swapped ? { outcome: "HEARTBEAT", status } : undefined;
   }
 
   /** Current bay for a stop; a stop nobody has reported at has an empty bay. */
