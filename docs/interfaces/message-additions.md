@@ -180,7 +180,11 @@ Timeout value for `DEPLOYMENT_TIMEOUT`; service-to-bus assignment (today the app
 
 ## Bus subscription
 
-A bus subscribes to its own events with `SUBSCRIBE_DEVICE` `{ busId, deviceId, timestamp, signature }`, where `deviceId` equals `busId` and `signature` is the device HMAC (the same rule as signed requests, 60-second window) over the fixed body `SUBSCRIBE_DEVICE`. It is answered with `SUBSCRIBED_DEVICE`, or `AUTH_REQUIRED` for a bad signature, stale time or mismatched id. It receives only its own bus's `ASSIST_REQUESTED` and `BAY_STATUS`, and needs no operator token. With no `DEVICE_SHARED_SECRET` set (development) the signature is not required.
+### Device request signing (version 2, 1 Oct 2026)
+
+A device request carries `x-device-id`, `x-timestamp` (milliseconds since the epoch) and `x-signature`. The signature is the hex HMAC-SHA256, keyed with the device's secret, of `<deviceId>.<timestamp>.<METHOD>.<path and query>.` followed by the exact body bytes (a request with no body signs `{}`). `<path and query>` is the request target as sent, for example `/api/operations/actuators/pending?busId=AV-1`. The timestamp must be within 60 seconds and a number; a signature already used is refused ("already used", 401); a device may only act on `/vehicles/:busId` for its own bus id (403 otherwise). The secret is `DEVICE_SECRETS[deviceId]` when that map has the device, otherwise `DEVICE_SHARED_SECRET`. This replaced the first version, which signed only the timestamp and body, so a captured signature could be replayed on other paths. The replay cache is per process. The Pi agent signs this way (`pi/bus-agent/bus_agent/signing.py`).
+
+A bus subscribes to its own events with `SUBSCRIBE_DEVICE` `{ busId, deviceId, timestamp, signature }`, where `deviceId` equals `busId` and `signature` is the device HMAC (the same rule as signed requests, 60-second window) over the fixed body `SUBSCRIBE_DEVICE`, that is HMAC-SHA256 of `<deviceId>.<timestamp>.` followed by `SUBSCRIBE_DEVICE`. It is answered with `SUBSCRIBED_DEVICE`, or `AUTH_REQUIRED` for a bad signature, stale time or mismatched id. It receives only its own bus's `ASSIST_REQUESTED` and `BAY_STATUS`, and needs no operator token. With no `DEVICE_SHARED_SECRET` set (development) the signature is not required.
 
 ## Delivering a request to the bus
 

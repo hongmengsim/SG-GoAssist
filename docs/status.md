@@ -118,7 +118,7 @@ Legend: `[x]` built and verified by a test or a run (evidence given), `[ ]` not 
 - **The console's live camera view is a labelled placeholder;** the ramp-zone panel is drawn from the Pi's decision, not an image.
 - **Unresolved from the 29 Sep handoff:** alighting and destination scope in the app (documented, not hidden), backend as both cloud and controller, final ToF sensor, submission deadline.
 - **Contract change process:** additions to `contracts/` (operator-only messages, report types) were made ahead of a written proposal; recorded in `docs/interfaces/message-additions.md`.
-- **The 1 Oct 2026 security and code reviews** (four independent reviewers: backend security, backend code, the Pi agent, the operator console) produced findings that are recorded in `docs/reviews/2026-10-01-reviews.md` with their status.
+- **The 1 Oct 2026 security and code reviews** (four independent reviewers: backend security, backend code, the Pi agent, the operator console) produced findings that are recorded in `docs/reviews/2026-10-01-reviews.md` with their status. They were then fixed, each with a test written first (backend 519 tests with Postgres, Pi bus agent 201, operator console 123). All HIGH findings are fixed. Deferred, with reasons, in that file: signed responses to the Pi, a shared replay cache, a per-request passenger secret, individual operator tokens, the camera freshness check (needs the real camera), and timer-based stale-case refresh. None of the Pi fixes has been run on hardware.
 
 ## Hardware bring-up log (worked on the branch `hardware-bringup`, since merged into `main`)
 
