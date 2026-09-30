@@ -1,4 +1,5 @@
-import { randomBytes, randomUUID } from "crypto";
+import { createHash, randomBytes, randomUUID } from "crypto";
+import { safeEqual } from "../routes/auth";
 import { getOperationsData } from "./operationsData";
 
 export type AssistantDiagnostic = {
@@ -16,10 +17,17 @@ export type AssistantDiagnostic = {
   expiresAt: string;
 };
 
-export type StoredDiagnostic = AssistantDiagnostic & { deletionToken: string };
+/** Only a hash of the deletion token is kept, so a copy of the store cannot delete anyone's record. */
+export type StoredDiagnostic = AssistantDiagnostic & {
+  deletionTokenHash: string;
+};
 
-/** A purge looks at most this many diagnostics; the retention policy keeps far fewer. */
-const PURGE_SCAN_LIMIT = 50_000;
+const hashToken = (token: string) =>
+  createHash("sha256").update(token).digest("hex");
+
+/** Diagnostics are read for a purge or a listing in batches of this size. */
+const PURGE_BATCH = 200;
+const LIST_LIMIT = 50_000;
 
 const retentionMs = 30 * 24 * 60 * 60 * 1_000;
 
@@ -38,7 +46,7 @@ export async function saveAssistantDiagnostic(
       ? defensivelyRedact(input.fallbackReason)
       : undefined,
     diagnosticId,
-    deletionToken,
+    deletionTokenHash: hashToken(deletionToken),
     createdAt: now.toISOString(),
     expiresAt: new Date(now.getTime() + retentionMs).toISOString(),
   };
@@ -52,24 +60,36 @@ export async function deleteAssistantDiagnostic(
 ) {
   const table = (await getOperationsData()).diagnostics;
   const existing = await table.get(diagnosticId);
-  if (!existing || existing.deletionToken !== deletionToken) return false;
+  if (
+    !existing ||
+    !safeEqual(existing.deletionTokenHash, hashToken(deletionToken))
+  )
+    return false;
   await table.delete(diagnosticId);
   return true;
 }
 
+/**
+ * Every diagnostic lives the same 30 days, so they expire in the order they were saved: the
+ * purge reads from the oldest end and stops at the first one still alive. Its cost follows how
+ * many have expired, not how many are stored.
+ */
 export async function purgeExpiredAssistantDiagnostics(now = new Date()) {
   const table = (await getOperationsData()).diagnostics;
-  for (const diagnostic of await table.list(PURGE_SCAN_LIMIT)) {
-    if (new Date(diagnostic.expiresAt).getTime() <= now.getTime()) {
-      await table.delete(diagnostic.diagnosticId);
-    }
+  for (;;) {
+    const batch = await table.list(PURGE_BATCH);
+    const expired = batch.filter(
+      (item) => new Date(item.expiresAt).getTime() <= now.getTime(),
+    );
+    for (const item of expired) await table.delete(item.diagnosticId);
+    if (expired.length < PURGE_BATCH) return;
   }
 }
 
 export async function listAssistantDiagnosticsForTests() {
   await purgeExpiredAssistantDiagnostics();
   const table = (await getOperationsData()).diagnostics;
-  return (await table.list(PURGE_SCAN_LIMIT)).map(publicDiagnostic);
+  return (await table.list(LIST_LIMIT)).map(publicDiagnostic);
 }
 
 export async function clearAssistantDiagnosticsForTests() {
@@ -77,7 +97,7 @@ export async function clearAssistantDiagnosticsForTests() {
 }
 
 function publicDiagnostic({
-  deletionToken: _token,
+  deletionTokenHash: _hash,
   ...diagnostic
 }: StoredDiagnostic) {
   return diagnostic;
