@@ -2,6 +2,7 @@
 //   ?mode=mock   (default) a simulated world in the page, no backend
 //   ?mode=live   the real backend: ?backend=http://host:3000 (default: this host, port 3000)
 
+import { patchInner } from "./domPatch.js";
 import { resolveBackend } from "./backendUrl.js";
 import { simulatedTag, tag } from "./html.js";
 import { createLiveSource } from "./live/source.js";
@@ -90,10 +91,12 @@ function renderNotice() {
     .filter(Boolean)
     .map((text) => `<p role="status">${text.replace(/[&<>]/g, "")}</p>`)
     .join("");
-  $("notice").innerHTML =
+  patchInner(
+    $("notice"),
     messages || tokenForm
       ? `<div class="banner-lite">${messages}${tokenForm}</div>`
-      : "";
+      : "",
+  );
 }
 
 // ---- routing and rendering ---------------------------------------------------------------------------
@@ -125,19 +128,13 @@ function render(force = false) {
   if (!force && key === lastKey) return;
   lastKey = key;
 
-  const focused = document.activeElement;
-  const keep = focused?.dataset?.act
-    ? `[data-act="${focused.dataset.act}"]${focused.dataset.bus ? `[data-bus="${focused.dataset.bus}"]` : ""}`
-    : focused?.dataset?.kind
-      ? `[data-kind="${focused.dataset.kind}"]`
-      : focused?.id
-        ? `#${focused.id}`
-        : null;
-
-  $("modeBar").innerHTML = renderModeBar();
+  // Only what changed is written, so the field being typed in keeps its focus and text, drop-downs
+  // stay open and unchanged alert banners are not announced again.
+  patchInner($("modeBar"), renderModeBar());
   renderNotice();
-  $("crumbs").innerHTML = breadcrumbs(current);
-  $("root").innerHTML =
+  patchInner($("crumbs"), breadcrumbs(current));
+  patchInner(
+    $("root"),
     current.name === "stop"
       ? stopPage(
           state,
@@ -151,12 +148,8 @@ function render(force = false) {
           ? casesPage(state)
           : current.name === "case"
             ? casePage(state, current.id, source.caseActionsFor(current.id))
-            : overviewPage(state, ui);
-  if (keep) {
-    const element = document.querySelector(keep);
-    if (element && !element.disabled && element.id !== "tokenInput")
-      element.focus();
-  }
+            : overviewPage(state, ui),
+  );
   if (mode === "mock") renderDrawer();
 }
 
