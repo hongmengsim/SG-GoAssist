@@ -20,6 +20,7 @@ import {
 } from "@buspass/shared";
 import { getBusById } from "../data/buses.mock";
 import { logger } from "./logger";
+import { CASE_SERVICE_LOCK } from "../concurrency/keys";
 import { withLock } from "../concurrency/locks";
 import {
   getAuditLog,
@@ -42,7 +43,7 @@ const TERMINAL_STATES: AssistanceCaseState[] = [
  * synchronous code could not interleave two such operations; asynchronous code can, and
  * with several processes the lock is shared through the database (see concurrency/).
  */
-const OPERATIONS_LOCK = "case-service";
+const OPERATIONS_LOCK = CASE_SERVICE_LOCK;
 /** Reads that must stay bounded, whatever is stored. Retention keeps the real numbers far lower. */
 const CASE_LIST_LIMIT = 10_000;
 const METRICS_CASE_LIMIT = 50_000;
