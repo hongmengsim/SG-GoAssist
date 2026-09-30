@@ -144,3 +144,17 @@ Run with a throwaway script that drives `BeamReader` on the real ESP32 over `/de
   - The agent's own `calibrate` command and the gate's halt reasons: not tested (Stage 5).
   - Stable power: `throttled=0x50000` and 390 over-current lines were still present at uptime 1024 s. The supply is still suspect.
 - **Observation:** clear readings drifted between 226 and 249 mm against a 228.5 mm reference, about 20 mm from the reference at the top, against a 30 mm margin. The margin is thin for this sensor and backstop.
+
+### Stages 1 and 2, re-run after the power fault was removed (30 Sep 2026)
+
+- **Cause of the power fault (reported by CE2, not measured by me):** a phone was connected to the Pi's USB port. With it removed the fault stopped. Until then the ESP32 repeatedly dropped off USB (`OSError: [Errno 5] Input/output error` in the reader), with `over-current change` bursts on all four USB ports. Over-current lines also appeared with the ESP32 unplugged (330 to 390 in 30 s), so the ESP32 was not their source. A new cable had already cleared the under-voltage (`throttled=0x0`, `EXT5V_V` 4.92 to 5.00 V) but not the over-current.
+- **Verified on hardware (clean re-run of the beam test, new reference 259.0 mm):**
+  - `UNCALIBRATED` before calibration; calibration was refused twice ("Wait for 10 fresh valid readings", then "Reference is moving/noisy"), then accepted at 259.0 mm.
+  - Path empty: `BEAM_CLEAR` at 256 to 260 mm for 5 s.
+  - Hand held in the beam: `BLOCKED` from the first reading in the block, 65 mm falling to 35 to 43 mm, held for the whole 6 s.
+  - Hand withdrawn: `BLOCKED` for about 1.5 s, then `CHECKING` for two readings, then `BEAM_CLEAR` for the rest.
+  - Backstop removed: `UNKNOWN` with no distance for the whole 6 s.
+  - The whole run (about 40 s) completed with no serial error.
+- **Not verified:** `throttled`, `EXT5V_V` and the over-current count were not pasted after the phone was removed, so power is judged only by the run completing. Unplugging the ESP32 mid-run and the gate's halt need the agent (Stage 5).
+- **Observation:** with the backstop untouched, clear readings sat 15 to 25 mm above the 259.0 mm reference (274 to 284 mm) after the hand was withdrawn. The margin is 30 mm, so this is close.
+- **Open code issue seen on hardware, not yet fixed:** `SerialLineSource.read_lines` (`pi/tof-link/beam_reading.py`) has no handling for the port vanishing, and `BusAgent._decide` calls it unguarded, so an unplugged ESP32 would raise out of the tick instead of reporting `UNKNOWN`. To be tested and fixed before the unplug check in Stage 5.
