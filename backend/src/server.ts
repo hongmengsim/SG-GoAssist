@@ -19,6 +19,7 @@ import { createApp } from "./app";
 import { flushBusOperationsAudit } from "./busOperations/composition";
 import { busStopRepository } from "./bus-stops/repository";
 import { getOperationsData } from "./services/operationsData";
+import { configureEventHub, eventBusFromEnvironment } from "./events/eventHub";
 
 // Load environment variables
 dotenv.config();
@@ -38,6 +39,9 @@ logger.info("[BusStops] Regional dataset initialized", undefined, {
 
 // Create HTTP server (for WebSocket support)
 const httpServer = http.createServer(app);
+
+// Choose how events are shared: in this process (default) or through Redis for several processes.
+configureEventHub(eventBusFromEnvironment());
 
 // Initialize WebSocket server
 initializeWebSocketServer(httpServer, parseInt(String(PORT), 10));
