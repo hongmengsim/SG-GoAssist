@@ -26,6 +26,8 @@ const SCHEMA = [
 const FLUSH_DELAY_MS = 20;
 /** If the database stays away, keep at most this many events before dropping the oldest. */
 const MAX_BUFFERED = 10_000;
+/** An event the database refuses this many times is dropped, so it cannot block the rest. */
+const MAX_WRITE_FAILURES = 3;
 
 /**
  * The audit trail on Postgres. Writes are buffered and sent in one multi-row statement a few
@@ -39,6 +41,7 @@ export class PostgresAuditLog implements AuditSink {
   private buffer: OperationsAuditEvent[] = [];
   private timer: NodeJS.Timeout | undefined;
   private flushing: Promise<void> = Promise.resolve();
+  private readonly failures = new Map<string, number>();
 
   constructor(
     private readonly pool: PgPool,
@@ -90,34 +93,97 @@ export class PostgresAuditLog implements AuditSink {
     const events = this.buffer;
     this.buffer = [];
     try {
-      await this.ready;
-      const values: unknown[] = [];
-      const rows = events.map((event) => {
-        const base = values.length;
-        values.push(
-          event.eventId,
-          event.eventType,
-          event.caseId ?? null,
-          event.busId ?? null,
-          event.actor,
-          event.timestamp,
-          JSON.stringify(event.detail ?? {}),
-        );
-        return `(${[1, 2, 3, 4, 5, 6, 7].map((n) => `$${base + n}`).join(", ")})`;
-      });
-      await this.pool.query(
-        `INSERT INTO audit_events (event_id, event_type, case_id, bus_id, actor, timestamp, detail_json)
-         VALUES ${rows.join(", ")} ON CONFLICT (event_id) DO NOTHING`,
-        values,
-      );
+      await this.insert(events);
+      for (const event of events) this.failures.delete(event.eventId);
     } catch (error) {
-      // Put them back in front so the next flush retries; they keep their order.
-      this.buffer = [...events, ...this.buffer];
-      logger.error("Audit events could not be written", undefined, {
-        error: String(error),
-        buffered: this.buffer.length,
-      });
+      if (!(await this.databaseIsUp())) {
+        // An outage is not the events' fault: keep every one, in order, for the next flush.
+        this.buffer = [...events, ...this.buffer];
+        logger.error("Audit events could not be written", undefined, {
+          error: String(error),
+          buffered: this.buffer.length,
+        });
+        return;
+      }
+      // The database answers, so something in this batch is refused. Write what can be written
+      // and deal with the events that cannot, so one bad event never blocks all the others.
+      const refused = await this.isolate(events);
+      for (const event of events)
+        if (!refused.includes(event)) this.failures.delete(event.eventId);
+      this.retryOrDrop(refused, error);
     }
+  }
+
+  private async insert(events: OperationsAuditEvent[]): Promise<void> {
+    await this.ready;
+    const values: unknown[] = [];
+    const rows = events.map((event) => {
+      const base = values.length;
+      values.push(
+        event.eventId,
+        event.eventType,
+        event.caseId ?? null,
+        event.busId ?? null,
+        event.actor,
+        event.timestamp,
+        JSON.stringify(event.detail ?? {}),
+      );
+      return `(${[1, 2, 3, 4, 5, 6, 7].map((n) => `$${base + n}`).join(", ")})`;
+    });
+    await this.pool.query(
+      `INSERT INTO audit_events (event_id, event_type, case_id, bus_id, actor, timestamp, detail_json)
+       VALUES ${rows.join(", ")} ON CONFLICT (event_id) DO NOTHING`,
+      values,
+    );
+  }
+
+  private async databaseIsUp(): Promise<boolean> {
+    try {
+      await this.pool.query("SELECT 1");
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Writes every event it can by halving a refused batch; returns the events that were refused. */
+  private async isolate(
+    events: OperationsAuditEvent[],
+  ): Promise<OperationsAuditEvent[]> {
+    if (events.length <= 1) return events; // the caller already saw this one fail
+    const middle = Math.ceil(events.length / 2);
+    const refused: OperationsAuditEvent[] = [];
+    for (const half of [events.slice(0, middle), events.slice(middle)]) {
+      try {
+        await this.insert(half);
+      } catch {
+        refused.push(...(await this.isolate(half)));
+      }
+    }
+    return refused;
+  }
+
+  private retryOrDrop(refused: OperationsAuditEvent[], error: unknown): void {
+    const retry: OperationsAuditEvent[] = [];
+    for (const event of refused) {
+      const failures = (this.failures.get(event.eventId) ?? 0) + 1;
+      if (failures >= MAX_WRITE_FAILURES) {
+        this.failures.delete(event.eventId);
+        logger.error(
+          "An audit event was refused three times and dropped from the database (the log file still has it)",
+          undefined,
+          {
+            eventId: event.eventId,
+            eventType: event.eventType,
+            error: String(error),
+          },
+        );
+      } else {
+        this.failures.set(event.eventId, failures);
+        retry.push(event);
+      }
+    }
+    this.buffer = [...retry, ...this.buffer];
   }
 
   async read(query: AuditQuery): Promise<OperationsAuditEvent[]> {

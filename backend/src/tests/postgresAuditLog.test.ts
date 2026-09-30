@@ -103,3 +103,71 @@ test("postgres audit: events survive a failed write and are written, in order, o
   await log.flush();
   assert.deepEqual(written, ["EVENT-1", "EVENT-2"]);
 });
+
+function poolThat(options: {
+  refuse?: (values: unknown[]) => boolean;
+  down?: () => boolean;
+}) {
+  const written: string[] = [];
+  const attempts: string[][] = [];
+  const client: PgClient = {
+    query: async () => ({ rows: [], rowCount: 0 }),
+    release: () => undefined,
+  };
+  const pool: PgPool = {
+    connect: async () => client,
+    end: async () => undefined,
+    query: async (text: string, values?: unknown[]): Promise<PgResult> => {
+      if (options.down?.()) throw new Error("database away");
+      if (text.startsWith("INSERT INTO audit_events")) {
+        const ids: string[] = [];
+        for (let i = 0; i < (values?.length ?? 0); i += 7)
+          ids.push(String(values?.[i]));
+        attempts.push(ids);
+        if (options.refuse?.(values ?? [])) throw new Error("invalid input");
+        written.push(...ids);
+      }
+      return { rows: [], rowCount: 0 };
+    },
+  };
+  return { pool, written, attempts };
+}
+
+test("postgres audit: one event the database refuses does not block the others, and is dropped after three tries", async () => {
+  const { pool, written, attempts } = poolThat({
+    refuse: (values) => values.includes("EVENT-BAD"),
+  });
+  const log = new PostgresAuditLog(pool);
+  log.appendBatch([event(1), { ...event(2), eventId: "EVENT-BAD" }, event(3)]);
+  await log.flush();
+  assert.deepEqual(
+    written.sort(),
+    ["EVENT-1", "EVENT-3"],
+    "the good ones went in",
+  );
+  await log.flush();
+  await log.flush();
+  const triesOnBad = attempts.filter(
+    (ids) => ids.length === 1 && ids[0] === "EVENT-BAD",
+  ).length;
+  assert.ok(triesOnBad >= 3, "it was tried");
+  const before = attempts.length;
+  await log.flush();
+  await log.flush();
+  assert.equal(
+    attempts.length,
+    before,
+    "after three failures it is dropped, not retried for ever",
+  );
+});
+
+test("postgres audit: while the database is away nothing is dropped, however long it lasts", async () => {
+  let down = true;
+  const { pool, written } = poolThat({ down: () => down });
+  const log = new PostgresAuditLog(pool);
+  log.append(event(1));
+  for (let i = 0; i < 6; i += 1) await log.flush();
+  down = false;
+  await log.flush();
+  assert.deepEqual(written, ["EVENT-1"]);
+});
