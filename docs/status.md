@@ -205,3 +205,8 @@ Setup: backend built from this branch on the PC (Node v22.15.1, `GOASSIST_AUTO_A
   - The console shows the decision time in UTC beside a header clock in local time.
   - The Pi's local status page shows a `SIMULATED` badge on a real run: `.mark { display: inline-block }` overrides the `hidden` attribute in `pi/bus-agent/bus_agent/status.html`.
   - The backend expired the deploy command 1.1 s before the agent reported its own 30 s timeout; the two timers race.
+
+### Stage 5 follow-up: decision posting rate after the fix, measured on the Pi (30 Sep 2026)
+
+- **Verified on hardware:** with the fix (commit 9e1439c) copied to the Pi and the agent restarted at 05:04:12 UTC, the backend audit file shows `RAMP_SAFETY_CHANGED` entries per minute falling from about 190 to 250 (04:58 to 05:03, before the restart) to 57, 18, 42, 21 and 7 (05:04 to 05:08). That is roughly a 75 to 97 percent drop. After 05:08:12 the audit file gained no new rows for over four minutes, which fits a steady decision producing no new rows; it does not by itself show the agent was still posting.
+- **Not verified:** that the rate is at the intended one message per bus every five seconds when nothing changes (the backend audits only content changes, so heartbeat posts do not show in the audit file); what caused the remaining changes (hand and object movement, beam flicker); that the agent was still reporting after 05:08:12 (needs the console's "Last report" age).
