@@ -55,7 +55,17 @@ export class RedisBroker implements MessageBroker {
       this.handlers.set(channel, set);
     }
     set.add(handler);
-    if (isFirst) await this.subscriber.subscribe(channel);
+    if (isFirst) {
+      try {
+        await this.subscriber.subscribe(channel);
+      } catch (error) {
+        // Leave nothing behind, so the next attempt subscribes again instead of assuming this one did.
+        set.delete(handler);
+        if (set.size === 0 && this.handlers.get(channel) === set)
+          this.handlers.delete(channel);
+        throw error;
+      }
+    }
     return () => {
       const current = this.handlers.get(channel);
       if (!current) return;

@@ -280,3 +280,28 @@ test("the bus is chosen from the environment, and a wrong choice is refused", ()
   assert.ok(bus);
   assert.equal(asked, "redis://x:6379");
 });
+
+test("a subscribe that fails once can be retried, and the failed attempt leaves nothing behind", async () => {
+  const server = new FakeRedisServer();
+  const publisher = new FakeRedisClient(server);
+  const subscriber = new FakeRedisClient(server);
+  let failNext = true;
+  const original = subscriber.subscribe.bind(subscriber);
+  subscriber.subscribe = async (...channels: string[]) => {
+    if (failNext) {
+      failNext = false;
+      throw new Error("connection reset");
+    }
+    return original(...channels);
+  };
+  const broker = new RedisBroker(publisher, subscriber);
+  const received: string[] = [];
+  await assert.rejects(
+    broker.subscribe("c", (payload) => received.push(payload)),
+  );
+  // The retry must really subscribe on the connection, not assume the first attempt did.
+  await broker.subscribe("c", (payload) => received.push(payload));
+  await broker.publish("c", "hello");
+  await settle();
+  assert.deepEqual(received, ["hello"]);
+});
