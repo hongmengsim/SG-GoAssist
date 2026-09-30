@@ -17,7 +17,7 @@ These come from CE2's instructions. The first five are hard limits.
 5. **CE2 is colour deficient.** In any UI, log or table you design, encode meaning in words, shapes and border styles, never colour alone. Do not ask CE2 to tell colours apart.
 6. The Pi is the **safety authority** for halt or continue; the backend records and relays and may only add stricter checks. Bus confirmation of a request must come from the bus, never from the backend or a simulator.
 7. Fixes need a **failing test first**, one concern per commit, message format `type: description`. Do not add an attribution line to commits.
-8. **Ask CE2 before:** pushing, opening a PR, touching `main`, adding a dependency, changing message contracts in `contracts/` (propose first), flashing firmware, deleting files, or changing system or security settings (for example the Pi's SSH server).
+8. **Ask CE2 before:** pushing to `main`, adding a dependency, changing message contracts in `contracts/` (propose first), flashing firmware, deleting files, or changing system or security settings (for example the Pi's SSH server).
 9. If a stage **fails twice with the same symptom**, stop, summarise what was tried, and ask CE2 instead of looping.
 10. CE2 does the ML work (filming, labelling, training, evaluation, the model runner). Do not do it. Only say where a model plugs in and how to test the plug-in with a stub.
 11. Only make changes that CE2 asked for or that a failing stage needs. No extra features, refactors or files.
@@ -75,8 +75,8 @@ The evidence, with exact numbers and times, is in `docs/status.md`. In short (al
 
 ## Coordination
 
-- Another session works on backend storage (Postgres and multi-process, decision 0005). `main` was updated from `integration` on 1 Oct 2026; this branch has been merged up to that point and nothing here has been merged into `main`. Do not touch `main`.
-- Work on a new branch from `main`. Do not push to `main`, open a PR or merge unless CE2 asks.
+- **CE2 works only on `main`.** There are no other branches and no pull requests. Commit directly to `main`, and push to `main` only when CE2 asks or approves that push. The bring-up work is already on `main` (the branch `hardware-bringup` was merged and deleted on 1 Oct 2026).
+- Another session works on backend storage (Postgres and multi-process, decision 0005) on the `integration` branch, which is now behind `main`; that session has to merge `main` in. Do not touch `backend/` or `contracts/` until CE2 says its work has settled.
 
 ## Next steps
 
