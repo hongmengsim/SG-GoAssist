@@ -440,7 +440,13 @@ class Scenario:
                 "help-required after the deployment timeout",
             )
             assert help_record["reason"] == "DEPLOYMENT_TIMEOUT", help_record
-            assert "DEPLOYMENT_TIMEOUT" in (self.decision(stall_bus) or {}).get("reasons", []), self.decision(stall_bus)
+            # The decision report and the help report are separate posts from the agent's worker, so
+            # the decision can reach the backend a moment after the help record does.
+            wait_until(
+                lambda: "DEPLOYMENT_TIMEOUT" in (self.decision(stall_bus) or {}).get("reasons", []),
+                10,
+                "the decision to carry the timeout reason",
+            )
             assert (self.ramp(stall_bus) or {}).get("state") != "DEPLOYED"
             passed("a deployment that cannot finish raises help-required, halts, and stays visible to the operator")
         finally:
