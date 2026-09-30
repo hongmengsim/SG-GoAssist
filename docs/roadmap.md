@@ -53,18 +53,18 @@ Not started: every item below. The backend has no bus, bay, status, acknowledgem
 
 These come from [`architecture/scalability.md`](architecture/scalability.md). Each is a requirement on the items above or a small item of its own. Nothing here changes the priority order; it changes how the items are built.
 
-| ID   | Item                                                                                                                                             | Method        | Attach to | Size | Owner    |
-| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------ | ------------- | --------- | ---- | -------- |
-| SC1  | Repository interfaces with in-memory and SQLite adapters; per-record persistence and a latest-state table per bus for all new entities           | SM2, SM3, SM4 | B1        | M    | CE2      |
-| SC2  | `GOASSIST_ROLES` mounting and separate entry points for passenger, fleet and operator roles                                                      | SM1           | B4        | S    | CE2      |
-| SC3  | `EventBus` interface (in-process) and scoped operator subscriptions by stop, bus and region                                                      | SM5           | B4        | M    | CE2      |
-| SC4  | Rate-limiting and backpressure middleware with priority for safety and acknowledgement traffic                                                   | SM8           | B2        | S    | CE2      |
-| SC5  | `Cache-Control` and `ETag` on the read-only stop, route and amenity routes                                                                       | SM9           | B6        | S    | teammate |
-| SC6  | Retention for completed cases and a bounded, asynchronous logger                                                                                 | SM10          | R1        | M    | both     |
-| SC7  | Metrics, health and readiness endpoints                                                                                                          | SM13          | E1        | S    | CE2      |
-| SC8  | Load-test harness with the acceptance thresholds in the scalability document                                                                     | SM13          | E1        | M    | CE2      |
-| SC9  | Cursor-based command polling and store-and-forward in the bus agent                                                                              | SM6, SM7      | A1        | M    | CE2      |
-| SC10 | Move the existing cases and telemetry off the whole-state document. This touches the teammate's backend core, so it needs their agreement first. | SM3           | after E1  | L    | both     |
+| ID   | Item                                                                                                                                                                  | Method        | Attach to | Size | Owner    |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------- | --------- | ---- | -------- |
+| SC1  | Repository interfaces with in-memory and SQLite adapters; per-record persistence and a latest-state table per bus for all new entities                                | SM2, SM3, SM4 | B1        | M    | CE2      |
+| SC2  | `GOASSIST_ROLES` mounting and separate entry points for passenger, fleet and operator roles                                                                           | SM1           | B4        | S    | CE2      |
+| SC3  | `EventBus` interface (in-process) and scoped operator subscriptions by stop, bus and region                                                                           | SM5           | B4        | M    | CE2      |
+| SC4  | Rate-limiting and backpressure middleware with priority for safety and acknowledgement traffic                                                                        | SM8           | B2        | S    | CE2      |
+| SC5  | `Cache-Control` and `ETag` on the read-only stop, route and amenity routes                                                                                            | SM9           | B6        | S    | teammate |
+| SC6  | **Done (retention, 30 Sep 2026).** Retention for completed cases and a bounded, asynchronous logger                                                                   | SM10          | R1        | M    | both     |
+| SC7  | Metrics, health and readiness endpoints                                                                                                                               | SM13          | E1        | S    | CE2      |
+| SC8  | Load-test harness with the acceptance thresholds in the scalability document                                                                                          | SM13          | E1        | M    | CE2      |
+| SC9  | Cursor-based command polling and store-and-forward in the bus agent                                                                                                   | SM6, SM7      | A1        | M    | CE2      |
+| SC10 | **Done 1 Oct 2026.** Move the existing cases and telemetry off the whole-state document. This touches the teammate's backend core, so it needs their agreement first. | SM3           | after E1  | L    | both     |
 
 Rule for all new backend code from here on: no operation may touch everything ever stored; no domain state in module-level variables; every write idempotent; every subscription scoped.
 

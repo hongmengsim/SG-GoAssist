@@ -3,11 +3,11 @@ import type {
   ActuatorStatus,
   AssistanceCase,
 } from "@buspass/shared";
-import type { OperationsState } from "./operationsStore";
+import type { OperationsData } from "./operationsData";
 
 /**
- * How much the operations store keeps. Without a limit the store grows for ever and every
- * write rewrites all of it (docs/architecture/scalability.md, SM3 and SC6).
+ * How much the operations data keeps. Without a limit the tables grow for ever
+ * (docs/architecture/scalability.md, SC6).
  *
  * The defaults are placeholders chosen to keep a long demo small; they are not agreed values.
  */
@@ -21,6 +21,10 @@ export interface RetentionPolicy {
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+/** Cases are archived in batches so one pass never holds everything at once. */
+const BATCH = 500;
+/** More commands or statuses than this for one case are not expected; the read is bounded. */
+const PER_CASE_LIMIT = 1000;
 
 export const DEFAULT_RETENTION_POLICY: RetentionPolicy = {
   finishedCaseMaxAgeMs: 7 * DAY_MS,
@@ -28,22 +32,10 @@ export const DEFAULT_RETENTION_POLICY: RetentionPolicy = {
   maxSeriesRecords: 5000,
 };
 
-/** A case that no longer needs anyone. Escalated, blocked and unconfirmed cases are never removed. */
-const FINISHED_STATES: ReadonlySet<string> = new Set([
-  "COMPLETED",
-  "FAILED",
-  "CANCELLED",
-]);
-
 export interface ArchivedCase {
   case: AssistanceCase;
   commands: ActuatorCommand[];
   statuses: ActuatorStatus[];
-}
-
-export interface RetentionResult {
-  state: OperationsState;
-  archived: ArchivedCase[];
 }
 
 function positiveNumber(value: string | undefined): number | undefined {
@@ -74,81 +66,53 @@ export function retentionPolicyFromEnv(
   };
 }
 
-function newest<T>(records: T[], limit: number): T[] {
-  return records.length > limit
-    ? records.slice(records.length - limit)
-    : records;
+/** Archives, then deletes, the given cases with their commands and statuses. */
+function archiveAndDelete(data: OperationsData, cases: AssistanceCase[]): void {
+  if (cases.length === 0) return;
+  const entries: ArchivedCase[] = cases.map((item) => ({
+    case: item,
+    commands: data.commands.find("caseId", item.caseId, PER_CASE_LIMIT),
+    statuses: data.statuses.find("caseId", item.caseId, PER_CASE_LIMIT),
+  }));
+  // Written first, so nothing is lost if a delete fails half way.
+  data.archive(entries);
+  for (const entry of entries) {
+    for (const command of entry.commands)
+      data.commands.delete(command.commandId);
+    for (const status of entry.statuses) data.statuses.delete(status.commandId);
+    data.cases.delete(entry.case.caseId);
+  }
 }
 
-function updatedAtMs(item: AssistanceCase): number {
-  const parsed = Date.parse(item.updatedAt);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-/** Returns the trimmed state and what was removed; the input is not changed. */
-export function applyRetention(
-  state: OperationsState,
+/**
+ * Trims the data to the policy and returns how many cases were archived. Each step reads
+ * and deletes in bounded batches, using indexes, so the cost follows what is removed and not
+ * everything stored. Cases that still need someone are never touched.
+ */
+export function enforceRetention(
+  data: OperationsData,
   policy: RetentionPolicy,
   nowMs: number,
-): RetentionResult {
-  const finished = state.cases.filter((item) =>
-    FINISHED_STATES.has(item.state),
-  );
-  const byNewest = [...finished].sort(
-    (a, b) => updatedAtMs(b) - updatedAtMs(a),
-  );
-  const removedIds = new Set<string>();
-  byNewest.forEach((item, index) => {
-    const tooOld = nowMs - updatedAtMs(item) > policy.finishedCaseMaxAgeMs;
-    if (tooOld || index >= policy.maxFinishedCases) {
-      removedIds.add(item.caseId);
-    }
-  });
-
-  const archived: ArchivedCase[] = state.cases
-    .filter((item) => removedIds.has(item.caseId))
-    .map((item) => ({
-      case: item,
-      commands: state.actuatorCommands.filter(
-        (command) => command.caseId === item.caseId,
-      ),
-      statuses: state.actuatorStatuses.filter(
-        (status) => status.caseId === item.caseId,
-      ),
-    }));
-
+): number {
+  let archived = 0;
+  const cutoff = new Date(nowMs - policy.finishedCaseMaxAgeMs).toISOString();
+  for (;;) {
+    const batch = data.cases.listFinishedBefore(cutoff, BATCH);
+    if (batch.length === 0) break;
+    archiveAndDelete(data, batch);
+    archived += batch.length;
+  }
+  for (;;) {
+    const excess = data.cases.countFinished() - policy.maxFinishedCases;
+    if (excess <= 0) break;
+    const batch = data.cases.listFinishedOldest(Math.min(excess, BATCH));
+    archiveAndDelete(data, batch);
+    archived += batch.length;
+  }
   const keep = policy.maxSeriesRecords;
-  return {
-    state: {
-      ...state,
-      cases: state.cases.filter((item) => !removedIds.has(item.caseId)),
-      actuatorCommands: newest(
-        state.actuatorCommands.filter(
-          (command) => !removedIds.has(command.caseId),
-        ),
-        keep,
-      ),
-      actuatorStatuses: newest(
-        state.actuatorStatuses.filter(
-          (status) => !removedIds.has(status.caseId),
-        ),
-        keep,
-      ),
-      observations: newest(state.observations, keep),
-      safetyTelemetry: newest(state.safetyTelemetry, keep),
-      rampObstacleClassifications: newest(
-        state.rampObstacleClassifications,
-        keep,
-      ),
-      perceptionEvaluationSamples: newest(
-        state.perceptionEvaluationSamples,
-        keep,
-      ),
-      precisionDockingObservations: newest(
-        state.precisionDockingObservations,
-        keep,
-      ),
-    },
-    archived,
-  };
+  data.observations.trimOldest(keep);
+  data.perceptionSamples.trimOldest(keep);
+  data.commands.trimOldest(keep);
+  data.statuses.trimOldest(keep);
+  return archived;
 }

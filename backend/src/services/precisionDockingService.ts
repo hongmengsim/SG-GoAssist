@@ -6,7 +6,7 @@ import {
   OperationsNotFoundError,
   OperationsValidationError,
 } from "./assistanceCaseService";
-import { getOperationsStore } from "./operationsStore";
+import { getOperationsData } from "./operationsData";
 
 const FRESHNESS_MS = Number(process.env.GOASSIST_DOCK_FRESHNESS_MS ?? 2_000);
 const MINIMUM_CONFIDENCE = Number(
@@ -32,28 +32,18 @@ export function recordPrecisionDockingObservation(
   input: PrecisionDockingObservation,
 ): PrecisionDockingAssessment {
   validate(input);
-  const current = getOperationsStore()
-    .snapshot()
-    .precisionDockingObservations.find((item) => item.busId === input.busId);
+  const current = getOperationsData().docking.get(input.busId);
   if (current && new Date(input.observedAt) < new Date(current.observedAt)) {
     throw new OperationsValidationError("Stale docking observation rejected");
   }
-  getOperationsStore().update((state) => {
-    const index = state.precisionDockingObservations.findIndex(
-      (item) => item.busId === input.busId,
-    );
-    if (index >= 0) state.precisionDockingObservations[index] = input;
-    else state.precisionDockingObservations.push(input);
-  });
+  getOperationsData().docking.put(input);
   return assessPrecisionDocking(input);
 }
 
 export function getPrecisionDockingAssessment(
   busId: string,
 ): PrecisionDockingAssessment {
-  const observation = getOperationsStore()
-    .snapshot()
-    .precisionDockingObservations.find((item) => item.busId === busId);
+  const observation = getOperationsData().docking.get(busId);
   if (!observation) {
     throw new OperationsNotFoundError(
       "Precision docking observation not found",

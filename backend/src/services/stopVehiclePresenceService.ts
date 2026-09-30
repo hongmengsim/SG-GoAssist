@@ -1,7 +1,10 @@
 import type { SafetyTelemetry, StopVehiclePresence } from "@buspass/shared";
 import { getArrivalsForStop } from "../data/bus-stops.mock";
 import { getBusById } from "../data/buses.mock";
-import { getOperationsStore } from "./operationsStore";
+import { getOperationsData } from "./operationsData";
+
+/** More vehicles than this at one stop are not expected; the read is bounded. */
+const STOP_PRESENCE_LIMIT = 200;
 
 export const STOP_VEHICLE_PRESENCE_FRESHNESS_MS = Number(
   process.env.GOASSIST_TELEMETRY_FRESHNESS_MS ?? 5_000,
@@ -22,9 +25,8 @@ export function listStopVehiclePresence(
   stopCode: string,
   now = Date.now(),
 ): StopVehiclePresence[] {
-  return getOperationsStore()
-    .snapshot()
-    .safetyTelemetry.filter((telemetry) => telemetry.stopCode === stopCode)
+  return getOperationsData()
+    .telemetry.find("stopCode", stopCode, STOP_PRESENCE_LIMIT)
     .map((telemetry) => deriveStopVehiclePresence(telemetry, now))
     .filter((vehicle): vehicle is StopVehiclePresence => Boolean(vehicle));
 }
@@ -35,13 +37,9 @@ export function deriveStopVehiclePresence(
 ): StopVehiclePresence | null {
   if (!telemetry.stopCode) return null;
 
-  const snapshot = getOperationsStore().snapshot();
-  const capability = snapshot.capabilities.find(
-    (candidate) => candidate.busId === telemetry.busId,
-  );
-  const autonomousVehicle = snapshot.autonomousVehicles.find(
-    (candidate) => candidate.busId === telemetry.busId,
-  );
+  const data = getOperationsData();
+  const capability = data.capabilities.get(telemetry.busId);
+  const autonomousVehicle = data.vehicles.get(telemetry.busId);
   const knownBus = getBusById(telemetry.busId);
   const busService =
     capability?.busService ??

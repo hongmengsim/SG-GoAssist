@@ -1,0 +1,183 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { OperationsData } from "../services/operationsData";
+import { openSqliteDatabase } from "../storage/sqlite";
+
+const sqliteAvailable = (() => {
+  const database = openSqliteDatabase(":memory:");
+  database?.close();
+  return database !== undefined;
+})();
+const skip = sqliteAvailable ? undefined : "node:sqlite is not available";
+
+/** A small state in the shape the old whole-document store wrote. */
+const legacyState = {
+  cases: [
+    {
+      caseId: "CASE-OLD-1",
+      stopCode: "18331",
+      busId: "AV-095-01",
+      phase: "BOARDING",
+      state: "READY",
+      intents: [{ intentId: "I1", signalId: "SIG-1" }],
+      createdAt: "2026-09-29T00:00:00.000Z",
+      updatedAt: "2026-09-29T00:00:00.000Z",
+    },
+    {
+      caseId: "CASE-OLD-2",
+      stopCode: "18331",
+      phase: "BOARDING",
+      state: "COMPLETED",
+      intents: [],
+      createdAt: "2026-09-29T00:00:00.000Z",
+      updatedAt: "2026-09-29T00:00:00.000Z",
+    },
+  ],
+  observations: [{ signalId: "SIG-1", source: "APP", idempotencyKey: "KEY-1" }],
+  capabilities: [{ busId: "AV-095-01", busService: "95" }],
+  safetyTelemetry: [{ busId: "AV-095-01", stopCode: "18331" }],
+  actuatorCommands: [
+    {
+      commandId: "K-OPEN",
+      caseId: "CASE-OLD-1",
+      busId: "AV-095-01",
+      command: "DEPLOY_RAMP",
+    },
+    {
+      commandId: "K-DONE",
+      caseId: "CASE-OLD-1",
+      busId: "AV-095-01",
+      command: "EXTEND_DWELL",
+    },
+  ],
+  actuatorStatuses: [
+    { commandId: "K-DONE", caseId: "CASE-OLD-1", state: "COMPLETED" },
+  ],
+  devices: [{ deviceId: "DEV-1" }],
+  autonomousVehicles: [{ busId: "AV-095-01" }],
+  rampObstacleClassifications: [{ busId: "AV-095-01" }],
+  perceptionEvaluationSamples: [{ sampleId: "P1" }],
+  precisionDockingObservations: [{ busId: "AV-095-01" }],
+};
+
+function open(directory: string): OperationsData {
+  return new OperationsData(directory, {
+    driver: "sqlite",
+    retentionTimer: false,
+    retention: {
+      finishedCaseMaxAgeMs: 1e15,
+      maxFinishedCases: 1e9,
+      maxSeriesRecords: 1e9,
+    },
+  });
+}
+
+function assertImported(data: OperationsData): void {
+  assert.equal(data.cases.count(), 2);
+  assert.equal(data.cases.get("CASE-OLD-1")?.state, "READY");
+  assert.equal(data.cases.findBySignalId("SIG-1")?.caseId, "CASE-OLD-1");
+  assert.equal(
+    data.observations.findOne("idempotencyKey", "KEY-1")?.signalId,
+    "SIG-1",
+  );
+  assert.equal(data.capabilities.get("AV-095-01")?.busService, "95");
+  assert.equal(data.telemetry.findOne("stopCode", "18331")?.busId, "AV-095-01");
+  assert.ok(data.devices.get("DEV-1"));
+  assert.ok(data.vehicles.get("AV-095-01"));
+  assert.ok(data.rampClassifications.get("AV-095-01"));
+  assert.ok(data.perceptionSamples.get("P1"));
+  assert.ok(data.docking.get("AV-095-01"));
+  // A command with a terminal status is closed; the other is still offered to the bus.
+  assert.deepEqual(
+    data.openCommands(10).map((command) => command.commandId),
+    ["K-OPEN"],
+  );
+}
+
+test(
+  "an old whole-state row in operations.sqlite is imported once and then removed",
+  { skip },
+  () => {
+    const directory = mkdtempSync(join(tmpdir(), "goassist-legacy-"));
+    try {
+      const old = openSqliteDatabase(join(directory, "operations.sqlite"));
+      assert.ok(old);
+      old.exec(
+        "CREATE TABLE operations_state (id INTEGER PRIMARY KEY CHECK (id = 1), state_json TEXT NOT NULL, updated_at TEXT NOT NULL)",
+      );
+      old
+        .prepare(
+          "INSERT INTO operations_state (id, state_json, updated_at) VALUES (1, ?, ?)",
+        )
+        .run(JSON.stringify(legacyState), new Date().toISOString());
+      old.close();
+
+      const first = open(directory);
+      assertImported(first);
+      first.close();
+
+      const second = open(directory);
+      assert.equal(
+        second.cases.count(),
+        2,
+        "a second start must not import again",
+      );
+      second.close();
+    } finally {
+      try {
+        rmSync(directory, { recursive: true, force: true });
+      } catch {
+        // Windows may still hold the database file.
+      }
+    }
+  },
+);
+
+test(
+  "an old operations.json is imported and renamed so it is not read again",
+  { skip },
+  () => {
+    const directory = mkdtempSync(join(tmpdir(), "goassist-legacy-"));
+    try {
+      writeFileSync(
+        join(directory, "operations.json"),
+        JSON.stringify(legacyState),
+      );
+      const first = open(directory);
+      assertImported(first);
+      first.close();
+      assert.equal(existsSync(join(directory, "operations.json")), false);
+      assert.ok(existsSync(join(directory, "operations.json.migrated")));
+    } finally {
+      try {
+        rmSync(directory, { recursive: true, force: true });
+      } catch {
+        // Windows may still hold the database file.
+      }
+    }
+  },
+);
+
+test(
+  "a corrupt old file is left in place and does not stop the server starting",
+  { skip },
+  () => {
+    const directory = mkdtempSync(join(tmpdir(), "goassist-legacy-"));
+    try {
+      writeFileSync(join(directory, "operations.json"), "{ not json");
+      const data = open(directory);
+      assert.equal(data.cases.count(), 0);
+      assert.ok(existsSync(join(directory, "operations.json")));
+      data.close();
+    } finally {
+      try {
+        rmSync(directory, { recursive: true, force: true });
+      } catch {
+        // Windows may still hold the database file.
+      }
+    }
+  },
+);

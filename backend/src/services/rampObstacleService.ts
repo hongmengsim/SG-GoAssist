@@ -4,7 +4,7 @@ import {
   RampObstacleClassification,
   RampObstacleRanging,
 } from "@buspass/shared";
-import { getOperationsStore } from "./operationsStore";
+import { getOperationsData } from "./operationsData";
 
 const RANGE_FRESHNESS_MS = 1_500;
 const CLASSIFICATION_FRESHNESS_MS = 2_500;
@@ -28,29 +28,19 @@ export function recordRampObstacleClassification(
   input: RampObstacleClassification,
 ): RampObstacleAssessment {
   validateClassification(input);
-  getOperationsStore().update((state) => {
-    const index = state.rampObstacleClassifications.findIndex(
-      (item) => item.busId === input.busId,
-    );
-    if (index >= 0) state.rampObstacleClassifications[index] = input;
-    else state.rampObstacleClassifications.push(input);
-  });
+  getOperationsData().rampClassifications.put(input);
   return getRampObstacleAssessment(input.busId);
 }
 
 export function getRampObstacleAssessment(
   busId: string,
 ): RampObstacleAssessment {
-  const state = getOperationsStore().snapshot();
-  const ranging = state.safetyTelemetry.find(
-    (item) => item.busId === busId,
-  )?.rampObstacle;
+  const data = getOperationsData();
+  const ranging = data.telemetry.get(busId)?.rampObstacle;
   if (!ranging) {
     throw new RampObstacleNotFoundError("Ramp laser ranging is unavailable");
   }
-  const classification = state.rampObstacleClassifications.find(
-    (item) => item.busId === busId,
-  );
+  const classification = data.rampClassifications.get(busId);
   return fuseRampObstacleAssessment(ranging, classification);
 }
 

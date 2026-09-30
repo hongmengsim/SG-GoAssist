@@ -20,7 +20,7 @@ The mock-bus ESP32 independently repeats the stopped, brake, door, and obstructi
 
 ## Persistence, privacy, and access
 
-- Current operations state is transactionally stored in `.runtime/operations.sqlite` on Node runtimes with built-in SQLite and restored after backend restart. A backed-up `.runtime/operations.json` store is used as the Node 20 compatibility fallback.
+- Current operations data (cases, telemetry, commands, devices and the rest) is stored one row per record in `.runtime/operations.sqlite` on Node runtimes with built-in SQLite and restored after backend restart. On a runtime without SQLite (Node 20) it is held in memory only and does not survive a restart. An old `operations.json` or old whole-state row is imported once at start-up.
 - Every material signal, capability, telemetry, operator, and actuator transition is inserted into the append-only SQLite audit table and mirrored to `.runtime/audit.ndjson`.
 - Signal and command idempotency keys prevent replayed requests from duplicating actions.
 - Stale sensor, telemetry, and actuator events are rejected or block the case.

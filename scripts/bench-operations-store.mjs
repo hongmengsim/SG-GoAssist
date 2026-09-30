@@ -1,17 +1,17 @@
 #!/usr/bin/env node
 /**
- * Reproducible measurement of the backend's whole-state persistence cost.
+ * Reproducible measurement of the cost of one case write as the number of stored cases grows.
  *
- * The OperationsStore rewrites its entire state on every update and clones it on every
- * snapshot, so the cost of one write grows with everything ever stored. This script
- * measures that growth for both storage drivers and prints a Markdown table that can be
- * pasted into docs/architecture/scalability.md.
+ * The old store rewrote its entire state on every update (about 450 times slower at 20,000
+ * cases). Cases are now one row each, so a write should cost the same at every size; this
+ * script measures that for the SQLite and memory storage and prints a Markdown table that
+ * can be pasted into docs/architecture/scalability.md.
  *
  *   npm run build --workspace @buspass/backend     # once, so backend/dist exists
  *   npm run bench:store
  *
  * Optional environment: BENCH_SIZES="0,100,1000,5000,20000" BENCH_REPS=20
- * Results depend on the machine; the shape (linear growth) is the finding, not the numbers.
+ * Results depend on the machine; the shape (flat, not growing with the number of cases) is the finding, not the numbers.
  */
 import { createRequire } from "node:module";
 import { mkdtempSync, readdirSync, rmSync } from "node:fs";
@@ -21,8 +21,8 @@ import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const { OperationsStore } = require(
-  join(root, "backend", "dist", "services", "operationsStore.js"),
+const { OperationsData } = require(
+  join(root, "backend", "dist", "services", "operationsData.js"),
 );
 
 const sizes = (process.env.BENCH_SIZES ?? "0,100,1000,5000,20000")
@@ -95,74 +95,63 @@ function syntheticCase(index) {
   };
 }
 
-function measure(label, environment) {
+function measure(label, driver) {
   const directory = mkdtempSync(join(tmpdir(), PREFIX));
   createdDirectories.push(directory);
-  const previous = process.env.GOASSIST_STORAGE_DRIVER;
-  if (environment.GOASSIST_STORAGE_DRIVER)
-    process.env.GOASSIST_STORAGE_DRIVER = environment.GOASSIST_STORAGE_DRIVER;
-  else delete process.env.GOASSIST_STORAGE_DRIVER;
+  // Retention is set far above the sizes measured, so it never trims during the run.
+  const data = new OperationsData(directory, {
+    driver,
+    retentionTimer: false,
+    retention: {
+      finishedCaseMaxAgeMs: 1e15,
+      maxFinishedCases: 1e9,
+      maxSeriesRecords: 1e9,
+    },
+  });
   try {
-    const store = new OperationsStore(directory);
     let stored = 0;
     const rows = [];
     for (const target of sizes) {
-      if (target > stored) {
-        store.update((state) => {
-          for (let i = stored; i < target; i += 1)
-            state.cases.push(syntheticCase(i));
-        });
-        stored = target;
-      }
+      for (let i = stored; i < target; i += 1)
+        data.cases.upsert(syntheticCase(i));
+      stored = Math.max(stored, target);
+      const first = syntheticCase(0);
       const updateStart = process.hrtime.bigint();
-      for (let r = 0; r < reps; r += 1) {
-        store.update((state) => {
-          if (state.cases.length === 0) state.cases.push(syntheticCase(0));
-          state.cases[0] = {
-            ...state.cases[0],
-            updatedAt: new Date().toISOString(),
-          };
-        });
-      }
+      for (let r = 0; r < reps; r += 1)
+        data.cases.upsert({ ...first, updatedAt: new Date().toISOString() });
       const updateMs =
         Number(process.hrtime.bigint() - updateStart) / 1e6 / reps;
-      const snapshotStart = process.hrtime.bigint();
-      for (let r = 0; r < reps; r += 1) store.snapshot();
-      const snapshotMs =
-        Number(process.hrtime.bigint() - snapshotStart) / 1e6 / reps;
-      const stateMb = JSON.stringify(store.snapshot()).length / 1e6;
+      const readStart = process.hrtime.bigint();
+      for (let r = 0; r < reps; r += 1) data.cases.get(`CASE-${stored - 1}`);
+      const readMs = Number(process.hrtime.bigint() - readStart) / 1e6 / reps;
       rows.push({
         cases: stored,
-        stateMb,
         updateMs,
-        snapshotMs,
+        readMs,
         perSecond: 1000 / updateMs,
       });
     }
     return { label, rows };
   } finally {
-    if (previous === undefined) delete process.env.GOASSIST_STORAGE_DRIVER;
-    else process.env.GOASSIST_STORAGE_DRIVER = previous;
+    data.close();
   }
 }
 
-const results = [
-  measure("JSON file driver", { GOASSIST_STORAGE_DRIVER: "json" }),
-  measure("SQLite driver", {}),
-];
+const results = [measure("SQLite", "sqlite"), measure("Memory", "memory")];
 
 console.log(
   `Machine: ${cpus()[0]?.model ?? "unknown CPU"}, Node ${process.version}, ${reps} repetitions per size.\n`,
 );
 for (const { label, rows } of results) {
-  console.log(`**${label}**\n`);
+  console.log(`**${label}**
+`);
   console.log(
-    "| Cases stored | State size (MB) | Time per update (ms) | Updates per second | Time per snapshot (ms) |",
+    "| Cases stored | Time per update (ms) | Updates per second | Time per read (ms) |",
   );
-  console.log("|---:|---:|---:|---:|---:|");
+  console.log("|---:|---:|---:|---:|");
   for (const row of rows) {
     console.log(
-      `| ${row.cases} | ${row.stateMb.toFixed(2)} | ${row.updateMs.toFixed(1)} | ${row.perSecond.toFixed(0)} | ${row.snapshotMs.toFixed(1)} |`,
+      `| ${row.cases} | ${row.updateMs.toFixed(3)} | ${row.perSecond.toFixed(0)} | ${row.readMs.toFixed(3)} |`,
     );
   }
   console.log("");

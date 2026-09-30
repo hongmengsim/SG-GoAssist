@@ -14,10 +14,12 @@ import {
   publishOperationsEvent,
 } from "./assistanceCaseService";
 import { processVehicleCommand } from "./aviator";
-import { getOperationsStore } from "./operationsStore";
+import { getOperationsData } from "./operationsData";
 import { getPrecisionDockingAssessment } from "./precisionDockingService";
 
 const APPROACH_DISTANCE_METERS = 80;
+/** The fleet list is bounded; a fleet larger than this needs paging. */
+const LIST_LIMIT = 5_000;
 const PRECISION_STOP_DISTANCE_METERS = 8;
 const SECURE_STOP_DISTANCE_METERS = 3;
 const SECURE_STOP_SPEED_KPH = 2;
@@ -73,16 +75,14 @@ export function assignAutonomousRoute(
 export function getAutonomousVehicleState(
   busId: string,
 ): AutonomousVehicleState {
-  const state = getOperationsStore()
-    .snapshot()
-    .autonomousVehicles.find((item) => item.busId === busId);
+  const state = getOperationsData().vehicles.get(busId);
   if (!state)
     throw new OperationsNotFoundError("Autonomous vehicle state not found");
   return state;
 }
 
 export function listAutonomousVehicles(): AutonomousVehicleState[] {
-  return getOperationsStore().snapshot().autonomousVehicles;
+  return getOperationsData().vehicles.list(LIST_LIMIT);
 }
 
 export function startAutonomousRoute(busId: string): AutonomousVehicleState {
@@ -389,13 +389,7 @@ function publishSafety(
 
 function saveAndPublish(state: AutonomousVehicleState): AutonomousVehicleState {
   const normalized = { ...state, updatedAt: new Date().toISOString() };
-  getOperationsStore().update((store) => {
-    const index = store.autonomousVehicles.findIndex(
-      (item) => item.busId === normalized.busId,
-    );
-    if (index >= 0) store.autonomousVehicles[index] = normalized;
-    else store.autonomousVehicles.push(normalized);
-  });
+  getOperationsData().vehicles.put(normalized);
   publishOperationsEvent({
     type: "AUTONOMY_STATUS",
     busId: normalized.busId,

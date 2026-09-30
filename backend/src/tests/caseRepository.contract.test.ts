@@ -223,3 +223,39 @@ for (const adapter of adapters) {
     },
   );
 }
+
+for (const adapter of adapters) {
+  const options = { skip: adapter.skip };
+  const label = `CaseRepository (${adapter.name})`;
+
+  test(
+    `${label}: finished cases can be listed oldest first, counted and deleted`,
+    options,
+    () => {
+      const repository = adapter.create();
+      const at = (n: number) => `2026-10-01T00:00:0${n}.000Z`;
+      repository.upsert(makeCase("OPEN", { updatedAt: at(0) }));
+      repository.upsert(
+        makeCase("D3", { state: "COMPLETED", updatedAt: at(3) }),
+      );
+      repository.upsert(makeCase("D1", { state: "FAILED", updatedAt: at(1) }));
+      repository.upsert(
+        makeCase("D2", { state: "CANCELLED", updatedAt: at(2) }),
+      );
+      assert.equal(repository.countFinished(), 3);
+      assert.deepEqual(
+        repository.listFinishedOldest(2).map((item) => item.caseId),
+        ["D1", "D2"],
+      );
+      assert.deepEqual(
+        repository.listFinishedBefore(at(3), 10).map((item) => item.caseId),
+        ["D1", "D2"],
+      );
+      repository.delete("D1");
+      assert.equal(repository.get("D1"), undefined);
+      assert.equal(repository.findBySignalId("SIG-D1"), undefined);
+      assert.equal(repository.countFinished(), 2);
+      assert.equal(repository.count(), 3);
+    },
+  );
+}

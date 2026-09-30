@@ -11,7 +11,7 @@ import {
   BusOperationsConflictError,
   BusOperationsValidationError,
 } from "../busOperations/busOperationsService";
-import { getOperationsStore } from "../services/operationsStore";
+import { getOperationsData } from "../services/operationsData";
 import {
   flushBusOperationsAudit,
   getBusOperations,
@@ -176,7 +176,7 @@ router.get("/audit", requireOperator, (req: Request, res: Response) => {
       ? Math.min(Math.trunc(requested), MAX_AUDIT_LIMIT)
       : DEFAULT_AUDIT_LIMIT;
   flushBusOperationsAudit();
-  const events = getOperationsStore().readAudit({
+  const events = getOperationsData().audit.read({
     limit,
     caseId: queryText(req.query.caseId),
     busId: queryText(req.query.busId),

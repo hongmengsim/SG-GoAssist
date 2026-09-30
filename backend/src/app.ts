@@ -14,7 +14,7 @@ import { logger } from "./services/logger";
 import { clearAllRequests, getAllRequests } from "./services/aviator";
 import { clearOperations, listCases } from "./services/assistanceCaseService";
 import { getEventHub } from "./events/eventHub";
-import { getOperationsStore } from "./services/operationsStore";
+import { getOperationsData } from "./services/operationsData";
 import { getBusOperations } from "./busOperations/composition";
 import { Metrics } from "./platform/metrics";
 import {
@@ -153,7 +153,7 @@ export function createApp(options: AppOptions = {}) {
   app.get("/ready", async (_req, res) => {
     const checks: Record<string, string> = {};
     try {
-      getOperationsStore().snapshot();
+      getOperationsData().ping();
       checks.operationsStore = "ok";
     } catch (error) {
       checks.operationsStore = `failed: ${String(error)}`;

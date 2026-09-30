@@ -15,8 +15,11 @@ import {
   synchronizeLegacyCaseStatus,
   updateActuatorStatus,
 } from "../services/assistanceCaseService";
-import { configureOperationsStore } from "../services/operationsStore";
-import { getOperationsStore } from "../services/operationsStore";
+import {
+  closeOperationsData,
+  configureOperationsData,
+  getOperationsData,
+} from "../services/operationsData";
 
 let dataDirectory = "";
 
@@ -24,7 +27,7 @@ beforeEach(() => {
   dataDirectory = fs.mkdtempSync(
     path.join(os.tmpdir(), "goassist-operations-"),
   );
-  configureOperationsStore(dataDirectory);
+  configureOperationsData(dataDirectory, { retentionTimer: false });
   registerVehicleCapability({
     busId: "BUS-95-01",
     busService: "95",
@@ -45,6 +48,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  closeOperationsData();
   fs.rmSync(dataDirectory, { recursive: true, force: true });
 });
 
@@ -75,19 +79,14 @@ test("expired actuator commands are failed and can never be polled for execution
   ingestSafetyTelemetry(telemetry());
   const command = listPendingActuatorCommands("BUS-95-01")[0];
 
-  getOperationsStore().update((state) => {
-    const stored = state.actuatorCommands.find(
-      (candidate) => candidate.commandId === command.commandId,
-    )!;
-    stored.expiresAt = new Date(Date.now() - 1_000).toISOString();
+  const stored = getOperationsData().commands.get(command.commandId)!;
+  getOperationsData().commands.put({
+    ...stored,
+    expiresAt: new Date(Date.now() - 1_000).toISOString(),
   });
 
   assert.equal(listPendingActuatorCommands("BUS-95-01").length, 0);
-  const status = getOperationsStore()
-    .snapshot()
-    .actuatorStatuses.find(
-      (candidate) => candidate.commandId === command.commandId,
-    );
+  const status = getOperationsData().statuses.get(command.commandId);
   assert.equal(status?.state, "FAILED");
   assert.match(status?.detail ?? "", /expired/i);
   assert.equal(getCase(item.caseId)?.state, "FAILED");
@@ -163,7 +162,7 @@ test("multiple passengers share one actuator action without losing individual in
 
 test("cases survive an operations-store reload", () => {
   const item = explicitRamp("signal-persist", "passenger-persist");
-  configureOperationsStore(dataDirectory);
+  configureOperationsData(dataDirectory, { retentionTimer: false });
   assert.equal(getCase(item.caseId, false)?.passengerCount, 1);
 });
 

@@ -20,7 +20,7 @@ import {
 } from "@buspass/shared";
 import { getBusById } from "../data/buses.mock";
 import { logger } from "./logger";
-import { getOperationsStore, resetOperationsStore } from "./operationsStore";
+import { getOperationsData, resetOperationsData } from "./operationsData";
 import { fuseRampObstacleAssessment } from "./rampObstacleService";
 import {
   createDepartedStopVehiclePresence,
@@ -32,6 +32,13 @@ const TERMINAL_STATES: AssistanceCaseState[] = [
   "FAILED",
   "CANCELLED",
 ];
+/** Reads that must stay bounded, whatever is stored. Retention keeps the real numbers far lower. */
+const CASE_LIST_LIMIT = 10_000;
+const METRICS_CASE_LIMIT = 50_000;
+const OPEN_CASE_LIMIT = 10_000;
+const OPEN_COMMAND_LIMIT = 10_000;
+const FLEET_LIST_LIMIT = 5_000;
+const PER_CASE_LIMIT = 1_000;
 const SENSOR_SOURCES: SignalSource[] = [
   "CAMERA",
   "PRESSURE_SENSOR",
@@ -69,36 +76,28 @@ export function submitSignalObservation(
   validateObservation(input);
   const observation = sanitizeObservation(input);
   const now = new Date().toISOString();
-  const before = getOperationsStore().snapshot();
-  const duplicate = before.observations.find(
-    (candidate) =>
-      candidate.signalId === observation.signalId ||
-      (observation.idempotencyKey &&
-        candidate.idempotencyKey === observation.idempotencyKey),
-  );
+  const data = getOperationsData();
+  const duplicate =
+    data.observations.get(observation.signalId) ??
+    (observation.idempotencyKey
+      ? data.observations.findOne("idempotencyKey", observation.idempotencyKey)
+      : undefined);
   if (duplicate) {
-    const existing = before.cases.find((item) =>
-      item.intents.some((intent) => intent.signalId === duplicate.signalId),
-    );
+    const existing = data.cases.findBySignalId(duplicate.signalId);
     if (existing) return existing;
   }
 
   if (["BOARDING_COMPLETE", "ALIGHTING_COMPLETE"].includes(observation.kind)) {
-    const completionCase = before.cases.find(
-      (candidate) =>
-        !TERMINAL_STATES.includes(candidate.state) &&
-        candidate.stopCode === observation.stopCode &&
-        (!observation.busCandidate ||
-          candidate.busId === observation.busCandidate),
-    );
+    const completionCase = data.cases.findOpen({
+      stopCode: observation.stopCode,
+      ...(observation.busCandidate ? { busId: observation.busCandidate } : {}),
+    });
     if (!completionCase) {
       throw new OperationsNotFoundError(
         "No active assistance case matches the completion signal",
       );
     }
-    getOperationsStore().update((state) =>
-      state.observations.push(observation),
-    );
+    data.observations.put(observation);
     completionCase.completionDetectedAt = observation.observedAt;
     completionCase.completionConfidence = observation.confidence;
     completionCase.completionConfirmed = observation.confidence >= 0.9;
@@ -119,13 +118,11 @@ export function submitSignalObservation(
 
   const explicit = !SENSOR_SOURCES.includes(observation.source);
   const confirmed = observation.confirmed ?? explicit;
-  let target = before.cases.find(
-    (candidate) =>
-      !TERMINAL_STATES.includes(candidate.state) &&
-      candidate.stopCode === observation.stopCode &&
-      candidate.phase === (observation.phase ?? "BOARDING") &&
-      candidate.busId === observation.busCandidate,
-  );
+  let target = data.cases.findOpen({
+    stopCode: observation.stopCode,
+    phase: observation.phase ?? "BOARDING",
+    busId: observation.busCandidate ?? null,
+  });
 
   if (!target) {
     target = {
@@ -178,14 +175,8 @@ export function submitSignalObservation(
   target.state = confirmed ? "VALIDATED" : "NEEDS_CONFIRMATION";
   target.updatedAt = now;
 
-  getOperationsStore().update((state) => {
-    state.observations.push(observation);
-    const index = state.cases.findIndex(
-      (candidate) => candidate.caseId === target!.caseId,
-    );
-    if (index >= 0) state.cases[index] = target!;
-    else state.cases.push(target!);
-  });
+  data.observations.put(observation);
+  data.cases.upsert(target);
   audit("SIGNAL_ACCEPTED", observation.source, target.caseId, target.busId, {
     signalId: observation.signalId,
     confirmed,
@@ -281,13 +272,7 @@ export function registerVehicleCapability(
     throw new OperationsValidationError("Invalid vehicle capability payload");
   }
   const normalized = { ...capability, updatedAt: new Date().toISOString() };
-  getOperationsStore().update((state) => {
-    const index = state.capabilities.findIndex(
-      (item) => item.busId === capability.busId,
-    );
-    if (index >= 0) state.capabilities[index] = normalized;
-    else state.capabilities.push(normalized);
-  });
+  getOperationsData().capabilities.put(normalized);
   audit("VEHICLE_CAPABILITY_UPDATED", "VEHICLE", undefined, capability.busId);
   listCases({ busId: capability.busId, refresh: false })
     .filter((item) => !TERMINAL_STATES.includes(item.state))
@@ -318,9 +303,9 @@ export function ingestSafetyTelemetry(input: SafetyTelemetry): SafetyTelemetry {
   let telemetry = input;
   if (input.rampObstacle) {
     try {
-      const classification = getOperationsStore()
-        .snapshot()
-        .rampObstacleClassifications.find((item) => item.busId === input.busId);
+      const classification = getOperationsData().rampClassifications.get(
+        input.busId,
+      );
       telemetry = {
         ...input,
         rampObstacle: fuseRampObstacleAssessment(
@@ -333,9 +318,7 @@ export function ingestSafetyTelemetry(input: SafetyTelemetry): SafetyTelemetry {
     }
   }
   validateIsoDate(telemetry.observedAt, "observedAt");
-  const current = getOperationsStore()
-    .snapshot()
-    .safetyTelemetry.find((item) => item.busId === input.busId);
+  const current = getOperationsData().telemetry.get(input.busId);
   if (
     current &&
     new Date(telemetry.observedAt) < new Date(current.observedAt)
@@ -344,13 +327,7 @@ export function ingestSafetyTelemetry(input: SafetyTelemetry): SafetyTelemetry {
       "Stale telemetry cannot replace newer telemetry",
     );
   }
-  getOperationsStore().update((state) => {
-    const index = state.safetyTelemetry.findIndex(
-      (item) => item.busId === telemetry.busId,
-    );
-    if (index >= 0) state.safetyTelemetry[index] = telemetry;
-    else state.safetyTelemetry.push(telemetry);
-  });
+  getOperationsData().telemetry.put(telemetry);
   emit({
     type: "SAFETY_TELEMETRY",
     busId: telemetry.busId,
@@ -405,19 +382,15 @@ export function updateActuatorStatus(input: ActuatorStatus): AssistanceCase {
     throw new OperationsValidationError("Invalid actuator state");
   }
   validateIsoDate(input.updatedAt, "updatedAt");
-  const snapshot = getOperationsStore().snapshot();
-  const command = snapshot.actuatorCommands.find(
-    (candidate) => candidate.commandId === input.commandId,
-  );
+  const data = getOperationsData();
+  const command = data.commands.get(input.commandId);
   if (!command) throw new OperationsNotFoundError("Actuator command not found");
   if (command.caseId !== input.caseId || command.busId !== input.busId) {
     throw new OperationsValidationError(
       "Actuator status does not match its command",
     );
   }
-  const currentStatus = snapshot.actuatorStatuses.find(
-    (candidate) => candidate.commandId === input.commandId,
-  );
+  const currentStatus = data.statuses.get(input.commandId);
   if (
     currentStatus &&
     ["COMPLETED", "CANCELLED", "BLOCKED", "FAILED"].includes(
@@ -446,13 +419,7 @@ export function updateActuatorStatus(input: ActuatorStatus): AssistanceCase {
   ) {
     throw new OperationsValidationError("Stale actuator status rejected");
   }
-  getOperationsStore().update((state) => {
-    const index = state.actuatorStatuses.findIndex(
-      (candidate) => candidate.commandId === input.commandId,
-    );
-    if (index >= 0) state.actuatorStatuses[index] = input;
-    else state.actuatorStatuses.push(input);
-  });
+  data.putStatus(input);
   emit({
     type: "ACTUATOR_STATUS",
     caseId: input.caseId,
@@ -533,13 +500,7 @@ export function assignCaseVehicle(
 
 export function recordDeviceHeartbeat(input: DeviceHealth): DeviceHealth {
   validateIsoDate(input.observedAt, "observedAt");
-  getOperationsStore().update((state) => {
-    const index = state.devices.findIndex(
-      (item) => item.deviceId === input.deviceId,
-    );
-    if (index >= 0) state.devices[index] = input;
-    else state.devices.push(input);
-  });
+  getOperationsData().devices.put(input);
   emit({
     type: "DEVICE_HEALTH",
     busId: input.busId,
@@ -572,9 +533,7 @@ export function getCase(
   refresh = true,
 ): AssistanceCase | undefined {
   if (refresh) refreshStaleCases();
-  return getOperationsStore()
-    .snapshot()
-    .cases.find((item) => item.caseId === caseId);
+  return getOperationsData().cases.get(caseId);
 }
 
 export function listCases(
@@ -585,37 +544,30 @@ export function listCases(
   } = {},
 ): AssistanceCase[] {
   if (options.refresh !== false) refreshStaleCases();
-  return getOperationsStore()
-    .snapshot()
-    .cases.filter(
-      (item) =>
-        (!options.busId || item.busId === options.busId) &&
-        (!options.state || item.state === options.state),
-    )
-    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  return getOperationsData().cases.list({
+    ...(options.busId ? { busId: options.busId } : {}),
+    ...(options.state ? { state: options.state } : {}),
+    limit: CASE_LIST_LIMIT,
+  });
 }
 
 export function listVehicleCapabilities(): VehicleCapability[] {
-  return getOperationsStore().snapshot().capabilities;
+  return getOperationsData().capabilities.list(FLEET_LIST_LIMIT);
 }
 
 export function getLatestSafetyTelemetry(
   busId: string,
 ): SafetyTelemetry | undefined {
-  return getOperationsStore()
-    .snapshot()
-    .safetyTelemetry.find((item) => item.busId === busId);
+  return getOperationsData().telemetry.get(busId);
 }
 
 export function listPendingActuatorCommands(busId?: string): ActuatorCommand[] {
   refreshStaleCases();
   expireActuatorCommands();
-  const state = getOperationsStore().snapshot();
-  return state.actuatorCommands.filter((command) => {
+  const data = getOperationsData();
+  return data.openCommands(OPEN_COMMAND_LIMIT).filter((command) => {
     if (busId && command.busId !== busId) return false;
-    const status = state.actuatorStatuses.find(
-      (candidate) => candidate.commandId === command.commandId,
-    );
+    const status = data.statuses.get(command.commandId);
     return (
       !status || ["ISSUED", "ACCEPTED", "IN_PROGRESS"].includes(status.state)
     );
@@ -623,50 +575,49 @@ export function listPendingActuatorCommands(busId?: string): ActuatorCommand[] {
 }
 
 export function listDevices(): DeviceHealth[] {
-  return getOperationsStore().snapshot().devices;
+  return getOperationsData().devices.list(FLEET_LIST_LIMIT);
 }
 
 export function getAssistanceMetrics(): AssistanceMetrics {
   refreshStaleCases();
-  const state = getOperationsStore().snapshot();
-  const acknowledgements = state.cases
+  const data = getOperationsData();
+  const cases = data.cases.list({ limit: METRICS_CASE_LIMIT });
+  const acknowledgements = cases
     .map((item) => item.outcome.acknowledgedLatencyMs)
     .filter((value): value is number => value !== undefined)
     .sort((a, b) => a - b);
-  const completionTimes = state.cases
+  const completionTimes = cases
     .map((item) => item.outcome.completionTimeMs)
     .filter((value): value is number => value !== undefined)
     .sort((a, b) => a - b);
-  const feedback: number[] = state.cases.flatMap((item) =>
+  const feedback: number[] = cases.flatMap((item) =>
     item.outcome.passengerFeedbackScore === undefined
       ? []
       : [item.outcome.passengerFeedbackScore],
   );
-  const interventions = state.cases.reduce(
+  const interventions = cases.reduce(
     (sum, item) => sum + item.outcome.operatorInterventions,
     0,
   );
+  const byState = data.cases.countByState();
+  const sensorObservations = SENSOR_SOURCES.reduce(
+    (sum, source) => sum + data.observations.countBy("source", source),
+    0,
+  );
   return {
-    totalCases: state.cases.length,
-    activeCases: state.cases.filter(
-      (item) => !TERMINAL_STATES.includes(item.state),
-    ).length,
-    completedCases: state.cases.filter((item) => item.state === "COMPLETED")
+    totalCases: data.cases.count(),
+    activeCases: cases.filter((item) => !TERMINAL_STATES.includes(item.state))
       .length,
-    escalatedCases: state.cases.filter((item) => item.state === "ESCALATED")
-      .length,
-    failedCases: state.cases.filter((item) => item.state === "FAILED").length,
-    explicitRequests: state.observations.filter(
-      (item) => !SENSOR_SOURCES.includes(item.source),
-    ).length,
-    sensorObservations: state.observations.filter((item) =>
-      SENSOR_SOURCES.includes(item.source),
-    ).length,
+    completedCases: byState.COMPLETED ?? 0,
+    escalatedCases: byState.ESCALATED ?? 0,
+    failedCases: byState.FAILED ?? 0,
+    explicitRequests: data.observations.count() - sensorObservations,
+    sensorObservations,
     acknowledgementP95Ms: percentile(acknowledgements, 0.95),
     medianCompletionMs: percentile(completionTimes, 0.5),
     operatorInterventionRate:
-      state.cases.length === 0 ? 0 : interventions / state.cases.length,
-    safetyBlocks: state.cases.reduce(
+      cases.length === 0 ? 0 : interventions / cases.length,
+    safetyBlocks: cases.reduce(
       (sum, item) => sum + item.outcome.safetyBlocks,
       0,
     ),
@@ -678,7 +629,7 @@ export function getAssistanceMetrics(): AssistanceMetrics {
 }
 
 export function clearOperations(removePersistentFiles = false): void {
-  resetOperationsStore(removePersistentFiles);
+  resetOperationsData(removePersistentFiles);
 }
 
 function evaluateCase(caseId: string): AssistanceCase {
@@ -718,9 +669,7 @@ function evaluateCase(caseId: string): AssistanceCase {
     item.escalationReason = "A specific vehicle has not been confirmed";
     return saveAndPublish(item);
   }
-  const capability = getOperationsStore()
-    .snapshot()
-    .capabilities.find((candidate) => candidate.busId === item.busId);
+  const capability = getOperationsData().capabilities.get(item.busId);
   if (!capability) {
     return escalate(item, "Vehicle capabilities are unavailable");
   }
@@ -777,18 +726,16 @@ function progressTerminalTransition(
   terminalState: "COMPLETED" | "CANCELLED",
   requestedAt = new Date().toISOString(),
 ): AssistanceCase {
-  const state = getOperationsStore().snapshot();
-  const deployCommand = state.actuatorCommands.find(
-    (command) =>
-      command.caseId === item.caseId && command.command === "DEPLOY_RAMP",
+  const data = getOperationsData();
+  const deployCommand = data.commands.findOne(
+    "caseCommand",
+    `${item.caseId}:DEPLOY_RAMP`,
   );
   if (!item.assistanceTypes.includes("WHEELCHAIR_RAMP") || !deployCommand) {
     return finalizeTerminalTransition(item, terminalState, requestedAt);
   }
 
-  const deployStatus = state.actuatorStatuses.find(
-    (status) => status.commandId === deployCommand.commandId,
-  );
+  const deployStatus = data.statuses.get(deployCommand.commandId);
   if (
     terminalState === "CANCELLED" &&
     (!deployStatus || deployStatus.state === "ISSUED")
@@ -830,10 +777,7 @@ function progressTerminalTransition(
     terminalState,
     phase: item.phase,
   });
-  const latest = getOperationsStore().snapshot();
-  const retractStatus = latest.actuatorStatuses.find(
-    (status) => status.commandId === retractCommand.commandId,
-  );
+  const retractStatus = data.statuses.get(retractCommand.commandId);
   if (retractStatus?.state === "FAILED") {
     return fail(item, retractStatus.detail ?? "Ramp retraction failed");
   }
@@ -903,12 +847,9 @@ function cancelUnstartedRampDeployment(
   command: ActuatorCommand,
 ): void {
   const now = new Date().toISOString();
-  getOperationsStore().update((state) => {
-    const existing = state.actuatorStatuses.find(
-      (status) => status.commandId === command.commandId,
-    );
-    if (existing) return;
-    state.actuatorStatuses.push({
+  const data = getOperationsData();
+  if (!data.statuses.get(command.commandId)) {
+    data.putStatus({
       commandId: command.commandId,
       caseId: item.caseId,
       busId: command.busId,
@@ -916,7 +857,7 @@ function cancelUnstartedRampDeployment(
       detail: "Passenger cancelled before ramp movement began",
       updatedAt: now,
     });
-  });
+  }
   audit("RAMP_DEPLOYMENT_CANCELLED", "ORCHESTRATOR", item.caseId, item.busId, {
     commandId: command.commandId,
   });
@@ -942,15 +883,11 @@ function rampRetractionSafetyFailure(
 }
 
 function finishFromActuatorStatuses(item: AssistanceCase): AssistanceCase {
-  const state = getOperationsStore().snapshot();
-  const commands = state.actuatorCommands.filter(
-    (command) => command.caseId === item.caseId,
-  );
+  const data = getOperationsData();
+  const commands = data.commands.find("caseId", item.caseId, PER_CASE_LIMIT);
   const statuses = commands.map((command) => ({
     command,
-    status: state.actuatorStatuses.find(
-      (candidate) => candidate.commandId === command.commandId,
-    ),
+    status: data.statuses.get(command.commandId),
   }));
   const failure = statuses.find(
     ({ status }) => status && ["BLOCKED", "FAILED"].includes(status.state),
@@ -990,12 +927,10 @@ function finishFromActuatorStatuses(item: AssistanceCase): AssistanceCase {
 }
 
 function expireActuatorCommands(nowMs = Date.now()): void {
-  const snapshot = getOperationsStore().snapshot();
-  const expired = snapshot.actuatorCommands.filter((command) => {
+  const data = getOperationsData();
+  const expired = data.openCommands(OPEN_COMMAND_LIMIT).filter((command) => {
     if (new Date(command.expiresAt).getTime() >= nowMs) return false;
-    const status = snapshot.actuatorStatuses.find(
-      (candidate) => candidate.commandId === command.commandId,
-    );
+    const status = data.statuses.get(command.commandId);
     return (
       !status || ["ISSUED", "ACCEPTED", "IN_PROGRESS"].includes(status.state)
     );
@@ -1003,23 +938,17 @@ function expireActuatorCommands(nowMs = Date.now()): void {
   if (expired.length === 0) return;
 
   const updatedAt = new Date(nowMs).toISOString();
-  getOperationsStore().update((state) => {
-    for (const command of expired) {
-      const failedStatus: ActuatorStatus = {
-        commandId: command.commandId,
-        caseId: command.caseId,
-        busId: command.busId,
-        state: "FAILED",
-        detail: "Actuator command expired before completion",
-        updatedAt,
-      };
-      const index = state.actuatorStatuses.findIndex(
-        (candidate) => candidate.commandId === command.commandId,
-      );
-      if (index >= 0) state.actuatorStatuses[index] = failedStatus;
-      else state.actuatorStatuses.push(failedStatus);
-    }
-  });
+  for (const command of expired) {
+    const failedStatus: ActuatorStatus = {
+      commandId: command.commandId,
+      caseId: command.caseId,
+      busId: command.busId,
+      state: "FAILED",
+      detail: "Actuator command expired before completion",
+      updatedAt,
+    };
+    data.putStatus(failedStatus);
+  }
 
   for (const command of expired) {
     audit(
@@ -1057,10 +986,10 @@ function issueCommand(
   commandType: ActuatorCommandType,
   payload?: Record<string, string | number | boolean>,
 ): ActuatorCommand {
-  const state = getOperationsStore().snapshot();
-  const existing = state.actuatorCommands.find(
-    (candidate) =>
-      candidate.caseId === item.caseId && candidate.command === commandType,
+  const data = getOperationsData();
+  const existing = data.commands.findOne(
+    "caseCommand",
+    `${item.caseId}:${commandType}`,
   );
   if (existing) return existing;
   const issuedAt = new Date().toISOString();
@@ -1075,7 +1004,7 @@ function issueCommand(
     issuedAt,
     expiresAt: new Date(Date.now() + 30_000).toISOString(),
   };
-  getOperationsStore().update((next) => next.actuatorCommands.push(command));
+  data.putCommand(command);
   const plan = item.actionPlan.find(
     (candidate) =>
       candidate.action === commandType && candidate.status === "PLANNED",
@@ -1180,13 +1109,7 @@ function saveAndPublish(item: AssistanceCase): AssistanceCase {
 
 function saveCase(item: AssistanceCase): void {
   item.boardingIntent = deriveBoardingIntent(item);
-  getOperationsStore().update((state) => {
-    const index = state.cases.findIndex(
-      (candidate) => candidate.caseId === item.caseId,
-    );
-    if (index < 0) state.cases.push(item);
-    else state.cases[index] = item;
-  });
+  getOperationsData().cases.upsert(item);
 }
 
 function emptyBoardingIntent(
@@ -1204,10 +1127,11 @@ function emptyBoardingIntent(
 }
 
 function deriveBoardingIntent(item: AssistanceCase): BoardingIntentAssessment {
-  const state = getOperationsStore().snapshot();
-  const observations = state.observations.filter((observation) =>
-    item.intents.some((intent) => intent.signalId === observation.signalId),
-  );
+  const stored = getOperationsData().observations;
+  const observations = item.intents.flatMap((intent) => {
+    const observation = stored.get(intent.signalId);
+    return observation ? [observation] : [];
+  });
   const evidence = observations.map((observation) => {
     const intent = item.intents.find(
       (candidate) => candidate.signalId === observation.signalId,
@@ -1296,18 +1220,13 @@ function deriveBoardingIntent(item: AssistanceCase): BoardingIntentAssessment {
 }
 
 function refreshStaleCases(): void {
-  const state = getOperationsStore().snapshot();
-  for (const item of state.cases) {
+  const data = getOperationsData();
+  for (const item of data.cases.listOpen(OPEN_CASE_LIMIT)) {
     if (
-      !TERMINAL_STATES.includes(item.state) &&
       item.assistanceTypes.includes("WHEELCHAIR_RAMP") &&
       ["SAFE_TO_ACTUATE", "ACTUATING"].includes(item.state)
     ) {
-      const telemetry = item.busId
-        ? state.safetyTelemetry.find(
-            (candidate) => candidate.busId === item.busId,
-          )
-        : undefined;
+      const telemetry = item.busId ? data.telemetry.get(item.busId) : undefined;
       if (telemetry && !isTelemetryFresh(telemetry)) {
         block(item, "Vehicle safety telemetry is stale");
       }
@@ -1316,20 +1235,13 @@ function refreshStaleCases(): void {
 }
 
 function requireCase(caseId: string): AssistanceCase {
-  const item = getOperationsStore()
-    .snapshot()
-    .cases.find((candidate) => candidate.caseId === caseId);
+  const item = getOperationsData().cases.get(caseId);
   if (!item) throw new OperationsNotFoundError("Assistance case not found");
   return item;
 }
 
 function ensureMockVehicleCapability(busId: string, busService?: string): void {
-  if (
-    getOperationsStore()
-      .snapshot()
-      .capabilities.some((item) => item.busId === busId)
-  )
-    return;
+  if (getOperationsData().capabilities.get(busId)) return;
   const bus = getBusById(busId);
   registerVehicleCapability({
     busId,
@@ -1497,7 +1409,7 @@ function audit(
   busId?: string,
   detail?: Record<string, unknown>,
 ): void {
-  getOperationsStore().appendAudit({
+  getOperationsData().audit.append({
     eventId: createId("EVENT"),
     eventType,
     caseId,

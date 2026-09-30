@@ -3,17 +3,19 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AssistanceCase } from "@buspass/shared";
+import type {
+  ActuatorCommand,
+  ActuatorStatus,
+  AssistanceCase,
+  SignalObservation,
+} from "@buspass/shared";
 import {
   DEFAULT_RETENTION_POLICY,
-  applyRetention,
   retentionPolicyFromEnv,
   type RetentionPolicy,
 } from "../services/retention";
-import {
-  OperationsStore,
-  type OperationsState,
-} from "../services/operationsStore";
+import { OperationsData } from "../services/operationsData";
+import { openSqliteDatabase } from "../storage/sqlite";
 
 const NOW = Date.parse("2026-10-01T00:00:00.000Z");
 const DAY = 24 * 60 * 60 * 1000;
@@ -25,6 +27,12 @@ const policy: RetentionPolicy = {
   maxSeriesRecords: 4,
 };
 
+const sqliteAvailable = (() => {
+  const database = openSqliteDatabase(":memory:");
+  database?.close();
+  return database !== undefined;
+})();
+
 function makeCase(
   id: string,
   state: AssistanceCase["state"],
@@ -32,176 +40,277 @@ function makeCase(
 ): AssistanceCase {
   return {
     caseId: id,
+    stopCode: "18331",
     busId: "AV-095-01",
+    phase: "BOARDING",
+    intents: [],
     state,
     createdAt: at(ageMs + 1000),
     updatedAt: at(ageMs),
   } as unknown as AssistanceCase;
 }
 
-function makeState(overrides: Partial<OperationsState> = {}): OperationsState {
-  return {
-    cases: [],
-    observations: [],
-    capabilities: [],
-    safetyTelemetry: [],
-    actuatorCommands: [],
-    actuatorStatuses: [],
-    devices: [],
-    autonomousVehicles: [],
-    rampObstacleClassifications: [],
-    perceptionEvaluationSamples: [],
-    precisionDockingObservations: [],
-    ...overrides,
+const command = (id: string, caseId: string): ActuatorCommand =>
+  ({
+    commandId: id,
+    caseId,
+    busId: "AV-095-01",
+    command: "DEPLOY_RAMP",
+  }) as unknown as ActuatorCommand;
+
+const status = (id: string, caseId: string): ActuatorStatus =>
+  ({
+    commandId: id,
+    caseId,
+    busId: "AV-095-01",
+    state: "COMPLETED",
+  }) as unknown as ActuatorStatus;
+
+const observation = (n: number): SignalObservation =>
+  ({
+    signalId: `S${n}`,
+    source: "APP",
+    observedAt: at(-n * 1000),
+  }) as unknown as SignalObservation;
+
+for (const driver of ["memory", "sqlite"]) {
+  const options = {
+    skip:
+      driver === "sqlite" && !sqliteAvailable
+        ? "node:sqlite is not available"
+        : undefined,
   };
+
+  function withData(
+    retention: RetentionPolicy,
+    work: (data: OperationsData, directory: string) => void,
+  ) {
+    const directory = mkdtempSync(join(tmpdir(), "goassist-retention-"));
+    const data = new OperationsData(directory, {
+      retention,
+      driver,
+      retentionTimer: false,
+    });
+    try {
+      work(data, directory);
+    } finally {
+      data.close();
+      try {
+        rmSync(directory, { recursive: true, force: true });
+      } catch {
+        // Windows may still hold the database file; the temp directory is disposable.
+      }
+    }
+  }
+
+  test(
+    `retention (${driver}): a finished case older than the limit is archived and removed`,
+    options,
+    () => {
+      withData(policy, (data) => {
+        data.cases.upsert(makeCase("OLD-DONE", "COMPLETED", 8 * DAY));
+        data.cases.upsert(makeCase("NEW-DONE", "COMPLETED", 1 * DAY));
+        assert.equal(data.runRetention(NOW), 1);
+        assert.equal(data.cases.get("OLD-DONE"), undefined);
+        assert.ok(data.cases.get("NEW-DONE"));
+        const lines = readFileSync(data.archivePath, "utf8")
+          .trim()
+          .split("\n")
+          .map(
+            (line) =>
+              JSON.parse(line) as {
+                archivedAt: string;
+                case: { caseId: string };
+              },
+          );
+        assert.deepEqual(
+          lines.map((line) => line.case.caseId),
+          ["OLD-DONE"],
+        );
+        assert.ok(Date.parse(lines[0].archivedAt) > 0);
+      });
+    },
+  );
+
+  test(
+    `retention (${driver}): a case that still needs someone is never removed, however old`,
+    options,
+    () => {
+      withData(policy, (data) => {
+        const open = [
+          "REQUESTED",
+          "VALIDATED",
+          "VEHICLE_ASSIGNED",
+          "SAFE_TO_ACTUATE",
+          "ACTUATING",
+          "READY",
+          "NEEDS_CONFIRMATION",
+          "ESCALATED",
+          "BLOCKED",
+        ] as const;
+        for (const name of open)
+          data.cases.upsert(makeCase(name, name, 400 * DAY));
+        assert.equal(data.runRetention(NOW), 0);
+        assert.equal(data.cases.count(), open.length);
+      });
+    },
+  );
+
+  test(
+    `retention (${driver}): failed and cancelled cases count as finished`,
+    options,
+    () => {
+      withData(policy, (data) => {
+        data.cases.upsert(makeCase("F", "FAILED", 9 * DAY));
+        data.cases.upsert(makeCase("C", "CANCELLED", 9 * DAY));
+        assert.equal(data.runRetention(NOW), 2);
+        assert.equal(data.cases.count(), 0);
+      });
+    },
+  );
+
+  test(
+    `retention (${driver}): only the newest finished cases stay when there are too many`,
+    options,
+    () => {
+      withData(policy, (data) => {
+        for (const n of [1, 2, 3, 4, 5])
+          data.cases.upsert(makeCase(`D${n}`, "COMPLETED", n * 60 * 1000));
+        assert.equal(data.runRetention(NOW), 2);
+        assert.deepEqual(
+          data.cases
+            .list({ limit: 10 })
+            .map((item) => item.caseId)
+            .sort(),
+          ["D1", "D2", "D3"],
+        );
+      });
+    },
+  );
+
+  test(
+    `retention (${driver}): commands and statuses of a removed case go with it and are archived with it`,
+    options,
+    () => {
+      withData(policy, (data) => {
+        data.cases.upsert(makeCase("GONE", "COMPLETED", 9 * DAY));
+        data.cases.upsert(makeCase("STAYS", "COMPLETED", 1 * DAY));
+        data.putCommand(command("K1", "GONE"));
+        data.putCommand(command("K2", "STAYS"));
+        data.putStatus(status("K1", "GONE"));
+        data.putStatus(status("K2", "STAYS"));
+        data.runRetention(NOW);
+        assert.equal(data.commands.get("K1"), undefined);
+        assert.equal(data.statuses.get("K1"), undefined);
+        assert.ok(data.commands.get("K2"));
+        assert.ok(data.statuses.get("K2"));
+        const archived = JSON.parse(
+          readFileSync(data.archivePath, "utf8").trim(),
+        ) as { commands: unknown[]; statuses: unknown[] };
+        assert.equal(archived.commands.length, 1);
+        assert.equal(archived.statuses.length, 1);
+      });
+    },
+  );
+
+  test(
+    `retention (${driver}): a growing series keeps only its newest records`,
+    options,
+    () => {
+      withData(policy, (data) => {
+        for (const n of [1, 2, 3, 4, 5, 6])
+          data.observations.put(observation(n));
+        data.runRetention(NOW);
+        assert.deepEqual(
+          data.observations.list(10).map((item) => item.signalId),
+          ["S3", "S4", "S5", "S6"],
+        );
+      });
+    },
+  );
+
+  test(
+    `retention (${driver}): one-row-per-thing tables are never trimmed`,
+    options,
+    () => {
+      withData(policy, (data) => {
+        for (let n = 0; n < 20; n += 1) {
+          data.capabilities.put({ busId: `B${n}` } as never);
+          data.devices.put({ deviceId: `D${n}` } as never);
+        }
+        data.runRetention(NOW);
+        assert.equal(data.capabilities.count(), 20);
+        assert.equal(data.devices.count(), 20);
+      });
+    },
+  );
+
+  test(
+    `retention (${driver}): running it again with nothing to remove changes nothing`,
+    options,
+    () => {
+      withData(policy, (data) => {
+        data.cases.upsert(makeCase("A", "COMPLETED", 1 * DAY));
+        assert.equal(data.runRetention(NOW), 0);
+        assert.equal(data.cases.count(), 1);
+        assert.equal(existsSync(data.archivePath), false);
+      });
+    },
+  );
+
+  test(
+    `retention (${driver}): reset removes the archive with the other files`,
+    options,
+    () => {
+      withData(policy, (data) => {
+        data.cases.upsert(makeCase("OLD", "COMPLETED", 9 * DAY));
+        data.runRetention(NOW);
+        assert.ok(existsSync(data.archivePath));
+        data.reset(true);
+        assert.equal(existsSync(data.archivePath), false);
+      });
+    },
+  );
 }
 
-test("a finished case older than the limit is removed and handed back to be archived", () => {
-  const state = makeState({
-    cases: [
-      makeCase("OLD-DONE", "COMPLETED", 8 * DAY),
-      makeCase("NEW-DONE", "COMPLETED", 1 * DAY),
-    ],
-  });
-  const result = applyRetention(state, policy, NOW);
-  assert.deepEqual(
-    result.state.cases.map((item) => item.caseId),
-    ["NEW-DONE"],
-  );
-  assert.deepEqual(
-    result.archived.map((entry) => entry.case.caseId),
-    ["OLD-DONE"],
-  );
-});
-
-test("a case that still needs someone is never removed, however old", () => {
-  const open = [
-    "REQUESTED",
-    "VALIDATED",
-    "VEHICLE_ASSIGNED",
-    "SAFE_TO_ACTUATE",
-    "ACTUATING",
-    "READY",
-    "NEEDS_CONFIRMATION",
-    "ESCALATED",
-    "BLOCKED",
-  ] as const;
-  const state = makeState({
-    cases: open.map((name) => makeCase(name, name, 400 * DAY)),
-  });
-  const result = applyRetention(state, policy, NOW);
-  assert.equal(result.state.cases.length, open.length);
-  assert.equal(result.archived.length, 0);
-});
-
-test("failed and cancelled cases count as finished", () => {
-  const state = makeState({
-    cases: [
-      makeCase("F", "FAILED", 9 * DAY),
-      makeCase("C", "CANCELLED", 9 * DAY),
-    ],
-  });
-  assert.equal(applyRetention(state, policy, NOW).state.cases.length, 0);
-});
-
-test("only the newest finished cases are kept when there are too many", () => {
-  const state = makeState({
-    cases: [1, 2, 3, 4, 5].map((n) =>
-      makeCase(`D${n}`, "COMPLETED", n * 60 * 1000),
-    ),
-  });
-  const result = applyRetention(state, policy, NOW);
-  assert.deepEqual(
-    result.state.cases.map((item) => item.caseId),
-    ["D1", "D2", "D3"],
-  );
-  assert.deepEqual(result.archived.map((entry) => entry.case.caseId).sort(), [
-    "D4",
-    "D5",
-  ]);
-});
-
-test("commands and statuses of a removed case go with it and are archived with it", () => {
-  const state = makeState({
-    cases: [
-      makeCase("GONE", "COMPLETED", 9 * DAY),
-      makeCase("STAYS", "COMPLETED", 1 * DAY),
-    ],
-    actuatorCommands: [
-      { commandId: "K1", caseId: "GONE" },
-      { commandId: "K2", caseId: "STAYS" },
-    ] as unknown as OperationsState["actuatorCommands"],
-    actuatorStatuses: [
-      { commandId: "K1", caseId: "GONE" },
-      { commandId: "K2", caseId: "STAYS" },
-    ] as unknown as OperationsState["actuatorStatuses"],
-  });
-  const result = applyRetention(state, policy, NOW);
-  assert.deepEqual(
-    result.state.actuatorCommands.map((item) => item.commandId),
-    ["K2"],
-  );
-  assert.deepEqual(
-    result.state.actuatorStatuses.map((item) => item.commandId),
-    ["K2"],
-  );
-  assert.equal(result.archived[0].commands.length, 1);
-  assert.equal(result.archived[0].statuses.length, 1);
-});
-
-test("a series keeps only its newest records", () => {
-  const records = [1, 2, 3, 4, 5, 6].map((n) => ({
-    signalId: `S${n}`,
-    observedAt: at(-n * 1000),
-  }));
-  const state = makeState({
-    observations: records as unknown as OperationsState["observations"],
-    safetyTelemetry: records as unknown as OperationsState["safetyTelemetry"],
-    perceptionEvaluationSamples:
-      records as unknown as OperationsState["perceptionEvaluationSamples"],
-  });
-  const result = applyRetention(state, policy, NOW);
-  assert.equal(result.state.observations.length, 4);
-  assert.equal(
-    (result.state.observations[3] as unknown as { signalId: string }).signalId,
-    "S6",
-  );
-  assert.equal(result.state.safetyTelemetry.length, 4);
-  assert.equal(result.state.perceptionEvaluationSamples.length, 4);
-});
-
-test("capabilities, devices and vehicle state are one row per thing and are never trimmed", () => {
-  const many = (prefix: string) =>
-    Array.from({ length: 20 }, (_, n) => ({ id: `${prefix}${n}` }));
-  const state = makeState({
-    capabilities: many("C") as unknown as OperationsState["capabilities"],
-    devices: many("D") as unknown as OperationsState["devices"],
-    autonomousVehicles: many(
-      "A",
-    ) as unknown as OperationsState["autonomousVehicles"],
-  });
-  const result = applyRetention(state, policy, NOW);
-  assert.equal(result.state.capabilities.length, 20);
-  assert.equal(result.state.devices.length, 20);
-  assert.equal(result.state.autonomousVehicles.length, 20);
-});
-
-test("nothing to remove gives back the same records and an empty archive", () => {
-  const state = makeState({
-    cases: [makeCase("A", "COMPLETED", 1 * DAY)],
-  });
-  const result = applyRetention(state, policy, NOW);
-  assert.equal(result.archived.length, 0);
-  assert.equal(result.state.cases.length, 1);
-});
-
-test("the input state is not changed", () => {
-  const state = makeState({
-    cases: [makeCase("OLD", "COMPLETED", 9 * DAY)],
-  });
-  applyRetention(state, policy, NOW);
-  assert.equal(state.cases.length, 1);
-});
+test(
+  "a store that opens with more than the policy allows trims it at once",
+  { skip: sqliteAvailable ? undefined : "node:sqlite is not available" },
+  () => {
+    const directory = mkdtempSync(join(tmpdir(), "goassist-retention-"));
+    const roomy: RetentionPolicy = {
+      finishedCaseMaxAgeMs: 400 * DAY,
+      maxFinishedCases: 100,
+      maxSeriesRecords: 100,
+    };
+    try {
+      const first = new OperationsData(directory, {
+        retention: roomy,
+        driver: "sqlite",
+        retentionTimer: false,
+      });
+      for (let n = 1; n <= 6; n += 1)
+        first.cases.upsert(
+          makeCase(`X${n}`, "COMPLETED", n * 60 * 1000 + 8 * DAY),
+        );
+      first.close();
+      const strict = new OperationsData(directory, {
+        retention: { ...roomy, maxFinishedCases: 2 },
+        driver: "sqlite",
+        retentionTimer: false,
+      });
+      assert.equal(strict.cases.count(), 2);
+      assert.ok(existsSync(strict.archivePath));
+      strict.close();
+    } finally {
+      try {
+        rmSync(directory, { recursive: true, force: true });
+      } catch {
+        // Windows may still hold the database file.
+      }
+    }
+  },
+);
 
 test("the policy comes from the environment, and a bad value falls back to the default", () => {
   const set = retentionPolicyFromEnv({
@@ -219,81 +328,4 @@ test("the policy comes from the environment, and a bad value falls back to the d
   });
   assert.deepEqual(bad, DEFAULT_RETENTION_POLICY);
   assert.deepEqual(retentionPolicyFromEnv({}), DEFAULT_RETENTION_POLICY);
-});
-
-test("the store applies the policy on every update and archives what it removes", () => {
-  const directory = mkdtempSync(join(tmpdir(), "goassist-retention-"));
-  try {
-    const store = new OperationsStore(directory, {
-      finishedCaseMaxAgeMs: 7 * DAY,
-      maxFinishedCases: 2,
-      maxSeriesRecords: 100,
-    });
-    for (let n = 1; n <= 4; n += 1) {
-      store.update((state) => {
-        state.cases.push(
-          makeCase(`R${n}`, "COMPLETED", (5 - n) * 60 * 1000 + DAY),
-        );
-      });
-    }
-    const kept = store.snapshot().cases.map((item) => item.caseId);
-    assert.deepEqual(kept.sort(), ["R3", "R4"]);
-    const lines = readFileSync(store.archivePath, "utf8")
-      .trim()
-      .split("\n")
-      .map(
-        (line) =>
-          JSON.parse(line) as { archivedAt: string; case: { caseId: string } },
-      );
-    assert.deepEqual(lines.map((line) => line.case.caseId).sort(), [
-      "R1",
-      "R2",
-    ]);
-    assert.ok(lines.every((line) => Date.parse(line.archivedAt) > 0));
-  } finally {
-    rmSync(directory, { recursive: true, force: true });
-  }
-});
-
-test("a store that opens with more than the policy allows trims it at once", () => {
-  const directory = mkdtempSync(join(tmpdir(), "goassist-retention-"));
-  try {
-    const roomy = new OperationsStore(directory, {
-      finishedCaseMaxAgeMs: 400 * DAY,
-      maxFinishedCases: 100,
-      maxSeriesRecords: 100,
-    });
-    roomy.update((state) => {
-      for (let n = 1; n <= 6; n += 1)
-        state.cases.push(makeCase(`X${n}`, "COMPLETED", n * 60 * 1000));
-    });
-    const strict = new OperationsStore(directory, {
-      finishedCaseMaxAgeMs: 400 * DAY,
-      maxFinishedCases: 2,
-      maxSeriesRecords: 100,
-    });
-    assert.equal(strict.snapshot().cases.length, 2);
-    assert.ok(existsSync(strict.archivePath));
-  } finally {
-    rmSync(directory, { recursive: true, force: true });
-  }
-});
-
-test("reset can remove the archive with the other files", () => {
-  const directory = mkdtempSync(join(tmpdir(), "goassist-retention-"));
-  try {
-    const store = new OperationsStore(directory, {
-      finishedCaseMaxAgeMs: 1,
-      maxFinishedCases: 1,
-      maxSeriesRecords: 10,
-    });
-    store.update((state) => {
-      state.cases.push(makeCase("OLD", "COMPLETED", 5 * DAY));
-    });
-    assert.ok(existsSync(store.archivePath));
-    store.reset(true);
-    assert.equal(existsSync(store.archivePath), false);
-  } finally {
-    rmSync(directory, { recursive: true, force: true });
-  }
 });

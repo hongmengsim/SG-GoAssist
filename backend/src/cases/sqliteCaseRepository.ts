@@ -21,6 +21,7 @@ const SCHEMA = `
   CREATE INDEX IF NOT EXISTS cases_open_stop ON cases (is_open, stop_code, phase);
   CREATE INDEX IF NOT EXISTS cases_bus ON cases (bus_id, updated_at);
   CREATE INDEX IF NOT EXISTS cases_state ON cases (state, updated_at);
+  CREATE INDEX IF NOT EXISTS cases_finished ON cases (is_open, updated_at);
   CREATE TABLE IF NOT EXISTS case_signals (
     signal_id TEXT PRIMARY KEY,
     case_id TEXT NOT NULL
@@ -48,6 +49,11 @@ export class SqliteCaseRepository implements CaseRepository {
   private readonly bySignal: SqliteStatement;
   private readonly openMatches = new Map<string, SqliteStatement>();
   private readonly openList: SqliteStatement;
+  private readonly finishedOldest: SqliteStatement;
+  private readonly finishedBefore: SqliteStatement;
+  private readonly countFinishedStatement: SqliteStatement;
+  private readonly deleteCase: SqliteStatement;
+  private readonly deleteSignals: SqliteStatement;
   private readonly countAll: SqliteStatement;
   private readonly countStates: SqliteStatement;
   private readonly clearCases: SqliteStatement;
@@ -76,6 +82,19 @@ export class SqliteCaseRepository implements CaseRepository {
     );
     this.openList = database.prepare(
       "SELECT body_json FROM cases WHERE is_open = 1 ORDER BY rowid LIMIT ?",
+    );
+    this.finishedOldest = database.prepare(
+      "SELECT body_json FROM cases WHERE is_open = 0 ORDER BY updated_at, rowid LIMIT ?",
+    );
+    this.finishedBefore = database.prepare(
+      "SELECT body_json FROM cases WHERE is_open = 0 AND updated_at < ? ORDER BY updated_at, rowid LIMIT ?",
+    );
+    this.countFinishedStatement = database.prepare(
+      "SELECT COUNT(*) AS total FROM cases WHERE is_open = 0",
+    );
+    this.deleteCase = database.prepare("DELETE FROM cases WHERE case_id = ?");
+    this.deleteSignals = database.prepare(
+      "DELETE FROM case_signals WHERE case_id = ?",
     );
     this.countAll = database.prepare("SELECT COUNT(*) AS total FROM cases");
     this.countStates = database.prepare(
@@ -171,6 +190,23 @@ export class SqliteCaseRepository implements CaseRepository {
 
   listOpen(limit: number): AssistanceCase[] {
     return this.openList.all(limit).map(parse);
+  }
+
+  listFinishedOldest(limit: number): AssistanceCase[] {
+    return this.finishedOldest.all(limit).map(parse);
+  }
+
+  listFinishedBefore(isoTime: string, limit: number): AssistanceCase[] {
+    return this.finishedBefore.all(isoTime, limit).map(parse);
+  }
+
+  countFinished(): number {
+    return (this.countFinishedStatement.get() as { total: number }).total;
+  }
+
+  delete(caseId: string): void {
+    this.deleteCase.run(caseId);
+    this.deleteSignals.run(caseId);
   }
 
   count(): number {

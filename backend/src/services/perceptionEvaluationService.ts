@@ -3,7 +3,7 @@ import {
   PerceptionEvaluationSample,
   PerceptionNeedClass,
 } from "@buspass/shared";
-import { getOperationsStore } from "./operationsStore";
+import { getOperationsData } from "./operationsData";
 
 const CLASSES: PerceptionNeedClass[] = [
   "WHEELCHAIR",
@@ -12,6 +12,8 @@ const CLASSES: PerceptionNeedClass[] = [
   "LUGGAGE",
   "PASSENGER_IN_BOARDING_ZONE",
 ];
+/** The metrics read at most this many samples (the retention policy keeps far fewer). */
+const METRICS_SAMPLE_LIMIT = 100_000;
 const CLASS_SET = new Set<PerceptionNeedClass>(CLASSES);
 
 export class PerceptionEvaluationValidationError extends Error {}
@@ -20,20 +22,16 @@ export function recordPerceptionEvaluation(
   input: PerceptionEvaluationSample,
 ): PerceptionEvaluationSample {
   const normalized = validateAndNormalize(input);
-  const existing = getOperationsStore()
-    .snapshot()
-    .perceptionEvaluationSamples.find(
-      (item) => item.sampleId === normalized.sampleId,
-    );
+  const samples = getOperationsData().perceptionSamples;
+  const existing = samples.get(normalized.sampleId);
   if (existing) return existing;
-  getOperationsStore().update((state) => {
-    state.perceptionEvaluationSamples.push(normalized);
-  });
+  samples.put(normalized);
   return normalized;
 }
 
 export function getPerceptionEvaluationMetrics(): PerceptionEvaluationMetrics {
-  const samples = getOperationsStore().snapshot().perceptionEvaluationSamples;
+  const samples =
+    getOperationsData().perceptionSamples.list(METRICS_SAMPLE_LIMIT);
   const classes = CLASSES.map((className) => {
     let truePositives = 0;
     let falsePositives = 0;

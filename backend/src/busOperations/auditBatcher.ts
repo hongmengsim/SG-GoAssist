@@ -1,4 +1,4 @@
-import type { OperationsAuditEvent } from "../services/operationsStore";
+import type { OperationsAuditEvent } from "../services/auditLog";
 
 /**
  * Groups audit events so the store can write them in one transaction. Measured on this laptop,

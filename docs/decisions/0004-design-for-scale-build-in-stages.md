@@ -25,3 +25,7 @@ Running at scale, or migrating the teammate's existing case and telemetry storag
 ## Open
 
 The load assumptions in section 2 of the scalability document are the author's and need the team's confirmation. The acceptance thresholds are targets, not results.
+
+## Addendum, 1 Oct 2026
+
+The migration this decision deferred (SC10) was done on CE2's instruction: cases and the other case-service records now use per-record storage, and the whole-state document is retired. The teammate has not yet reviewed it. See `docs/status.md`.

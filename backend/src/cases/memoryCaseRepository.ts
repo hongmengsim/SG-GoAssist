@@ -65,6 +65,30 @@ export class MemoryCaseRepository implements CaseRepository {
       .map((item) => structuredClone(item));
   }
 
+  listFinishedOldest(limit: number): AssistanceCase[] {
+    return [...this.cases.values()]
+      .filter((item) => !isOpen(item))
+      .sort((a, b) => a.updatedAt.localeCompare(b.updatedAt))
+      .slice(0, limit)
+      .map((item) => structuredClone(item));
+  }
+
+  listFinishedBefore(isoTime: string, limit: number): AssistanceCase[] {
+    return this.listFinishedOldest(Number.MAX_SAFE_INTEGER)
+      .filter((item) => item.updatedAt < isoTime)
+      .slice(0, limit);
+  }
+
+  countFinished(): number {
+    let total = 0;
+    for (const item of this.cases.values()) if (!isOpen(item)) total += 1;
+    return total;
+  }
+
+  delete(caseId: string): void {
+    this.cases.delete(caseId);
+  }
+
   count(): number {
     return this.cases.size;
   }

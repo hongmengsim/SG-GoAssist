@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { OperationsStore } from "../services/operationsStore";
+import { OperationsData } from "../services/operationsData";
 import { AuditBatcher } from "../busOperations/auditBatcher";
 import { openSqliteDatabase } from "../storage/sqlite";
 
@@ -33,16 +33,16 @@ for (const driver of ["json", "sqlite"]) {
       const previous = process.env.GOASSIST_STORAGE_DRIVER;
       process.env.GOASSIST_STORAGE_DRIVER = driver;
       try {
-        const store = new OperationsStore(directory);
-        store.appendAuditBatch([event(1), event(2), event(3)]);
-        store.appendAuditBatch([]);
-        store.appendAudit(event(4));
-        const read = store.readAudit({ limit: 10 });
+        const store = new OperationsData(directory, { retentionTimer: false });
+        store.audit.appendBatch([event(1), event(2), event(3)]);
+        store.audit.appendBatch([]);
+        store.audit.append(event(4));
+        const read = store.audit.read({ limit: 10 });
         assert.deepEqual(
           read.map((item) => item.eventId),
           ["EVENT-4", "EVENT-3", "EVENT-2", "EVENT-1"],
         );
-        assert.equal(store.readAudit({ limit: 10, busId: "B1" }).length, 2);
+        assert.equal(store.audit.read({ limit: 10, busId: "B1" }).length, 2);
       } finally {
         if (previous === undefined) delete process.env.GOASSIST_STORAGE_DRIVER;
         else process.env.GOASSIST_STORAGE_DRIVER = previous;

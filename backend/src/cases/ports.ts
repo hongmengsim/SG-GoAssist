@@ -42,6 +42,12 @@ export interface CaseRepository {
   list(filter: CaseListFilter): AssistanceCase[];
   /** Open cases, oldest first, at most `limit`. */
   listOpen(limit: number): AssistanceCase[];
+  /** Finished cases, least recently updated first, at most `limit`. */
+  listFinishedOldest(limit: number): AssistanceCase[];
+  /** Finished cases last updated before this ISO time, oldest first, at most `limit`. */
+  listFinishedBefore(isoTime: string, limit: number): AssistanceCase[];
+  countFinished(): number;
+  delete(caseId: string): void;
   count(): number;
   countByState(): Partial<Record<AssistanceCaseState, number>>;
   clear(): void;

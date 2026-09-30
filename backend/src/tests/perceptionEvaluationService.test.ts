@@ -8,7 +8,10 @@ import {
   getPerceptionEvaluationMetrics,
   recordPerceptionEvaluation,
 } from "../services/perceptionEvaluationService";
-import { configureOperationsStore } from "../services/operationsStore";
+import {
+  closeOperationsData,
+  configureOperationsData,
+} from "../services/operationsData";
 
 let dataDirectory = "";
 
@@ -16,10 +19,11 @@ beforeEach(() => {
   dataDirectory = fs.mkdtempSync(
     path.join(os.tmpdir(), "goassist-perception-"),
   );
-  configureOperationsStore(dataDirectory);
+  configureOperationsData(dataDirectory, { retentionTimer: false });
 });
 
 afterEach(() => {
+  closeOperationsData();
   fs.rmSync(dataDirectory, { recursive: true, force: true });
 });
 
