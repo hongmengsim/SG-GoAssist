@@ -15,6 +15,12 @@ import {
   VehicleCapability,
 } from "@buspass/shared";
 import { logger } from "./logger";
+import {
+  applyRetention,
+  retentionPolicyFromEnv,
+  type ArchivedCase,
+  type RetentionPolicy,
+} from "./retention";
 
 export interface OperationsAuditEvent {
   eventId: string;
@@ -75,15 +81,23 @@ export class OperationsStore {
   readonly auditPath: string;
   readonly backupPath: string;
   readonly databasePath: string;
+  readonly archivePath: string;
+  private readonly retention: RetentionPolicy;
 
-  constructor(dataDirectory = defaultDataDirectory()) {
+  constructor(
+    dataDirectory = defaultDataDirectory(),
+    retention: RetentionPolicy = retentionPolicyFromEnv(),
+  ) {
     fs.mkdirSync(dataDirectory, { recursive: true });
     this.statePath = path.join(dataDirectory, "operations.json");
     this.auditPath = path.join(dataDirectory, "audit.ndjson");
     this.backupPath = `${this.statePath}.backup`;
     this.databasePath = path.join(dataDirectory, "operations.sqlite");
+    this.archivePath = path.join(dataDirectory, "cases-archive.ndjson");
+    this.retention = retention;
     this.database = this.openDatabase();
     this.state = this.load();
+    if (this.enforceRetention()) this.persist();
   }
 
   snapshot(): OperationsState {
@@ -92,8 +106,33 @@ export class OperationsStore {
 
   update(mutator: (state: OperationsState) => void): OperationsState {
     mutator(this.state);
+    this.enforceRetention();
     this.persist();
     return this.snapshot();
+  }
+
+  /**
+   * Trims the state to the retention policy. Removed cases are appended to the archive file
+   * first, so nothing is lost if the write fails half way. Returns whether anything changed.
+   */
+  private enforceRetention(): boolean {
+    const result = applyRetention(this.state, this.retention, Date.now());
+    if (result.archived.length > 0) this.archive(result.archived);
+    const changed =
+      result.archived.length > 0 || hasFewerRecords(this.state, result.state);
+    if (changed) this.state = result.state;
+    return changed;
+  }
+
+  private archive(entries: ArchivedCase[]): void {
+    const archivedAt = new Date().toISOString();
+    fs.appendFileSync(
+      this.archivePath,
+      entries
+        .map((entry) => `${JSON.stringify({ archivedAt, ...entry })}\n`)
+        .join(""),
+      "utf8",
+    );
   }
 
   appendAudit(event: OperationsAuditEvent): void {
@@ -234,7 +273,12 @@ export class OperationsStore {
       this.persist();
     }
     if (removePersistentFiles) {
-      for (const target of [this.statePath, this.backupPath, this.auditPath]) {
+      for (const target of [
+        this.statePath,
+        this.backupPath,
+        this.auditPath,
+        this.archivePath,
+      ]) {
         if (fs.existsSync(target)) {
           fs.unlinkSync(target);
         }
@@ -360,6 +404,15 @@ export class OperationsStore {
       return undefined;
     }
   }
+}
+
+function hasFewerRecords(
+  before: OperationsState,
+  after: OperationsState,
+): boolean {
+  return (Object.keys(before) as Array<keyof OperationsState>).some(
+    (key) => after[key].length < before[key].length,
+  );
 }
 
 function defaultDataDirectory(): string {
