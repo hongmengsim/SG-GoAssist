@@ -13,6 +13,8 @@
   ],
   "heartbeatSeconds": 5,
   "deploySeconds": 4,
+  "deploymentTimeoutSeconds": 30,
+  "linkLossHaltSeconds": 10,
   "maxCameraAgeSeconds": 1.0,
   "minDetectionConfidence": 0.25
 }
