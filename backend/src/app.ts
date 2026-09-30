@@ -11,8 +11,8 @@ import { router as passengerRouter } from "./routes/passenger";
 import { router as journeysRouter } from "./routes/journeys";
 import { getConnectedClientCount } from "./services/websocket";
 import { logger } from "./services/logger";
-import { clearAllRequests, getAllRequests } from "./services/aviator";
-import { clearOperations, listCases } from "./services/assistanceCaseService";
+import { clearAllRequests, countRequests } from "./services/aviator";
+import { clearOperations } from "./services/assistanceCaseService";
 import { getEventHub } from "./events/eventHub";
 import { getOperationsData } from "./services/operationsData";
 import { getBusOperations } from "./busOperations/composition";
@@ -142,10 +142,8 @@ export function createApp(options: AppOptions = {}) {
       timestamp: new Date().toISOString(),
       environment: NODE_ENV,
       connectedWebSocketClients: getConnectedClientCount(),
-      activeRequests: getAllRequests().length,
-      activeAssistanceCases: (await listCases()).filter(
-        (item) => !["COMPLETED", "FAILED", "CANCELLED"].includes(item.state),
-      ).length,
+      activeRequests: await countRequests(),
+      activeAssistanceCases: await countActiveCases(),
     });
   });
 
@@ -195,7 +193,7 @@ export function createApp(options: AppOptions = {}) {
 
   app.post("/admin/reset", requireAdmin, async (req, res, next) => {
     try {
-      clearAllRequests();
+      await clearAllRequests();
       await clearOperations();
       await clearBusOperationsData();
       res.json({
@@ -260,4 +258,14 @@ export function isLoopbackDevelopmentOrigin(origin: string): boolean {
   } catch {
     return false;
   }
+}
+
+/** Cases that still need someone, counted from the per-state totals (no case is read). */
+async function countActiveCases(): Promise<number> {
+  const byState = await (await getOperationsData()).cases.countByState();
+  const finished = ["COMPLETED", "FAILED", "CANCELLED"] as const;
+  const total = Object.values(byState).reduce((sum, n) => sum + (n ?? 0), 0);
+  return (
+    total - finished.reduce((sum, state) => sum + (byState[state] ?? 0), 0)
+  );
 }

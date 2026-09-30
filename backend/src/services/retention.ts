@@ -121,5 +121,8 @@ export async function enforceRetention(
   await data.perceptionSamples.trimOldest(keep);
   await data.commands.trimOldest(keep);
   await data.statuses.trimOldest(keep);
+  await data.requests.trimOldest(keep);
+  await data.announcements.trimOldest(keep);
+  await data.diagnostics.trimOldest(keep);
   return archived;
 }

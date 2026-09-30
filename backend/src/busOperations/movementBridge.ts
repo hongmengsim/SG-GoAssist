@@ -22,8 +22,10 @@ export function vehicleStatusFor(movement: BusMovementState): VehicleStatus {
 }
 
 /** Lets the app follow a real bus without any change to the app. */
-export function bridgeMovementToVehicleEvents(status: BusStatus): void {
-  processVehicleCommand({
+export async function bridgeMovementToVehicleEvents(
+  status: BusStatus,
+): Promise<void> {
+  await processVehicleCommand({
     busId: status.busId,
     busService: status.busService,
     stopCode: status.stopCode,

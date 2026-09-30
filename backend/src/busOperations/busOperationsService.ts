@@ -5,6 +5,7 @@ import {
   type BusStatus,
   type OperatorStatusUpdateMessage,
 } from "@buspass/shared";
+import { getLock } from "../concurrency/locks";
 import { applyBusReport, emptyBay, grantNext } from "./bayCoordinator";
 import type { BayRepository, BusStatusRepository } from "./ports";
 
@@ -28,7 +29,7 @@ export interface BusOperationsDeps {
   audit: (event: AuditEventInput) => void;
   now: () => number;
   /** Called after a bus's movement or stop changes, once its bay has accepted it. */
-  onMovement?: (status: BusStatus) => void;
+  onMovement?: (status: BusStatus) => void | Promise<void>;
 }
 
 /**
@@ -134,9 +135,6 @@ function clampLimit(limit: number | undefined): number {
 }
 
 export class BusOperationsService {
-  /** Serialises work per bus so a read-then-write cannot interleave with another report. */
-  private readonly tails = new Map<string, Promise<unknown>>();
-
   constructor(private readonly deps: BusOperationsDeps) {}
 
   async reportBusStatus(input: unknown, busId: string): Promise<ReportResult> {
@@ -171,7 +169,7 @@ export class BusOperationsService {
         status,
         timestamp: new Date(this.deps.now()).toISOString(),
       });
-      this.deps.onMovement?.(status);
+      await this.deps.onMovement?.(status);
       return { outcome: "CHANGED", status };
     });
   }
@@ -283,14 +281,12 @@ export class BusOperationsService {
     });
   }
 
+  /**
+   * Runs work under the shared lock: bus work under `bus:<id>`, bay work under `stop:<code>`.
+   * Bus work always takes the bus key first and then a stop key, so two processes cannot
+   * each hold one and wait for the other.
+   */
   private exclusive<T>(key: string, work: () => Promise<T>): Promise<T> {
-    const previous = this.tails.get(key) ?? Promise.resolve();
-    const run = previous.then(work, work);
-    const tail = run.catch(() => undefined);
-    this.tails.set(key, tail);
-    void tail.then(() => {
-      if (this.tails.get(key) === tail) this.tails.delete(key);
-    });
-    return run;
+    return getLock().run(key.startsWith("stop:") ? key : `bus:${key}`, work);
   }
 }

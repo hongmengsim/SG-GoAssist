@@ -20,6 +20,8 @@ export interface TableSpec<T> {
   key: (doc: T) => string;
   /** Up to four indexed lookups. A function returning undefined leaves the row out of it. */
   indexes?: Record<string, (doc: T) => string | undefined>;
+  /** How `list` and `find` order their results: by insertion (default) or by key. */
+  orderBy?: "insertion" | "key";
 }
 
 export const MAX_INDEXES = 4;
@@ -95,15 +97,25 @@ export class MemoryDocumentTable<T> implements DocumentTable<T> {
     this.rows.set(this.spec.key(doc), { doc: structuredClone(doc), indexes });
   }
 
+  private ordered(): Array<MemoryRow<T>> {
+    const rows = [...this.rows.values()];
+    if (this.spec.orderBy !== "key") return rows;
+    return rows.sort((a, b) => {
+      const left = this.spec.key(a.doc);
+      const right = this.spec.key(b.doc);
+      return left < right ? -1 : left > right ? 1 : 0;
+    });
+  }
+
   async list(limit: number): Promise<T[]> {
-    return [...this.rows.values()]
+    return this.ordered()
       .slice(0, limit)
       .map((row) => structuredClone(row.doc));
   }
 
   async find(index: string, value: string, limit: number): Promise<T[]> {
     this.require(index);
-    return [...this.rows.values()]
+    return this.ordered()
       .filter((row) => row.indexes[index] === value)
       .slice(0, limit)
       .map((row) => structuredClone(row.doc));
@@ -216,7 +228,7 @@ export class SqliteDocumentTable<T> implements DocumentTable<T> {
        ON CONFLICT(doc_key) DO UPDATE SET ${updates.join(", ")}`,
     );
     this.listAll = database.prepare(
-      `SELECT body_json FROM ${this.table} ORDER BY rowid LIMIT ?`,
+      `SELECT body_json FROM ${this.table} ORDER BY ${spec.orderBy === "key" ? "doc_key" : "rowid"} LIMIT ?`,
     );
     this.countAll = database.prepare(
       `SELECT COUNT(*) AS total FROM ${this.table}`,
@@ -259,7 +271,7 @@ export class SqliteDocumentTable<T> implements DocumentTable<T> {
     let statement = this.findStatements.get(column);
     if (!statement) {
       statement = this.database.prepare(
-        `SELECT body_json FROM ${this.table} WHERE ${column} = ? ORDER BY rowid LIMIT ?`,
+        `SELECT body_json FROM ${this.table} WHERE ${column} = ? ORDER BY ${this.spec.orderBy === "key" ? "doc_key" : "rowid"} LIMIT ?`,
       );
       this.findStatements.set(column, statement);
     }

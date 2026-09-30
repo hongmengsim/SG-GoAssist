@@ -173,6 +173,23 @@ Bus status messages posted open loop by 2,000 buses that had already reported on
 - **Overload shedding** (`npm run load:overload`): a browsing flood from one client received 429 for almost every request while buses reporting at 300 per second were all acknowledged (p95 150 ms under the flood).
 - These prove the shape on a laptop, not production capacity. No test has run with a network between the buses and the backend.
 
+### Measured on 1 Oct 2026: two backend processes on shared Postgres and Redis
+
+Same laptop, Postgres 14 and Redis in WSL on the same machine, `npm run load:test -- --processes N` (bus status ingest, steady state, 300 buses, 5% change movement, `GOASSIST_LOCKS=database`, p95 under 100 ms):
+
+| Processes | Rate (msg/s) | Achieved | p50 (ms) | p95 (ms) | Result |
+| --------: | -----------: | -------: | -------: | -------: | ------ |
+|         1 |          100 |      100 |     10.7 |     17.8 | pass   |
+|         1 |          300 |      300 |     11.6 |     18.5 | pass   |
+|         1 |          600 |      597 |     64.5 |    384.3 | fail   |
+|         2 |          300 |      300 |     13.2 |     20.3 | pass   |
+|         2 |          600 |      597 |     12.8 |     49.6 | pass   |
+|         2 |        1,000 |      996 |    253.2 |    475.0 | fail   |
+
+- The sustainable rate roughly doubles with the second process (300 to 600), which is the scale-out property. It is far below the single-process SQLite figure (about 2,000) because every message now makes database round trips, and the lock lease adds more.
+- With per-process locks (not correct across processes) two processes reached 983 msg/s at p50 9.7 ms, so the lease is the main cost. Replacing it on this path with one atomic conditional write is the next optimisation and is not built.
+- Not measured: separate machines, more than two processes, the 3,000 msg/s target.
+
 ## 10. What can and cannot be claimed
 
 **Can be claimed today:**

@@ -12,7 +12,7 @@ import {
   type RampSimulationStatus,
 } from "@buspass/shared";
 import type { AuditEventInput } from "./busOperationsService";
-import { KeyedMutex } from "./keyedMutex";
+import { getLock } from "../concurrency/locks";
 import type { BusRecordRepository } from "./ports";
 import {
   asObject,
@@ -229,8 +229,6 @@ export interface BusReportsDeps {
  * number of buses.
  */
 export class BusReportsService {
-  private readonly mutex = new KeyedMutex();
-
   constructor(private readonly deps: BusReportsDeps) {}
 
   async report(
@@ -241,7 +239,7 @@ export class BusReportsService {
     const descriptor = DESCRIPTORS[kind];
     const record = descriptor.parse(input, busId, this.deps.now());
     const repository = this.deps.repositories[kind];
-    return this.mutex.run(`${kind}:${busId}`, async () => {
+    return getLock().run(`report:${kind}:${busId}`, async () => {
       const existing = await repository.get(busId);
       if (
         existing &&

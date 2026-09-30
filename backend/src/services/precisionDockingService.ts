@@ -6,6 +6,7 @@ import {
   OperationsNotFoundError,
   OperationsValidationError,
 } from "./assistanceCaseService";
+import { withLock } from "../concurrency/locks";
 import { getOperationsData } from "./operationsData";
 
 const FRESHNESS_MS = Number(process.env.GOASSIST_DOCK_FRESHNESS_MS ?? 2_000);
@@ -29,6 +30,15 @@ const HEADING_TOLERANCE_DEGREES = Number(
 );
 
 export async function recordPrecisionDockingObservation(
+  input: PrecisionDockingObservation,
+): Promise<PrecisionDockingAssessment> {
+  return await withLock(
+    `docking:${input.busId}`,
+    async () => await recordPrecisionDockingObservationUnlocked(input),
+  );
+}
+
+async function recordPrecisionDockingObservationUnlocked(
   input: PrecisionDockingObservation,
 ): Promise<PrecisionDockingAssessment> {
   validate(input);

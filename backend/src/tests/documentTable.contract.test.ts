@@ -6,7 +6,15 @@ import {
   type DocumentTable,
   type TableSpec,
 } from "../storage/documentTable";
+import { PostgresDocumentTable } from "../storage/postgresTables";
 import { openSqliteDatabase } from "../storage/sqlite";
+import {
+  makeTestPool,
+  postgresSkip,
+  registerPostgresCleanup,
+} from "./helpers/postgres";
+
+registerPostgresCleanup();
 
 interface Doc {
   id: string;
@@ -52,6 +60,11 @@ const adapters: Array<{
       openDatabases.push(database);
       return new SqliteDocumentTable<Doc>(database, spec);
     },
+  },
+  {
+    name: "postgres",
+    skip: postgresSkip,
+    create: () => new PostgresDocumentTable<Doc>(makeTestPool(), spec),
   },
 ];
 

@@ -11,12 +11,19 @@ import {
   canTransitionAssistanceRequestStatus,
   canTransitionVehicleStatus,
 } from "@buspass/shared";
+import { withLock } from "../concurrency/locks";
+import { getEventHub } from "../events/eventHub";
+import { topic } from "../events/topics";
 import { logger } from "./logger";
 import { synchronizeLegacyCaseStatus } from "./assistanceCaseService";
+import { getOperationsData } from "./operationsData";
 
-const activeRequests: Map<string, PassengerAssistanceRequest> = new Map();
-const vehicleStatuses: Map<string, VehicleStatus> = new Map();
-const announcementEvents: ExternalAnnouncementMessage[] = [];
+/** How often a waiter re-reads the request, in case the push came from another process or was lost. */
+const WAIT_POLL_MS = 250;
+/** Reads that must stay bounded, whatever is stored; the retention policy keeps far fewer. */
+const REQUEST_LIST_LIMIT = 5_000;
+const ANNOUNCEMENT_LIST_LIMIT = 5_000;
+const BUS_REQUEST_LIMIT = 500;
 
 type EventListener = (message: StatusUpdateMessage) => void;
 const listeners: Set<EventListener> = new Set();
@@ -31,28 +38,41 @@ export async function waitForRequestStatus(
   status: AssistanceRequestStatus,
   timeoutMs: number,
 ): Promise<PassengerAssistanceRequest | undefined> {
-  const existing = getRequest(requestId);
-  if (existing?.status === status) {
-    return await Promise.resolve(existing);
-  }
+  const existing = await getRequest(requestId);
+  if (existing?.status === status) return existing;
 
+  // The status change may be made by another backend process, so listen on the shared event
+  // bus and also re-read the request now and then (a broker push is best effort).
   return new Promise((resolve) => {
-    const timeout = setTimeout(() => {
+    let finished = false;
+    const finish = (): void => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timeout);
+      clearInterval(poll);
       unsubscribe();
-      resolve(getRequest(requestId));
-    }, timeoutMs);
-
-    const unsubscribe = onAssistanceEvent((message) => {
-      if (
-        message.type === "REQUEST_STATUS" &&
-        message.requestId === requestId &&
-        message.status === status
-      ) {
-        clearTimeout(timeout);
-        unsubscribe();
-        resolve(getRequest(requestId));
-      }
-    });
+      getRequest(requestId).then(resolve, () => resolve(undefined));
+    };
+    const timeout = setTimeout(finish, timeoutMs);
+    const poll = setInterval(() => {
+      getRequest(requestId).then(
+        (current) => {
+          if (current?.status === status) finish();
+        },
+        () => undefined,
+      );
+    }, WAIT_POLL_MS);
+    const unsubscribe = getEventHub().subscribe(
+      topic.request(requestId),
+      (message) => {
+        if (
+          message.type === "REQUEST_STATUS" &&
+          message.requestId === requestId &&
+          message.status === status
+        )
+          finish();
+      },
+    );
   });
 }
 
@@ -88,10 +108,10 @@ function requestStatusMessage(
   };
 }
 
-export function createRequest(
+export async function createRequest(
   request: PassengerAssistanceRequest,
-): PassengerAssistanceRequest {
-  const duplicate = findDuplicateActiveRequest(
+): Promise<PassengerAssistanceRequest> {
+  const duplicate = await findDuplicateActiveRequest(
     request.busId,
     request.assistanceTypes,
     request.boardingOrAlighting,
@@ -113,7 +133,7 @@ export function createRequest(
   request.status = AssistanceRequestStatus.SENDING;
   request.createdAt = new Date().toISOString();
 
-  activeRequests.set(request.requestId, request);
+  await (await getOperationsData()).requests.put(request);
   logger.info("Assistance request created", request.requestId, {
     busService: request.busService,
     busId: request.busId,
@@ -125,14 +145,46 @@ export function createRequest(
   return request;
 }
 
-export function findDuplicateActiveRequest(
+/**
+ * Stores a request whose fields the caller changed. Requests come back from storage as
+ * copies, so a change is only kept once it is saved.
+ */
+export async function saveRequest(
+  request: PassengerAssistanceRequest,
+): Promise<void> {
+  await (await getOperationsData()).requests.put(request);
+}
+
+/**
+ * Records which case a request became, without overwriting a status change that another
+ * process may have made since the request was created: it reads the current request under
+ * the request's lock, sets the two fields, and writes it back.
+ */
+export function attachCaseToRequest(
+  requestId: string,
+  caseId: string,
+  caseState: PassengerAssistanceRequest["assistanceCaseState"],
+): Promise<PassengerAssistanceRequest | undefined> {
+  return withLock(`request:${requestId}`, async () => {
+    const current = await getRequest(requestId);
+    if (!current) return undefined;
+    current.caseId = caseId;
+    current.assistanceCaseState = caseState;
+    await saveRequest(current);
+    return current;
+  });
+}
+
+export async function findDuplicateActiveRequest(
   busId: string,
   assistanceTypes: AssistanceType[],
   phase?: PassengerAssistanceRequest["boardingOrAlighting"],
-): PassengerAssistanceRequest | undefined {
-  return Array.from(activeRequests.values()).find(
+): Promise<PassengerAssistanceRequest | undefined> {
+  const forBus = await (
+    await getOperationsData()
+  ).requests.find("busId", busId, BUS_REQUEST_LIMIT);
+  return forBus.find(
     (request) =>
-      request.busId === busId &&
       (!phase || request.boardingOrAlighting === phase) &&
       request.status !== AssistanceRequestStatus.CANCELLED &&
       request.status !== AssistanceRequestStatus.FAILED &&
@@ -140,25 +192,54 @@ export function findDuplicateActiveRequest(
   );
 }
 
-export function getRequest(
+export async function getRequest(
   requestId: string,
-): PassengerAssistanceRequest | undefined {
-  return activeRequests.get(requestId);
+): Promise<PassengerAssistanceRequest | undefined> {
+  return await (await getOperationsData()).requests.get(requestId);
 }
 
-export function getAllRequests(): PassengerAssistanceRequest[] {
-  return Array.from(activeRequests.values());
+/** Requests in the order they were created, at most `limit`. */
+export async function getAllRequests(
+  limit = REQUEST_LIST_LIMIT,
+): Promise<PassengerAssistanceRequest[]> {
+  return await (await getOperationsData()).requests.list(limit);
 }
 
-export function getAnnouncementEvents(): ExternalAnnouncementMessage[] {
-  return announcementEvents;
+/** Requests for one bus, oldest first, found through the bus index. */
+export async function getRequestsForBus(
+  busId: string,
+  limit = BUS_REQUEST_LIMIT,
+): Promise<PassengerAssistanceRequest[]> {
+  return await (await getOperationsData()).requests.find("busId", busId, limit);
+}
+
+export async function countRequests(): Promise<number> {
+  return await (await getOperationsData()).requests.count();
+}
+
+export async function getAnnouncementEvents(): Promise<
+  ExternalAnnouncementMessage[]
+> {
+  return await (
+    await getOperationsData()
+  ).announcements.list(ANNOUNCEMENT_LIST_LIMIT);
 }
 
 async function updateRequestStatus(
   requestId: string,
   newStatus: AssistanceRequestStatus,
 ): Promise<PassengerAssistanceRequest | null> {
-  const request = activeRequests.get(requestId);
+  return await withLock(
+    `request:${requestId}`,
+    async () => await updateRequestStatusUnlocked(requestId, newStatus),
+  );
+}
+
+async function updateRequestStatusUnlocked(
+  requestId: string,
+  newStatus: AssistanceRequestStatus,
+): Promise<PassengerAssistanceRequest | null> {
+  const request = await getRequest(requestId);
   if (!request) {
     logger.warn("Request not found for status update", requestId);
     return null;
@@ -193,7 +274,7 @@ async function updateRequestStatus(
     logger.info("Assistance request failed", requestId);
   }
 
-  activeRequests.set(requestId, request);
+  await saveRequest(request);
   if (
     request.caseId &&
     (newStatus === AssistanceRequestStatus.CANCELLED ||
@@ -225,7 +306,7 @@ export async function processSimulatorCommand(
     CANCEL: AssistanceRequestStatus.CANCELLED,
   };
 
-  const currentRequest = getRequest(command.requestId);
+  const currentRequest = await getRequest(command.requestId);
   if (!currentRequest) {
     return {
       success: false,
@@ -269,13 +350,34 @@ export async function cancelRequest(requestId: string) {
   return await processSimulatorCommand({ requestId, command: "CANCEL" });
 }
 
-export function processVehicleCommand(command: VehicleSimulatorCommand): {
+type VehicleCommandResult = {
   success: boolean;
   message: string;
   vehicleEvent: VehicleStatusUpdateMessage;
   announcement?: ExternalAnnouncementMessage;
-} {
-  const previousStatus = vehicleStatuses.get(command.busId);
+};
+
+export async function processVehicleCommand(
+  command: VehicleSimulatorCommand,
+): Promise<VehicleCommandResult> {
+  return await withLock(
+    `vehicle-status:${command.busId}`,
+    async () => await processVehicleCommandUnlocked(command),
+  );
+}
+
+async function busServiceOfRequests(
+  busId: string,
+): Promise<string | undefined> {
+  return (await getRequestsForBus(busId, 1))[0]?.busService;
+}
+
+async function processVehicleCommandUnlocked(
+  command: VehicleSimulatorCommand,
+): Promise<VehicleCommandResult> {
+  const data = await getOperationsData();
+  const previousStatus = (await data.vehicleStatuses.get(command.busId))
+    ?.status;
   if (previousStatus === command.status) {
     return {
       success: true,
@@ -285,9 +387,7 @@ export function processVehicleCommand(command: VehicleSimulatorCommand): {
         busId: command.busId,
         busService:
           command.busService ??
-          Array.from(activeRequests.values()).find(
-            (request) => request.busId === command.busId,
-          )?.busService ??
+          (await busServiceOfRequests(command.busId)) ??
           "UNKNOWN",
         status: previousStatus,
         stopCode: command.stopCode,
@@ -312,9 +412,7 @@ export function processVehicleCommand(command: VehicleSimulatorCommand): {
         busId: command.busId,
         busService:
           command.busService ??
-          Array.from(activeRequests.values()).find(
-            (request) => request.busId === command.busId,
-          )?.busService ??
+          (await busServiceOfRequests(command.busId)) ??
           "UNKNOWN",
         status: previousStatus,
         stopCode: command.stopCode,
@@ -324,12 +422,15 @@ export function processVehicleCommand(command: VehicleSimulatorCommand): {
     };
   }
 
-  vehicleStatuses.set(command.busId, command.status);
+  await data.vehicleStatuses.put({
+    busId: command.busId,
+    status: command.status,
+  });
 
-  const busRequest = Array.from(activeRequests.values()).find(
-    (request) => request.busId === command.busId,
-  );
-  const busService = command.busService ?? busRequest?.busService ?? "UNKNOWN";
+  const busService =
+    command.busService ??
+    (await busServiceOfRequests(command.busId)) ??
+    "UNKNOWN";
 
   const vehicleEvent: VehicleStatusUpdateMessage = {
     type: "VEHICLE_STATUS",
@@ -348,7 +449,7 @@ export function processVehicleCommand(command: VehicleSimulatorCommand): {
 
   const announcement =
     command.status === VehicleStatus.APPROACHING
-      ? triggerAudioIdentificationIfNeeded(command.busId)
+      ? await triggerAudioIdentificationIfNeeded(command.busId)
       : undefined;
 
   return {
@@ -359,12 +460,11 @@ export function processVehicleCommand(command: VehicleSimulatorCommand): {
   };
 }
 
-function triggerAudioIdentificationIfNeeded(
+async function triggerAudioIdentificationIfNeeded(
   busId: string,
-): ExternalAnnouncementMessage | undefined {
-  const request = Array.from(activeRequests.values()).find(
+): Promise<ExternalAnnouncementMessage | undefined> {
+  const request = (await getRequestsForBus(busId)).find(
     (candidate) =>
-      candidate.busId === busId &&
       candidate.status === AssistanceRequestStatus.ACKNOWLEDGED &&
       candidate.assistanceTypes.includes("BUS_AUDIO_IDENTIFICATION"),
   );
@@ -383,7 +483,7 @@ function triggerAudioIdentificationIfNeeded(
     timestamp: new Date().toISOString(),
   };
 
-  announcementEvents.push(event);
+  await (await getOperationsData()).announcements.put(event);
   logger.info("External announcement triggered", request.requestId, {
     busService: request.busService,
     busId: request.busId,
@@ -392,9 +492,9 @@ function triggerAudioIdentificationIfNeeded(
   return event;
 }
 
-export function clearAllRequests() {
-  activeRequests.clear();
-  vehicleStatuses.clear();
-  announcementEvents.length = 0;
-  logger.info("Cleared all requests and simulator events");
+export async function clearAllRequests(): Promise<void> {
+  const data = await getOperationsData();
+  await data.requests.clear();
+  await data.vehicleStatuses.clear();
+  await data.announcements.clear();
 }

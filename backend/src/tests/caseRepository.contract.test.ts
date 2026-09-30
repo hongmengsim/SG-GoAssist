@@ -4,7 +4,15 @@ import type { AssistanceCase } from "@buspass/shared";
 import { MemoryCaseRepository } from "../cases/memoryCaseRepository";
 import { SqliteCaseRepository } from "../cases/sqliteCaseRepository";
 import type { CaseRepository } from "../cases/ports";
+import { PostgresCaseRepository } from "../cases/postgresCaseRepository";
 import { openSqliteDatabase } from "../storage/sqlite";
+import {
+  makeTestPool,
+  postgresSkip,
+  registerPostgresCleanup,
+} from "./helpers/postgres";
+
+registerPostgresCleanup();
 
 function makeCase(
   id: string,
@@ -57,6 +65,11 @@ const adapters: Array<{
       openDatabases.push(database);
       return new SqliteCaseRepository(database);
     },
+  },
+  {
+    name: "postgres",
+    skip: postgresSkip,
+    create: () => new PostgresCaseRepository(makeTestPool()),
   },
 ];
 

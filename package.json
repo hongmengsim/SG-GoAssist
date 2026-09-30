@@ -47,7 +47,8 @@
     "format": "prettier --write package.json contracts/package.json backend/package.json passenger-app/package.json scripts README.md",
     "format:check": "prettier --check package.json contracts/package.json backend/package.json passenger-app/package.json scripts README.md",
     "e2e:scenario": "python scripts/e2e_scenario.py",
-    "console": "node operator-console/serve.mjs"
+    "console": "node operator-console/serve.mjs",
+    "check:multi-process": "node scripts/multi-process-check.mjs"
   },
   "devDependencies": {
     "eslint": "^8.50.0",

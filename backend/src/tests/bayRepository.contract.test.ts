@@ -4,7 +4,20 @@ import type { BayStatus } from "@buspass/shared";
 import { MemoryBayRepository } from "../busOperations/memoryRepositories";
 import { SqliteBayRepository } from "../busOperations/sqliteRepositories";
 import type { BayRepository } from "../busOperations/ports";
+import {
+  DocumentBayRepository,
+  bayTableSpec,
+} from "../busOperations/documentRepositories";
+import { MemoryDocumentTable } from "../storage/documentTable";
 import { openSqliteDatabase } from "../storage/sqlite";
+import { PostgresDocumentTable } from "../storage/postgresTables";
+import {
+  makeTestPool,
+  postgresSkip,
+  registerPostgresCleanup,
+} from "./helpers/postgres";
+
+registerPostgresCleanup();
 
 function bay(stopCode: string, overrides: Partial<BayStatus> = {}): BayStatus {
   return {
@@ -30,6 +43,19 @@ const adapters: Array<{
   skip?: string;
 }> = [
   { name: "memory", create: () => new MemoryBayRepository() },
+  {
+    name: "document table (memory)",
+    create: () =>
+      new DocumentBayRepository(new MemoryDocumentTable(bayTableSpec)),
+  },
+  {
+    name: "postgres",
+    skip: postgresSkip,
+    create: () =>
+      new DocumentBayRepository(
+        new PostgresDocumentTable(makeTestPool(), bayTableSpec),
+      ),
+  },
   {
     name: "sqlite",
     skip: sqliteAvailable

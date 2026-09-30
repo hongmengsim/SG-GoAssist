@@ -111,7 +111,7 @@ export function initializeWebSocketServer(
 
         if (message.type === "SUBSCRIBE") {
           client.requestId = message.requestId;
-          const request = getRequest(message.requestId);
+          const request = await getRequest(message.requestId);
           client.busId = request?.busId;
           setSubscription(
             client,

@@ -1,8 +1,7 @@
 name: CI
 
 # Every module is checked on its own, so a failure names the module. The steps mirror
-# `npm run verify` (see scripts/modules.json). This file has not been run yet: it was written
-# on 30 Sep 2026 without a way to try it, so the first run may need small fixes.
+# `npm run verify` (see scripts/modules.json). It has run on GitHub since 30 Sep 2026; the postgres-redis job was added on 1 Oct 2026 and has not run yet.
 
 on:
   push:
@@ -68,6 +67,44 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test --workspace @buspass/app
+
+  postgres-redis:
+    # The Postgres and Redis adapters, and two real backend processes sharing them
+    # (decision 0005). pg and ioredis are not dependencies of the backend, so they are installed
+    # here without saving them.
+    runs-on: ubuntu-latest
+    needs: [node-modules]
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: goassist
+          POSTGRES_PASSWORD: ci-only-password
+          POSTGRES_DB: goassist
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U goassist" --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      GOASSIST_TEST_DATABASE_URL: postgres://goassist:ci-only-password@localhost:5432/goassist
+      GOASSIST_DATABASE_URL: postgres://goassist:ci-only-password@localhost:5432/goassist
+      GOASSIST_REDIS_URL: redis://localhost:6379
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm install --no-save --workspace @buspass/backend pg ioredis
+      - name: backend tests, including the Postgres adapters
+        run: npm test --workspace @buspass/backend
+      - name: two real backend processes sharing Postgres, Redis and locks
+        run: npm run check:multi-process
 
   end-to-end:
     runs-on: ubuntu-latest

@@ -15,7 +15,7 @@ const confidenceBands = new Set(["LOW", "MEDIUM", "HIGH", "UNKNOWN"]);
 
 export const router = Router();
 
-router.post("/diagnostics", (req: Request, res: Response) => {
+router.post("/diagnostics", async (req: Request, res: Response) => {
   const body = req.body as Record<string, unknown>;
   if (
     body.consentConfirmed !== true ||
@@ -36,7 +36,7 @@ router.post("/diagnostics", (req: Request, res: Response) => {
     return;
   }
 
-  const saved = saveAssistantDiagnostic({
+  const saved = await saveAssistantDiagnostic({
     locale: body.locale as "en-SG" | "zh-SG" | "ms-SG" | "ta-SG",
     redactedTranscript: body.redactedTranscript.slice(0, 1_000),
     redactedResponse: body.redactedResponse.slice(0, 1_000),
@@ -62,11 +62,14 @@ router.post("/diagnostics", (req: Request, res: Response) => {
   });
 });
 
-router.delete("/diagnostics/:diagnosticId", (req: Request, res: Response) => {
-  const token = req.header("x-diagnostic-deletion-token") ?? "";
-  if (!deleteAssistantDiagnostic(req.params.diagnosticId, token)) {
-    res.status(404).json({ error: "Diagnostic not found" });
-    return;
-  }
-  res.status(204).send();
-});
+router.delete(
+  "/diagnostics/:diagnosticId",
+  async (req: Request, res: Response) => {
+    const token = req.header("x-diagnostic-deletion-token") ?? "";
+    if (!(await deleteAssistantDiagnostic(req.params.diagnosticId, token))) {
+      res.status(404).json({ error: "Diagnostic not found" });
+      return;
+    }
+    res.status(204).send();
+  },
+);

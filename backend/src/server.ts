@@ -18,6 +18,7 @@ import { logger } from "./services/logger";
 import { createApp } from "./app";
 import { flushBusOperationsAudit } from "./busOperations/composition";
 import { busStopRepository } from "./bus-stops/repository";
+import { configureLock, lockFromEnvironment } from "./concurrency/locks";
 import { getOperationsData } from "./services/operationsData";
 import { configureEventHub, eventBusFromEnvironment } from "./events/eventHub";
 
@@ -51,7 +52,9 @@ setupStateChangeListener();
 
 // Start serving only once the operations data is ready (old data imported, retention applied).
 getOperationsData()
-  .then(() => {
+  .then((data) => {
+    // Locks: in this process (default) or shared through the database for several processes.
+    configureLock(lockFromEnvironment(process.env, data.leases));
     httpServer.listen(PORT, () => {
       logger.info(`Backend server running on http://localhost:${PORT}`);
       logger.info(`WebSocket endpoint running on ws://localhost:${PORT}`);
