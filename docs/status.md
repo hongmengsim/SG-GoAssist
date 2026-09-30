@@ -217,3 +217,8 @@ Setup: backend built from this branch on the PC (Node v22.15.1, `GOASSIST_AUTO_A
 - **Cause: not determined.** The two suspects were a device-secret mismatch (a paste after the launcher's 90 s timed clipboard had cleared, or a second launch) and a clock difference over 60 s. The hash and clock comparison was not run. A full restart of everything with fresh secrets cleared it: from 05:18:11 UTC the backend audit shows the agent re-registered and reporting again, with no `401` seen by CE2.
 - **Change made:** the launcher no longer copies the device secret automatically; both secrets are now copied from its SCRATCH tab on demand. This is a guess at the cause, not a confirmed fix.
 - **Also seen in the audit:** the earlier blocked test case was cancelled from the console (`OPERATOR_CANCEL`, `ASSISTANCE_CANCELLED_RAMP_SAFE`).
+
+### Decisions recorded on 30 Sep 2026 (CE2)
+
+- **Live camera view for controllers: an on-demand relay, designed only, nothing built.** The controller turns it on and off in the operator console, either when they open a bus or from an escalated case. It is off by default. The Pi connects outward to a stateless relay only while someone is watching; nothing is stored on any disk, including the relay; each view is audited once per session (not per frame); viewers are capped per operator and per bus; the safety loop must never wait on the encoder. Camera images shown to controllers is a privacy decision that CE2 owns.
+- **Operator-side debugging (`AGENT_DIAGNOSTICS`)** is proposed to CE2 and waits for approval and for the other session's storage work before any change to `backend/` or `contracts/`.
