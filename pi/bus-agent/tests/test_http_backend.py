@@ -5,7 +5,7 @@ import unittest
 
 from bus_agent.backend import BackendError, BackendRefused
 from bus_agent.http_backend import HttpBackend
-from bus_agent.signing import sign_body
+from bus_agent.signing import response_signature, sign_body
 
 BASE = "http://backend.test:3000"
 BUS = "AV-095-01"
@@ -13,7 +13,8 @@ NOW_MS = 1_800_000_000_000
 
 
 class FakeTransport:
-    def __init__(self, status=200, payload=None, error=None) -> None:
+    def __init__(self, status=200, payload=None, error=None, secret=None) -> None:
+        self.secret = secret  # when set, answers are signed as the real backend signs them
         self.status = status
         self.payload = {} if payload is None else payload
         self.error = error
@@ -24,7 +25,12 @@ class FakeTransport:
         if self.error is not None:
             raise self.error
         raw = self.payload if isinstance(self.payload, bytes) else json.dumps(self.payload).encode()
-        return self.status, raw
+        reply_headers = {}
+        if self.secret:
+            reply_headers["x-response-signature"] = response_signature(
+                self.secret, headers.get("x-signature", ""), self.status, raw
+            )
+        return self.status, raw, reply_headers
 
 
 def backend(transport, secret=None):
@@ -55,7 +61,7 @@ class PostTests(unittest.TestCase):
             backend(FakeTransport()).post("nonsense", {})
 
     def test_the_signature_covers_the_exact_bytes_sent(self) -> None:
-        transport = FakeTransport(202, {"outcome": "CHANGED"})
+        transport = FakeTransport(202, {"outcome": "CHANGED"}, secret="s3cret")
         backend(transport, secret="s3cret").post("bus-status", {"movement": "DEPARTING"})
         call = transport.calls[0]
         self.assertEqual(BUS, call["headers"]["x-device-id"])
@@ -115,7 +121,7 @@ class OtherCallsTests(unittest.TestCase):
         self.assertEqual(f"{BASE}/api/operations/actuators/pending?busId={BUS}", transport.calls[0]["url"])
 
     def test_a_signed_get_signs_an_empty_json_object_like_the_backend_expects(self) -> None:
-        transport = FakeTransport(200, {"commands": []})
+        transport = FakeTransport(200, {"commands": []}, secret="s3cret")
         backend(transport, secret="s3cret").pending_actuator_commands()
         headers = transport.calls[0]["headers"]
         self.assertEqual(

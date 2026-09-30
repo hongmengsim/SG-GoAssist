@@ -22,6 +22,8 @@ from pathlib import Path
 from typing import Optional
 
 MAX_BODY_BYTES = 2048
+# An authorised oversized request is read and thrown away only up to this much.
+MAX_DISCARD_BYTES = 262_144
 # A client that connects and then says nothing is dropped after this long.
 SOCKET_TIMEOUT_SECONDS = 5
 PAGE = Path(__file__).with_name("status.html")
@@ -249,6 +251,10 @@ class StatusServer:
                 except ValueError:
                     length = -1
                 if not 0 <= length <= MAX_BODY_BYTES:
+                    # Only a client that holds the code gets this far. Take a bounded amount of
+                    # what it is sending so it can read the answer instead of a reset connection.
+                    if length > 0:
+                        self.rfile.read(min(length, MAX_DISCARD_BYTES))
                     self.reply(413, {"error": "Request too large"})
                     return
                 raw = self.rfile.read(length) if length > 0 else b""

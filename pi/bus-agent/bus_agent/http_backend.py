@@ -15,7 +15,7 @@ from typing import Callable, Optional
 from urllib.parse import quote, urlencode
 
 from .backend import KINDS, BackendError, BackendRefused
-from .signing import signed_headers
+from .signing import response_is_genuine, signed_headers
 
 Transport = Callable[[str, str, dict, Optional[bytes], float], tuple]
 
@@ -32,13 +32,14 @@ _EMPTY_OBJECT = b"{}"
 def urllib_transport(
     method: str, url: str, headers: dict, body: Optional[bytes], timeout: float
 ) -> tuple:
-    """Returns (status, body bytes). HTTP error statuses are returned, not raised."""
+    """Returns (status, body bytes, response headers with lower-case names). HTTP error statuses are
+    returned, not raised."""
     request = urllib.request.Request(url, data=body, method=method, headers=headers)
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
-            return response.status, response.read()
+            return response.status, response.read(), {k.lower(): v for k, v in response.headers.items()}
     except urllib.error.HTTPError as error:
-        return error.code, error.read()
+        return error.code, error.read(), {k.lower(): v for k, v in error.headers.items()}
 
 
 class HttpBackend:
@@ -119,10 +120,26 @@ class HttpBackend:
             )
         )
         try:
-            status, raw = self._transport(method, self._base + path, headers, payload, self._timeout)
+            reply = self._transport(method, self._base + path, headers, payload, self._timeout)
         except (OSError, TimeoutError, http.client.HTTPException) as error:
             raise BackendError(f"{method} {path} failed: {error}") from error
+        status, raw = reply[0], reply[1]
+        reply_headers = reply[2] if len(reply) > 2 else {}
+        self._check_answer(method, path, headers, status, raw, reply_headers)
         return self._interpret(method, path, status, raw)
+
+    def _check_answer(self, method: str, path: str, sent: dict, status: int, raw: bytes, received: dict) -> None:
+        """With a secret, only an answer the backend signed for this very request is believed.
+
+        Otherwise anyone on the network could send a forged "not halted" and release an operator
+        halt. Errors other than a bay refusal (409) are never acted on as good news, so they need
+        no signature."""
+        if not self._secret or not (status < 400 or status == 409):
+            return
+        if not response_is_genuine(
+            self._secret, sent.get("x-signature", ""), status, raw, received.get("x-response-signature")
+        ):
+            raise BackendError(f"{method} {path}: the answer is not signed by the backend")
 
     @staticmethod
     def _interpret(method: str, path: str, status: int, raw: bytes) -> object:

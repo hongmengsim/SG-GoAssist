@@ -48,3 +48,21 @@ def signed_headers(
         "x-timestamp": timestamp,
         "x-signature": sign_body(secret, device_id, timestamp, body, method, path),
     }
+
+
+def response_signature(secret: str, request_signature: str, status: int, body: bytes) -> str:
+    """The signature the backend puts on its answer: HMAC-SHA256 over ``<request signature>.<status>.``
+    and the exact body. Bound to the request's own (single-use) signature, so an answer cannot be
+    replayed for another request."""
+    mac = hmac.new(secret.encode("utf-8"), digestmod=hashlib.sha256)
+    mac.update(f"{request_signature}.{status}.".encode("utf-8"))
+    mac.update(body)
+    return mac.hexdigest()
+
+
+def response_is_genuine(
+    secret: str, request_signature: str, status: int, body: bytes, supplied: Optional[str]
+) -> bool:
+    if not supplied:
+        return False
+    return hmac.compare_digest(supplied, response_signature(secret, request_signature, status, body))
