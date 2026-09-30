@@ -121,7 +121,9 @@ class ModelDetector:
     def detect(self, frame: object) -> Sequence[RawDetection]:
         found = []
         for name, confidence, corners in self._runner(frame):
-            if not confidence >= self._min_confidence:
+            # A NaN compares false with everything, so it is kept: a broken score must reach the
+            # pipeline (which treats it as unsafe), not vanish as if nothing was seen.
+            if confidence < self._min_confidence:
                 continue
             found.append(RawDetection(map_class_name(str(name)), float(confidence), _centre_box(corners)))
         return found

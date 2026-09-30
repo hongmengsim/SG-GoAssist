@@ -25,7 +25,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Optional
 
-from .backend import Backend, BackendError, BackendRefused
+from .backend import Backend, BackendError, BackendRefused, BackendTimeout
 
 log = logging.getLogger(__name__)
 
@@ -144,7 +144,7 @@ class AsyncBackend:
             self._cond.notify_all()
         if not job.done.wait(timeout):
             job.abandoned = True
-            raise BackendError(f"{kind} did not get an answer within {timeout:.1f}s")
+            raise BackendTimeout(f"{kind} did not get an answer within {timeout:.1f}s")
         if job.error is not None:
             raise job.error
         return job.outcome

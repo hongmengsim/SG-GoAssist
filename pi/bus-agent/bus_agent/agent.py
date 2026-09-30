@@ -15,12 +15,12 @@ from typing import Callable, Optional
 
 from beam_reading import BeamReader
 from perception import DEFAULT_POLICY, PerceptionResult, Policy, analyse
-from safety_gate import BusContext, Decision, GateConfig, decide
-from safety_gate.models import BACKEND_LINK_LOST, DEPLOYMENT_TIMEOUT, REASON_ORDER
+from safety_gate import BeamInput, BusContext, CameraInput, Decision, GateConfig, decide
+from safety_gate.models import BACKEND_LINK_LOST, CAMERA_DEGRADED, DEPLOYMENT_TIMEOUT, REASON_ORDER
 
 from . import ramp as ramp_sim
 from .adapters import beam_input, camera_input
-from .backend import Backend, BackendError, BackendRefused
+from .backend import Backend, BackendError, BackendRefused, BackendTimeout
 from .posting import DEFAULT_HEARTBEAT_SECONDS, ChangeGate
 
 log = logging.getLogger(__name__)
@@ -107,6 +107,9 @@ class BusAgent:
         self.ramp = ramp_sim.RampSim()
         self.last_decision: Optional[Decision] = None
         self._operator_halt = False
+        # Until the halt state has been read once (or pushed), it is unknown, and unknown counts as
+        # halted: a Pi that restarts during an operator halt must not deploy before it has asked.
+        self._halt_known = False
         self._accepted: dict[str, dict] = {}
         self._unacked: dict[str, dict] = {}
         self._commands: dict[str, dict] = {}
@@ -135,6 +138,12 @@ class BusAgent:
             log.info("Bay entry refused (%s); waiting for the bay", refusal)
             self.movement = WAITING
             self._post_safely("bus-status", self._bus_status_body())
+        except BackendTimeout:
+            # No verdict yet: wait for the bay until it is granted (the push moves us on), rather
+            # than acting as if it were ours.
+            log.warning("No answer on bay entry; waiting for the bay")
+            self.movement = WAITING
+            self._post_safely("bus-status", self._bus_status_body())
         except BackendError:
             log.warning("Backend unreachable on arrival; will report on the next tick")
 
@@ -152,9 +161,13 @@ class BusAgent:
 
     def set_operator_halt(self, halted: bool) -> None:
         self._operator_halt = bool(halted)
+        self._halt_known = True
 
     def handle_event(self, message: dict) -> None:
         """A message pushed by the backend for this bus."""
+        if not isinstance(message, dict):
+            log.warning("Ignoring a pushed message that is not an object")
+            return
         kind = message.get("type")
         if kind == "ASSIST_REQUESTED":
             self._on_request(message.get("request") or {})
@@ -172,6 +185,15 @@ class BusAgent:
     # ---- the loop ---------------------------------------------------------------------------
 
     def tick(self) -> None:
+        """One pass of the loop. Nothing that goes wrong inside may end the loop; a failure halts
+        the ramp instead (the safe direction) and the next tick tries again."""
+        try:
+            self._tick()
+        except Exception:  # noqa: BLE001 - a fail-stop agent cannot report its own halt
+            log.exception("The agent tick failed; halting the ramp")
+            self.ramp = ramp_sim.step(self.ramp, "HALT", (CAMERA_DEGRADED,), 0.0, self._config.deploy_seconds)
+
+    def _tick(self) -> None:
         now = self._clock()
         dt = 0.0 if self._last_tick is None else min(MAX_TICK_SECONDS, max(0.0, now - self._last_tick))
         self._last_tick = now
@@ -190,8 +212,27 @@ class BusAgent:
     # ---- decision ---------------------------------------------------------------------------
 
     def _decide(self, now: float) -> Decision:
-        reading = self._beam.poll()
-        self.last_beam = reading
+        try:
+            reading = self._beam.poll()
+        except Exception:  # noqa: BLE001 - an unreadable beam is unknown, and unknown halts
+            log.exception("The beam could not be read")
+            beam = BeamInput("UNKNOWN", None, self._simulated)
+        else:
+            self.last_beam = reading
+            beam = beam_input(reading)
+        try:
+            camera = self._camera_input(now)
+        except Exception:  # noqa: BLE001 - an unreadable camera is degraded, and degraded halts
+            log.exception("The camera could not be read")
+            camera = CameraInput(False, "camera_error", None, None, self._simulated)
+        context = BusContext(
+            movement=self.movement,
+            has_accepted_request=bool(self._accepted),
+            operator_halt=self._operator_halt or not self._halt_known,
+        )
+        return decide(camera, beam, context, self._gate_config)
+
+    def _camera_input(self, now: float) -> CameraInput:
         latest = getattr(self._camera, "latest_perception", None)
         if latest is not None:
             # A worker thread runs the camera and detector; read its newest result and its age.
@@ -211,13 +252,7 @@ class BusAgent:
                 clock=self._iso,
             )
             age = max(0.0, now - capture.captured_at)
-        camera = camera_input(result, age, self._simulated)
-        context = BusContext(
-            movement=self.movement,
-            has_accepted_request=bool(self._accepted),
-            operator_halt=self._operator_halt,
-        )
-        return decide(camera, beam_input(reading), context, self._gate_config)
+        return camera_input(result, age, self._simulated)
 
     # ---- timeout and link loss (R1; both off unless configured) ------------------------------------
 
@@ -319,7 +354,10 @@ class BusAgent:
             return
         self._note_ok("poll")
         for item in items:
-            handle(item)
+            if isinstance(item, dict):
+                handle(item)
+            else:
+                log.warning("Ignoring a backend item that is not an object")
 
     def _pull_halt(self) -> None:
         """Adopt the backend's operator-halt state. A failed read changes nothing (never releases)."""

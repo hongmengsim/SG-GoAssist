@@ -12,6 +12,10 @@ class BackendError(Exception):
     """The backend could not be reached or failed; the agent retries on a later tick."""
 
 
+class BackendTimeout(BackendError):
+    """The backend did not answer in time; it may still act on the report later."""
+
+
 class BackendRefused(BackendError):
     """The backend understood the report and refused it (HTTP 409), for example a bay entry."""
 
@@ -43,7 +47,7 @@ class FakeBackend:
         self.actuator_reports: list[tuple[str, dict]] = []
         self.requests: list[dict] = []
         self.commands: list[dict] = []
-        self.operator_halt: Optional[dict] = None
+        self.operator_halt: Optional[dict] = {"halted": False}
         self.fail_all = False
         self.refuse_positioned = False
 
