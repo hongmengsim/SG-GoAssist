@@ -622,3 +622,44 @@ test("case actions are offered only for cases that are not finished", async () =
   });
   assert.equal(t.source.caseActionsFor("CASE-1").CANCEL.enabled, false);
 });
+
+test("a message pushed while the snapshot is still reading bays is not lost", async () => {
+  let release;
+  const held = new Promise((resolve) => {
+    release = resolve;
+  });
+  const t = make({
+    [`/api/operations/bays/${STOP}`]: async () => {
+      await held;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          stopCode: STOP,
+          bayId: "BAY-1",
+          occupantBusId: B1,
+          waitingBusIds: [B2],
+          grantedBusId: null,
+          updatedAt: T,
+        }),
+      };
+    },
+  });
+  t.source.start();
+  await t.settle();
+  t.socket().open();
+  t.socket().push({
+    type: "RAMP_SIMULATION",
+    ramp: {
+      busId: B1,
+      state: "DEPLOYED",
+      simulated: true,
+      observedAt: "2026-09-30T00:00:09.000Z",
+    },
+    timestamp: T,
+  });
+  release();
+  await t.settle();
+  assert.equal(t.source.state.buses[B1].ramp.state, "DEPLOYED");
+  assert.equal(t.source.state.bays[STOP].occupantBusId, B1);
+});

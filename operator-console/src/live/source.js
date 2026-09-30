@@ -116,13 +116,12 @@ export function createLiveSource({
       if (run !== snapshotRun) return;
       const caseData = await readCaseData();
       if (run !== snapshotRun) return;
-      let next = state;
       const wrap = (type, key) => (item) => ({
         type,
         [key]: item,
         timestamp: item.observedAt,
       });
-      for (const message of [
+      const messages = [
         ...statuses.statuses.map(wrap("BUS_STATUS", "status")),
         ...ramps.records.map(wrap("RAMP_SIMULATION", "ramp")),
         ...decisions.records.map(wrap("RAMP_SAFETY", "decision")),
@@ -131,15 +130,21 @@ export function createLiveSource({
           type: "REQUEST_SNAPSHOT",
           request: item,
         })),
-      ]) {
-        next = reduce(next, message);
+      ];
+      // Read everything that needs the network first. The state is folded in only afterwards, in
+      // one synchronous step, so a message pushed while these reads were in flight is kept.
+      const stops = stopCodes(messages.reduce(reduce, state));
+      const bays = [];
+      for (const stop of stops) {
+        bays.push(
+          await get(`/api/operations/bays/${encodeURIComponent(stop)}`),
+        );
       }
+      if (run !== snapshotRun) return;
+      let next = messages.reduce(reduce, state);
       next = setAudit(next, audit.events);
       next = applyCaseData(next, caseData);
-      for (const stop of stopCodes(next)) {
-        const bay = await get(
-          `/api/operations/bays/${encodeURIComponent(stop)}`,
-        );
+      for (const bay of bays) {
         next = reduce(next, {
           type: "BAY_STATUS",
           bay,
