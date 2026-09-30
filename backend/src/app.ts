@@ -1,3 +1,4 @@
+import { LockBusyError, LockTimeoutError } from "./concurrency/keyedLock";
 import express from "express";
 import cors from "cors";
 import { router as assistanceRouter } from "./routes/assistance";
@@ -244,6 +245,11 @@ export function createApp(options: AppOptions = {}) {
       res: express.Response,
       next: express.NextFunction,
     ) => {
+      if (error instanceof LockBusyError || error instanceof LockTimeoutError) {
+        res.setHeader("Retry-After", "1");
+        res.status(503).json({ error: "Busy, retry shortly" });
+        return;
+      }
       // Client mistakes (for example malformed JSON, which the body parser reports with a
       // 4xx status) must not be reported as server failures.
       const clientStatus =

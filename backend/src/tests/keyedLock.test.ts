@@ -6,6 +6,7 @@ import { join } from "node:path";
 import {
   DistributedKeyedLock,
   InProcessKeyedLock,
+  LockBusyError,
   LockTimeoutError,
   type KeyedLock,
 } from "../concurrency/keyedLock";
@@ -412,4 +413,24 @@ test("the default wait for a lock is longer than the lease, so a dead peer is wa
     await lock.run("k", async () => "waited it out"),
     "waited it out",
   );
+});
+
+test("in-process lock: work queued past the cap is refused at once, and the queue drains afterwards", async () => {
+  const lock = new InProcessKeyedLock({ maxQueue: 3 });
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  const first = lock.run("k", () => gate);
+  const second = lock.run("k", async () => "second");
+  const third = lock.run("k", async () => "third");
+  await assert.rejects(
+    lock.run("k", async () => "fourth"),
+    (error: unknown) => error instanceof LockBusyError,
+  );
+  // Another key is not affected by this one's queue.
+  assert.equal(await lock.run("other", async () => "fine"), "fine");
+  release();
+  await first;
+  assert.equal(await second, "second");
+  assert.equal(await third, "third");
+  assert.equal(await lock.run("k", async () => "again"), "again");
 });

@@ -28,22 +28,48 @@ export class LockTimeoutError extends Error {
   }
 }
 
+/** Too much work is already waiting for this key; the caller should retry later (HTTP 503). */
+export class LockBusyError extends Error {
+  readonly status = 503;
+  constructor(key: string, queued: number) {
+    super(`Too much work is waiting for "${key}" (${queued} queued)`);
+    this.name = "LockBusyError";
+  }
+}
+
 /** The keys held by the work that is running now, carried along its async calls. */
 const heldKeys = new AsyncLocalStorage<ReadonlySet<string>>();
+
+/** Work waiting for one key beyond this is refused, so a slow key cannot pile up memory without limit. */
+const DEFAULT_MAX_QUEUE = 1000;
 
 /** One process. Same-key work queues in arrival order; different keys run side by side. */
 export class InProcessKeyedLock implements KeyedLock {
   private readonly tails = new Map<string, Promise<unknown>>();
+  private readonly depth = new Map<string, number>();
+  private readonly maxQueue: number;
+
+  /** `maxQueue`: how many pieces of work (the running one and those waiting) one key may hold before new ones are refused. */
+  constructor(options: { maxQueue?: number } = {}) {
+    this.maxQueue = options.maxQueue ?? DEFAULT_MAX_QUEUE;
+  }
 
   run<T>(key: string, work: () => Promise<T>): Promise<T> {
     const held = heldKeys.getStore();
     if (held?.has(key)) return work();
+    const queued = this.depth.get(key) ?? 0;
+    if (queued >= this.maxQueue)
+      return Promise.reject(new LockBusyError(key, queued));
+    this.depth.set(key, queued + 1);
     const inside = () => heldKeys.run(new Set([...(held ?? []), key]), work);
     const previous = this.tails.get(key) ?? Promise.resolve();
     const run = previous.then(inside, inside);
     const tail = run.catch(() => undefined);
     this.tails.set(key, tail);
     void tail.then(() => {
+      const left = (this.depth.get(key) ?? 1) - 1;
+      if (left <= 0) this.depth.delete(key);
+      else this.depth.set(key, left);
       if (this.tails.get(key) === tail) this.tails.delete(key);
     });
     return run;
