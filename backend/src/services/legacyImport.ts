@@ -48,44 +48,41 @@ async function copyIn(
       copied += 1;
     }
   };
-  await each(state.cases, async (item) => await data.cases.upsert(item));
-  await each(
-    state.observations,
-    async (item) => await data.observations.put(item),
-  );
-  await each(
-    state.capabilities,
-    async (item) => await data.capabilities.put(item),
-  );
-  await each(
-    state.safetyTelemetry,
-    async (item) => await data.telemetry.put(item),
-  );
-  await each(
-    state.actuatorCommands,
-    async (item) => await data.putCommand(item),
-  );
-  await each(
-    state.actuatorStatuses,
-    async (item) => await data.putStatus(item),
-  );
-  await each(state.devices, async (item) => await data.devices.put(item));
-  await each(
-    state.autonomousVehicles,
-    async (item) => await data.vehicles.put(item),
-  );
-  await each(
-    state.rampObstacleClassifications,
-    async (item) => await data.rampClassifications.put(item),
-  );
-  await each(
-    state.perceptionEvaluationSamples,
-    async (item) => await data.perceptionSamples.put(item),
-  );
-  await each(
-    state.precisionDockingObservations,
-    async (item) => await data.docking.put(item),
-  );
+  // Insert only what is missing. If an import stops half way and runs again, or a newer record
+  // was written since, the old copy must not replace it.
+  await each(state.cases, async (item) => {
+    if (!(await data.cases.get(item.caseId))) await data.cases.upsert(item);
+  });
+  await each(state.observations, async (item) => {
+    await data.observations.compareAndPut(undefined, item);
+  });
+  await each(state.capabilities, async (item) => {
+    await data.capabilities.compareAndPut(undefined, item);
+  });
+  await each(state.safetyTelemetry, async (item) => {
+    await data.telemetry.compareAndPut(undefined, item);
+  });
+  await each(state.actuatorCommands, async (item) => {
+    if (!(await data.commands.get(item.commandId))) await data.putCommand(item);
+  });
+  await each(state.actuatorStatuses, async (item) => {
+    if (!(await data.statuses.get(item.commandId))) await data.putStatus(item);
+  });
+  await each(state.devices, async (item) => {
+    await data.devices.compareAndPut(undefined, item);
+  });
+  await each(state.autonomousVehicles, async (item) => {
+    await data.vehicles.compareAndPut(undefined, item);
+  });
+  await each(state.rampObstacleClassifications, async (item) => {
+    await data.rampClassifications.compareAndPut(undefined, item);
+  });
+  await each(state.perceptionEvaluationSamples, async (item) => {
+    await data.perceptionSamples.compareAndPut(undefined, item);
+  });
+  await each(state.precisionDockingObservations, async (item) => {
+    await data.docking.compareAndPut(undefined, item);
+  });
   return copied;
 }
 

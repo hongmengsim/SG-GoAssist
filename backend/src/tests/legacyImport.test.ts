@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { importLegacyState } from "../services/legacyImport";
 import { OperationsData } from "../services/operationsData";
 import { openSqliteDatabase } from "../storage/sqlite";
 
@@ -179,6 +180,49 @@ test(
       const data = await open(directory);
       assert.equal(await data.cases.count(), 0);
       assert.ok(existsSync(join(directory, "operations.json")));
+      data.close();
+    } finally {
+      try {
+        rmSync(directory, { recursive: true, force: true });
+      } catch {
+        // Windows may still hold the database file.
+      }
+    }
+  },
+);
+
+test(
+  "an import never overwrites a record that is already there, so a re-run cannot bring back old data",
+  { skip },
+  async () => {
+    const directory = mkdtempSync(join(tmpdir(), "goassist-legacy-"));
+    try {
+      const data = await open(directory);
+      // A newer version of a case, a device and a command status already exist.
+      await data.cases.upsert({
+        ...legacyState.cases[0],
+        state: "COMPLETED",
+      } as never);
+      await data.devices.put({ deviceId: "DEV-1", note: "newer" } as never);
+      await data.putCommand(legacyState.actuatorCommands[1] as never);
+      await data.putStatus({
+        commandId: "K-DONE",
+        caseId: "CASE-OLD-1",
+        state: "FAILED",
+      } as never);
+      const jsonPath = join(directory, "again.json");
+      writeFileSync(jsonPath, JSON.stringify(legacyState));
+      const scratch = openSqliteDatabase(":memory:")!; // holds no old table: only the file is read
+      await importLegacyState(data, scratch, jsonPath);
+      scratch.close();
+      assert.equal((await data.cases.get("CASE-OLD-1"))?.state, "COMPLETED");
+      assert.equal(
+        ((await data.devices.get("DEV-1")) as { note?: string }).note,
+        "newer",
+      );
+      assert.equal((await data.statuses.get("K-DONE"))?.state, "FAILED");
+      // The records that were missing did arrive.
+      assert.ok(await data.cases.get("CASE-OLD-2"));
       data.close();
     } finally {
       try {
