@@ -197,7 +197,11 @@ export class OperationsData {
     // "json" is the name the old store used for its no-SQLite mode; it now means memory too.
     const wantMemory = requested === "memory" || requested === "json";
     // Postgres when a pool is given or GOASSIST_DATABASE_URL is set (and memory was not asked for).
-    const databaseUrl = process.env.GOASSIST_DATABASE_URL?.trim();
+    // Tests use their own data directories and ignore the environment's database, so a variable
+    // left set in a shell or a CI job cannot make them share one; they pass `postgres` instead.
+    const databaseUrl = process.env.NODE_TEST_CONTEXT
+      ? undefined
+      : process.env.GOASSIST_DATABASE_URL?.trim();
     this.postgres = wantMemory
       ? undefined
       : (options.postgres ??
