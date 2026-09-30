@@ -91,6 +91,29 @@ for (const adapter of adapters) {
   });
 
   test(
+    `${label}: the open cases of one bus come from an index, open only, oldest first, bounded`,
+    options,
+    async () => {
+      const repository = adapter.create();
+      await repository.upsert(makeCase("A1", { busId: "B1" }));
+      await repository.upsert(makeCase("A2", { busId: "B2" }));
+      await repository.upsert(makeCase("A3", { busId: "B1" }));
+      await repository.upsert(
+        makeCase("A4", { busId: "B1", state: "COMPLETED" }),
+      );
+      assert.deepEqual(
+        (await repository.listOpenForBus("B1", 10)).map((item) => item.caseId),
+        ["A1", "A3"],
+      );
+      assert.deepEqual(
+        (await repository.listOpenForBus("B1", 1)).map((item) => item.caseId),
+        ["A1"],
+      );
+      assert.deepEqual(await repository.listOpenForBus("NONE", 10), []);
+    },
+  );
+
+  test(
     `${label}: a returned case cannot alter what is stored`,
     options,
     async () => {

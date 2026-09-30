@@ -326,11 +326,10 @@ async function registerVehicleCapabilityUnlocked(
   const normalized = { ...capability, updatedAt: new Date().toISOString() };
   await (await getOperationsData()).capabilities.put(normalized);
   audit("VEHICLE_CAPABILITY_UPDATED", "VEHICLE", undefined, capability.busId);
-  for (const item of await listCases({
-    busId: capability.busId,
-    refresh: false,
-  })) {
-    if (!TERMINAL_STATES.includes(item.state)) await evaluateCase(item.caseId);
+  for (const item of await (
+    await getOperationsData()
+  ).cases.listOpenForBus(capability.busId, OPEN_CASE_LIMIT)) {
+    await evaluateCase(item.caseId);
   }
   return normalized;
 }
@@ -427,11 +426,12 @@ async function ingestSafetyTelemetryUnlocked(
     rampPosition: telemetry.rampPosition,
     rampObstacle: telemetry.rampObstacle?.reason,
   });
-  for (const item of await listCases({
-    busId: telemetry.busId,
-    refresh: false,
-  })) {
-    if (!TERMINAL_STATES.includes(item.state)) await evaluateCase(item.caseId);
+  // Only this bus's open cases, from an index: a telemetry post must not read every case the bus
+  // ever had.
+  for (const item of await (
+    await getOperationsData()
+  ).cases.listOpenForBus(telemetry.busId, OPEN_CASE_LIMIT)) {
+    await evaluateCase(item.caseId);
   }
   return telemetry;
 }

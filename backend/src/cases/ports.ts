@@ -42,6 +42,8 @@ export interface CaseRepository {
   list(filter: CaseListFilter): Promise<AssistanceCase[]>;
   /** Open cases, oldest first, at most `limit`. */
   listOpen(limit: number): Promise<AssistanceCase[]>;
+  /** Open cases of one bus, oldest first, at most `limit`, answered from an index. */
+  listOpenForBus(busId: string, limit: number): Promise<AssistanceCase[]>;
   /** Finished cases, least recently updated first, at most `limit`. */
   listFinishedOldest(limit: number): Promise<AssistanceCase[]>;
   /** Finished cases last updated before this ISO time, oldest first, at most `limit`. */

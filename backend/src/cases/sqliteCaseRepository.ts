@@ -20,6 +20,7 @@ const SCHEMA = `
   );
   CREATE INDEX IF NOT EXISTS cases_open_stop ON cases (is_open, stop_code, phase);
   CREATE INDEX IF NOT EXISTS cases_bus ON cases (bus_id, updated_at);
+  CREATE INDEX IF NOT EXISTS cases_open_bus ON cases (is_open, bus_id);
   CREATE INDEX IF NOT EXISTS cases_state ON cases (state, updated_at);
   CREATE INDEX IF NOT EXISTS cases_finished ON cases (is_open, updated_at);
   CREATE TABLE IF NOT EXISTS case_signals (
@@ -49,6 +50,7 @@ export class SqliteCaseRepository implements CaseRepository {
   private readonly bySignal: SqliteStatement;
   private readonly openMatches = new Map<string, SqliteStatement>();
   private readonly openList: SqliteStatement;
+  private readonly openForBus: SqliteStatement;
   private readonly finishedOldest: SqliteStatement;
   private readonly finishedBefore: SqliteStatement;
   private readonly countFinishedStatement: SqliteStatement;
@@ -82,6 +84,9 @@ export class SqliteCaseRepository implements CaseRepository {
     );
     this.openList = database.prepare(
       "SELECT body_json FROM cases WHERE is_open = 1 ORDER BY rowid LIMIT ?",
+    );
+    this.openForBus = database.prepare(
+      "SELECT body_json FROM cases WHERE is_open = 1 AND bus_id = ? ORDER BY rowid LIMIT ?",
     );
     this.finishedOldest = database.prepare(
       "SELECT body_json FROM cases WHERE is_open = 0 ORDER BY updated_at, rowid LIMIT ?",
@@ -190,6 +195,13 @@ export class SqliteCaseRepository implements CaseRepository {
 
   async listOpen(limit: number): Promise<AssistanceCase[]> {
     return this.openList.all(limit).map(parse);
+  }
+
+  async listOpenForBus(
+    busId: string,
+    limit: number,
+  ): Promise<AssistanceCase[]> {
+    return this.openForBus.all(busId, limit).map(parse);
   }
 
   async listFinishedOldest(limit: number): Promise<AssistanceCase[]> {

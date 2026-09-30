@@ -65,6 +65,16 @@ export class MemoryCaseRepository implements CaseRepository {
       .map((item) => structuredClone(item));
   }
 
+  async listOpenForBus(
+    busId: string,
+    limit: number,
+  ): Promise<AssistanceCase[]> {
+    return [...this.cases.values()]
+      .filter((item) => isOpen(item) && item.busId === busId)
+      .slice(0, limit)
+      .map((item) => structuredClone(item));
+  }
+
   async listFinishedOldest(limit: number): Promise<AssistanceCase[]> {
     return [...this.cases.values()]
       .filter((item) => !isOpen(item))

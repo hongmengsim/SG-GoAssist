@@ -27,6 +27,7 @@ const SCHEMA = [
   "CREATE UNIQUE INDEX IF NOT EXISTS cases_seq ON cases (seq)",
   "CREATE INDEX IF NOT EXISTS cases_open_stop ON cases (is_open, stop_code, phase)",
   "CREATE INDEX IF NOT EXISTS cases_bus ON cases (bus_id, updated_at)",
+  "CREATE INDEX IF NOT EXISTS cases_open_bus ON cases (is_open, bus_id)",
   "CREATE INDEX IF NOT EXISTS cases_state ON cases (state, updated_at)",
   "CREATE INDEX IF NOT EXISTS cases_finished ON cases (is_open, updated_at)",
   `CREATE TABLE IF NOT EXISTS case_signals (
@@ -148,6 +149,17 @@ export class PostgresCaseRepository implements CaseRepository {
     const result = await this.query(
       "SELECT body_json FROM cases WHERE is_open = 1 ORDER BY seq LIMIT $1",
       [limit],
+    );
+    return result.rows.map(parse);
+  }
+
+  async listOpenForBus(
+    busId: string,
+    limit: number,
+  ): Promise<AssistanceCase[]> {
+    const result = await this.query(
+      "SELECT body_json FROM cases WHERE is_open = 1 AND bus_id = $1 ORDER BY seq LIMIT $2",
+      [busId, limit],
     );
     return result.rows.map(parse);
   }
