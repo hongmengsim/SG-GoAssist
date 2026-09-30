@@ -81,11 +81,12 @@ export function publishOperationsEvent(message: StatusUpdateMessage): void {
   emit(message);
 }
 
-export function submitSignalObservation(
+export async function submitSignalObservation(
   input: SignalObservation,
 ): Promise<AssistanceCase> {
-  return withLock(OPERATIONS_LOCK, () =>
-    submitSignalObservationUnlocked(input),
+  return await withLock(
+    OPERATIONS_LOCK,
+    async () => await submitSignalObservationUnlocked(input),
   );
 }
 
@@ -210,11 +211,12 @@ async function submitSignalObservationUnlocked(
   return await evaluateCase(target.caseId);
 }
 
-export function recordPassengerRequest(
+export async function recordPassengerRequest(
   request: PassengerAssistanceRequest,
 ): Promise<AssistanceCase> {
-  return withLock(OPERATIONS_LOCK, () =>
-    recordPassengerRequestUnlocked(request),
+  return await withLock(
+    OPERATIONS_LOCK,
+    async () => await recordPassengerRequestUnlocked(request),
   );
 }
 
@@ -250,12 +252,13 @@ async function recordPassengerRequestUnlocked(
   return caseRecord;
 }
 
-export function synchronizeLegacyCaseStatus(
+export async function synchronizeLegacyCaseStatus(
   caseId: string,
   status: AssistanceRequestStatus,
 ): Promise<AssistanceCase> {
-  return withLock(OPERATIONS_LOCK, () =>
-    synchronizeLegacyCaseStatusUnlocked(caseId, status),
+  return await withLock(
+    OPERATIONS_LOCK,
+    async () => await synchronizeLegacyCaseStatusUnlocked(caseId, status),
   );
 }
 
@@ -293,11 +296,12 @@ async function synchronizeLegacyCaseStatusUnlocked(
   return publishCase(item);
 }
 
-export function registerVehicleCapability(
+export async function registerVehicleCapability(
   capability: VehicleCapability,
 ): Promise<VehicleCapability> {
-  return withLock(OPERATIONS_LOCK, () =>
-    registerVehicleCapabilityUnlocked(capability),
+  return await withLock(
+    OPERATIONS_LOCK,
+    async () => await registerVehicleCapabilityUnlocked(capability),
   );
 }
 
@@ -330,10 +334,13 @@ async function registerVehicleCapabilityUnlocked(
   return normalized;
 }
 
-export function ingestSafetyTelemetry(
+export async function ingestSafetyTelemetry(
   input: SafetyTelemetry,
 ): Promise<SafetyTelemetry> {
-  return withLock(OPERATIONS_LOCK, () => ingestSafetyTelemetryUnlocked(input));
+  return await withLock(
+    OPERATIONS_LOCK,
+    async () => await ingestSafetyTelemetryUnlocked(input),
+  );
 }
 
 async function ingestSafetyTelemetryUnlocked(
@@ -428,10 +435,13 @@ async function ingestSafetyTelemetryUnlocked(
   return telemetry;
 }
 
-export function updateActuatorStatus(
+export async function updateActuatorStatus(
   input: ActuatorStatus,
 ): Promise<AssistanceCase> {
-  return withLock(OPERATIONS_LOCK, () => updateActuatorStatusUnlocked(input));
+  return await withLock(
+    OPERATIONS_LOCK,
+    async () => await updateActuatorStatusUnlocked(input),
+  );
 }
 
 async function updateActuatorStatusUnlocked(
@@ -504,13 +514,14 @@ async function updateActuatorStatusUnlocked(
   return await evaluateCase(input.caseId);
 }
 
-export function applyOperatorAction(
+export async function applyOperatorAction(
   caseId: string,
   action: "CONFIRM" | "ESCALATE" | "CANCEL" | "COMPLETE" | "RETRY",
   reason?: string,
 ): Promise<AssistanceCase> {
-  return withLock(OPERATIONS_LOCK, () =>
-    applyOperatorActionUnlocked(caseId, action, reason),
+  return await withLock(
+    OPERATIONS_LOCK,
+    async () => await applyOperatorActionUnlocked(caseId, action, reason),
   );
 }
 
@@ -557,13 +568,14 @@ async function applyOperatorActionUnlocked(
   return publishCase(item);
 }
 
-export function assignCaseVehicle(
+export async function assignCaseVehicle(
   caseId: string,
   busId: string,
   busService?: string,
 ): Promise<AssistanceCase> {
-  return withLock(OPERATIONS_LOCK, () =>
-    assignCaseVehicleUnlocked(caseId, busId, busService),
+  return await withLock(
+    OPERATIONS_LOCK,
+    async () => await assignCaseVehicleUnlocked(caseId, busId, busService),
   );
 }
 
@@ -604,12 +616,13 @@ export async function recordDeviceHeartbeat(
   return input;
 }
 
-export function recordPassengerFeedback(
+export async function recordPassengerFeedback(
   caseId: string,
   score: 1 | 2 | 3 | 4 | 5,
 ): Promise<AssistanceCase> {
-  return withLock(OPERATIONS_LOCK, () =>
-    recordPassengerFeedbackUnlocked(caseId, score),
+  return await withLock(
+    OPERATIONS_LOCK,
+    async () => await recordPassengerFeedbackUnlocked(caseId, score),
   );
 }
 
@@ -1050,8 +1063,11 @@ async function finishFromActuatorStatuses(
   return await saveAndPublish(item);
 }
 
-function expireActuatorCommands(nowMs = Date.now()): Promise<void> {
-  return withLock(OPERATIONS_LOCK, () => expireActuatorCommandsUnlocked(nowMs));
+async function expireActuatorCommands(nowMs = Date.now()): Promise<void> {
+  return await withLock(
+    OPERATIONS_LOCK,
+    async () => await expireActuatorCommandsUnlocked(nowMs),
+  );
 }
 
 async function expireActuatorCommandsUnlocked(
@@ -1363,8 +1379,11 @@ async function deriveBoardingIntent(
   };
 }
 
-function refreshStaleCases(): Promise<void> {
-  return withLock(OPERATIONS_LOCK, () => refreshStaleCasesUnlocked());
+async function refreshStaleCases(): Promise<void> {
+  return await withLock(
+    OPERATIONS_LOCK,
+    async () => await refreshStaleCasesUnlocked(),
+  );
 }
 
 async function refreshStaleCasesUnlocked(): Promise<void> {

@@ -18,7 +18,7 @@ export interface TestServer {
 export async function startTestServer(
   options: Parameters<typeof createApp>[0] = {},
 ): Promise<TestServer> {
-  clearAllRequests();
+  await clearAllRequests();
   await clearOperations();
   resetBusOperations();
   const server = http.createServer(createApp(options));

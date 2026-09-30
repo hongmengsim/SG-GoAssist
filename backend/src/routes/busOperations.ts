@@ -19,7 +19,7 @@ import {
   getOperatorHalts,
 } from "../busOperations/composition";
 import {
-  getAllRequests,
+  getRequestsForBus,
   getRequest,
   processSimulatorCommand,
 } from "../services/aviator";
@@ -71,7 +71,7 @@ router.post(
       res.status(400).json({ error: "requestId is required" });
       return;
     }
-    const request = getRequest(requestId);
+    const request = await getRequest(requestId);
     if (!request) {
       res.status(404).json({ error: "Request not found" });
       return;
@@ -95,23 +95,19 @@ router.post(
 router.get(
   "/vehicles/:busId/requests",
   verifyDeviceRequest,
-  (req: Request, res: Response) => {
+  handle(async (req: Request, res: Response) => {
     const requested = Number(queryText(req.query.limit));
     const limit =
       Number.isFinite(requested) && requested >= 1
         ? Math.min(Math.trunc(requested), MAX_WAITING_REQUESTS)
         : MAX_WAITING_REQUESTS;
-    const requests = getAllRequests()
-      .filter(
-        (request) =>
-          request.busId === req.params.busId &&
-          request.status === AssistanceRequestStatus.SENDING,
-      )
+    const requests = (await getRequestsForBus(req.params.busId))
+      .filter((request) => request.status === AssistanceRequestStatus.SENDING)
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
       .slice(0, limit)
       .map(toBusRequest);
     res.json({ count: requests.length, requests });
-  },
+  }),
 );
 
 router.get(

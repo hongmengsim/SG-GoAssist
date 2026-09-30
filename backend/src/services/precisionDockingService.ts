@@ -29,11 +29,12 @@ const HEADING_TOLERANCE_DEGREES = Number(
   process.env.GOASSIST_DOCK_HEADING_TOLERANCE_DEGREES ?? 6,
 );
 
-export function recordPrecisionDockingObservation(
+export async function recordPrecisionDockingObservation(
   input: PrecisionDockingObservation,
 ): Promise<PrecisionDockingAssessment> {
-  return withLock(`docking:${input.busId}`, () =>
-    recordPrecisionDockingObservationUnlocked(input),
+  return await withLock(
+    `docking:${input.busId}`,
+    async () => await recordPrecisionDockingObservationUnlocked(input),
   );
 }
 

@@ -5,12 +5,15 @@ import type {
   ActuatorStatus,
   AutonomousVehicleState,
   DeviceHealth,
+  ExternalAnnouncementMessage,
+  PassengerAssistanceRequest,
   PerceptionEvaluationSample,
   PrecisionDockingObservation,
   RampObstacleClassification,
   SafetyTelemetry,
   SignalObservation,
   VehicleCapability,
+  VehicleStatus,
 } from "@buspass/shared";
 import type { CaseRepository } from "../cases/ports";
 import { MemoryCaseRepository } from "../cases/memoryCaseRepository";
@@ -23,6 +26,7 @@ import {
 } from "../storage/documentTable";
 import { openSqliteDatabase, type SqliteDatabase } from "../storage/sqlite";
 import { AuditLog } from "./auditLog";
+import type { StoredDiagnostic } from "./assistantDiagnosticsService";
 import { importLegacyState } from "./legacyImport";
 import { logger } from "./logger";
 import {
@@ -44,7 +48,35 @@ const TERMINAL_ACTUATOR_STATES = [
   "FAILED",
 ];
 
+/** The last vehicle event the passenger app was told about, per bus. */
+export interface VehicleStatusRecord {
+  busId: string;
+  status: VehicleStatus;
+}
+
+/** An announcement, keyed so two for one request do not replace each other. */
+export const announcementKey = (event: ExternalAnnouncementMessage): string =>
+  `${event.requestId}:${event.timestamp}`;
+
 const specs = {
+  requests: {
+    name: "requests",
+    key: (doc) => doc.requestId,
+    indexes: { busId: (doc) => doc.busId, status: (doc) => doc.status },
+  } satisfies TableSpec<PassengerAssistanceRequest>,
+  vehicleStatuses: {
+    name: "vehicle_statuses",
+    key: (doc) => doc.busId,
+  } satisfies TableSpec<VehicleStatusRecord>,
+  announcements: {
+    name: "announcements",
+    key: announcementKey,
+    indexes: { requestId: (doc) => doc.requestId },
+  } satisfies TableSpec<ExternalAnnouncementMessage>,
+  diagnostics: {
+    name: "diagnostics",
+    key: (doc) => doc.diagnosticId,
+  } satisfies TableSpec<StoredDiagnostic>,
   observations: {
     name: "observations",
     key: (doc) => doc.signalId,
@@ -125,6 +157,10 @@ export class OperationsData {
   readonly rampClassifications: DocumentTable<RampObstacleClassification>;
   readonly perceptionSamples: DocumentTable<PerceptionEvaluationSample>;
   readonly docking: DocumentTable<PrecisionDockingObservation>;
+  readonly requests: DocumentTable<PassengerAssistanceRequest>;
+  readonly vehicleStatuses: DocumentTable<VehicleStatusRecord>;
+  readonly announcements: DocumentTable<ExternalAnnouncementMessage>;
+  readonly diagnostics: DocumentTable<StoredDiagnostic>;
   readonly audit: AuditLog;
   readonly durable: boolean;
   readonly databasePath: string;
@@ -171,6 +207,10 @@ export class OperationsData {
     this.rampClassifications = table(specs.rampClassifications);
     this.perceptionSamples = table(specs.perceptionSamples);
     this.docking = table(specs.docking);
+    this.requests = table(specs.requests);
+    this.vehicleStatuses = table(specs.vehicleStatuses);
+    this.announcements = table(specs.announcements);
+    this.diagnostics = table(specs.diagnostics);
     this.audit = new AuditLog(db, path.join(dataDirectory, "audit.ndjson"));
     this.ready = this.start(db, path.join(dataDirectory, "operations.json"));
     if (options.retentionTimer !== false) {
@@ -260,6 +300,10 @@ export class OperationsData {
       this.rampClassifications,
       this.perceptionSamples,
       this.docking,
+      this.requests,
+      this.vehicleStatuses,
+      this.announcements,
+      this.diagnostics,
     ] as Array<DocumentTable<unknown>>)
       await table.clear();
     this.audit.reset(removeFiles);

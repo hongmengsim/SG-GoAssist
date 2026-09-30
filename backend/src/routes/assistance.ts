@@ -40,10 +40,10 @@ router.get("/buses/mock", (req: Request, res: Response) => {
   });
 });
 
-router.get("/simulator/announcements", (req: Request, res: Response) => {
+router.get("/simulator/announcements", async (req: Request, res: Response) => {
   res.json({
-    count: getAnnouncementEvents().length,
-    announcements: getAnnouncementEvents(),
+    count: (await getAnnouncementEvents()).length,
+    announcements: await getAnnouncementEvents(),
   });
 });
 
@@ -57,7 +57,7 @@ router.post("/simulator/command", async (req: Request, res: Response) => {
   res.status(result.success ? 200 : 400).json(result);
 });
 
-router.post("/simulator/vehicle", (req: Request, res: Response) => {
+router.post("/simulator/vehicle", async (req: Request, res: Response) => {
   const { busId, status, busService, stopCode } = req.body;
 
   if (!busId || !Object.values(VehicleStatus).includes(status)) {
@@ -68,7 +68,12 @@ router.post("/simulator/vehicle", (req: Request, res: Response) => {
     });
   }
 
-  const result = processVehicleCommand({ busId, status, busService, stopCode });
+  const result = await processVehicleCommand({
+    busId,
+    status,
+    busService,
+    stopCode,
+  });
   res.status(result.success ? 200 : 409).json(result);
 });
 
@@ -234,8 +239,8 @@ router.post("/:requestId/cancel", async (req: Request, res: Response) => {
   res.status(result.success ? 200 : 404).json(result);
 });
 
-router.get("/:requestId/logs", (req: Request, res: Response) => {
-  const request = getRequest(req.params.requestId);
+router.get("/:requestId/logs", async (req: Request, res: Response) => {
+  const request = await getRequest(req.params.requestId);
   if (!request) {
     return res.status(404).json({
       error: "Request not found",
@@ -262,8 +267,8 @@ router.get("/:requestId/logs", (req: Request, res: Response) => {
   });
 });
 
-router.get("/:requestId", (req: Request, res: Response) => {
-  const request = getRequest(req.params.requestId);
+router.get("/:requestId", async (req: Request, res: Response) => {
+  const request = await getRequest(req.params.requestId);
   if (!request) {
     return res.status(404).json({
       error: "Request not found",
@@ -274,8 +279,8 @@ router.get("/:requestId", (req: Request, res: Response) => {
   res.json(request);
 });
 
-router.get("/", (req: Request, res: Response) => {
-  const requests = getAllRequests();
+router.get("/", async (req: Request, res: Response) => {
+  const requests = await getAllRequests();
   res.json({
     count: requests.length,
     requests,

@@ -7,7 +7,7 @@ import {
 } from "../services/assistantDiagnosticsService";
 
 test("assistant diagnostics require explicit consent, redact again and can be deleted", async () => {
-  clearAssistantDiagnosticsForTests();
+  await clearAssistantDiagnosticsForTests();
   const server = await startTestServer();
   try {
     const denied = await fetch(`${server.baseUrl}/api/assistant/diagnostics`, {
@@ -16,7 +16,7 @@ test("assistant diagnostics require explicit consent, redact again and can be de
       body: JSON.stringify(payload(false)),
     });
     assert.equal(denied.status, 400);
-    assert.equal(listAssistantDiagnosticsForTests().length, 0);
+    assert.equal((await listAssistantDiagnosticsForTests()).length, 0);
 
     const accepted = await fetch(
       `${server.baseUrl}/api/assistant/diagnostics`,
@@ -32,7 +32,7 @@ test("assistant diagnostics require explicit consent, redact again and can be de
       deletionToken: string;
       expiresAt: string;
     };
-    const stored = listAssistantDiagnosticsForTests()[0];
+    const stored = (await listAssistantDiagnosticsForTests())[0];
     assert.match(stored.redactedTranscript, /\[email\]/);
     assert.match(stored.redactedTranscript, /\[number\]/);
     assert.equal(
@@ -49,9 +49,9 @@ test("assistant diagnostics require explicit consent, redact again and can be de
       },
     );
     assert.equal(removed.status, 204);
-    assert.equal(listAssistantDiagnosticsForTests().length, 0);
+    assert.equal((await listAssistantDiagnosticsForTests()).length, 0);
   } finally {
-    clearAssistantDiagnosticsForTests();
+    await clearAssistantDiagnosticsForTests();
     await server.close();
   }
 });

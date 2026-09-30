@@ -27,12 +27,13 @@ const SECURE_STOP_SPEED_KPH = 2;
 const MAX_LOCALIZATION_ERROR_METERS = 25;
 const DOOR_LOCALIZATION_ERROR_METERS = 10;
 
-export function assignAutonomousRoute(
+export async function assignAutonomousRoute(
   busId: string,
   assignment: AutonomousRouteAssignment,
 ): Promise<AutonomousVehicleState> {
-  return withLock(`vehicle:${busId}`, () =>
-    assignAutonomousRouteUnlocked(busId, assignment),
+  return await withLock(
+    `vehicle:${busId}`,
+    async () => await assignAutonomousRouteUnlocked(busId, assignment),
   );
 }
 
@@ -97,11 +98,12 @@ export async function listAutonomousVehicles(): Promise<
   return await (await getOperationsData()).vehicles.list(LIST_LIMIT);
 }
 
-export function startAutonomousRoute(
+export async function startAutonomousRoute(
   busId: string,
 ): Promise<AutonomousVehicleState> {
-  return withLock(`vehicle:${busId}`, () =>
-    startAutonomousRouteUnlocked(busId),
+  return await withLock(
+    `vehicle:${busId}`,
+    async () => await startAutonomousRouteUnlocked(busId),
   );
 }
 
@@ -123,12 +125,13 @@ async function startAutonomousRouteUnlocked(
   });
 }
 
-export function updateAutonomousMotion(
+export async function updateAutonomousMotion(
   busId: string,
   motion: AutonomousMotionUpdate,
 ): Promise<AutonomousVehicleState> {
-  return withLock(`vehicle:${busId}`, () =>
-    updateAutonomousMotionUnlocked(busId, motion),
+  return await withLock(
+    `vehicle:${busId}`,
+    async () => await updateAutonomousMotionUnlocked(busId, motion),
   );
 }
 
@@ -191,7 +194,7 @@ async function updateAutonomousMotionUnlocked(
       deploymentPathClear: true,
     });
     if (updated.targetStopIndex === 0) {
-      processVehicleCommand({ busId, status: VehicleStatus.ARRIVED });
+      await processVehicleCommand({ busId, status: VehicleStatus.ARRIVED });
     }
     return await saveAndPublish(updated);
   }
@@ -201,7 +204,7 @@ async function updateAutonomousMotionUnlocked(
   } else if (updated.distanceToTargetMeters <= APPROACH_DISTANCE_METERS) {
     updated.state = "APPROACHING_STOP";
     if (state.state === "EN_ROUTE" && updated.targetStopIndex === 0) {
-      processVehicleCommand({ busId, status: VehicleStatus.APPROACHING });
+      await processVehicleCommand({ busId, status: VehicleStatus.APPROACHING });
     }
   } else {
     updated.state = "EN_ROUTE";
@@ -209,10 +212,13 @@ async function updateAutonomousMotionUnlocked(
   return await saveAndPublish(updated);
 }
 
-export function openAutonomousDoors(
+export async function openAutonomousDoors(
   busId: string,
 ): Promise<AutonomousVehicleState> {
-  return withLock(`vehicle:${busId}`, () => openAutonomousDoorsUnlocked(busId));
+  return await withLock(
+    `vehicle:${busId}`,
+    async () => await openAutonomousDoorsUnlocked(busId),
+  );
 }
 
 async function openAutonomousDoorsUnlocked(
@@ -258,12 +264,14 @@ async function openAutonomousDoorsUnlocked(
   });
 }
 
-export function departAutonomousStop(
+export async function departAutonomousStop(
   busId: string,
   nextStopDistanceMeters?: number,
 ): Promise<AutonomousVehicleState> {
-  return withLock(`vehicle:${busId}`, () =>
-    departAutonomousStopUnlocked(busId, nextStopDistanceMeters),
+  return await withLock(
+    `vehicle:${busId}`,
+    async () =>
+      await departAutonomousStopUnlocked(busId, nextStopDistanceMeters),
   );
 }
 
@@ -306,7 +314,7 @@ async function departAutonomousStopUnlocked(
     deploymentPathClear: true,
   });
   if (state.targetStopIndex === 0) {
-    processVehicleCommand({ busId, status: VehicleStatus.DEPARTED });
+    await processVehicleCommand({ busId, status: VehicleStatus.DEPARTED });
   }
 
   return await saveAndPublish({
@@ -323,7 +331,7 @@ async function departAutonomousStopUnlocked(
   });
 }
 
-export function applyAutonomyOverride(
+export async function applyAutonomyOverride(
   busId: string,
   action: "STOP" | "RESUME" | "MANUAL",
   clearance?: {
@@ -331,8 +339,9 @@ export function applyAutonomyOverride(
     localizationAccuracyMeters?: number;
   },
 ): Promise<AutonomousVehicleState> {
-  return withLock(`vehicle:${busId}`, () =>
-    applyAutonomyOverrideUnlocked(busId, action, clearance),
+  return await withLock(
+    `vehicle:${busId}`,
+    async () => await applyAutonomyOverrideUnlocked(busId, action, clearance),
   );
 }
 

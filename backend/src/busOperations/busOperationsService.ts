@@ -29,7 +29,7 @@ export interface BusOperationsDeps {
   audit: (event: AuditEventInput) => void;
   now: () => number;
   /** Called after a bus's movement or stop changes, once its bay has accepted it. */
-  onMovement?: (status: BusStatus) => void;
+  onMovement?: (status: BusStatus) => void | Promise<void>;
 }
 
 /**
@@ -169,7 +169,7 @@ export class BusOperationsService {
         status,
         timestamp: new Date(this.deps.now()).toISOString(),
       });
-      this.deps.onMovement?.(status);
+      await this.deps.onMovement?.(status);
       return { outcome: "CHANGED", status };
     });
   }

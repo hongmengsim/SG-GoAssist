@@ -1,4 +1,5 @@
 import { randomBytes, randomUUID } from "crypto";
+import { getOperationsData } from "./operationsData";
 
 export type AssistantDiagnostic = {
   diagnosticId: string;
@@ -15,16 +16,18 @@ export type AssistantDiagnostic = {
   expiresAt: string;
 };
 
-type StoredDiagnostic = AssistantDiagnostic & { deletionToken: string };
+export type StoredDiagnostic = AssistantDiagnostic & { deletionToken: string };
+
+/** A purge looks at most this many diagnostics; the retention policy keeps far fewer. */
+const PURGE_SCAN_LIMIT = 50_000;
 
 const retentionMs = 30 * 24 * 60 * 60 * 1_000;
-const diagnostics = new Map<string, StoredDiagnostic>();
 
-export function saveAssistantDiagnostic(
+export async function saveAssistantDiagnostic(
   input: Omit<AssistantDiagnostic, "diagnosticId" | "createdAt" | "expiresAt">,
   now = new Date(),
 ) {
-  purgeExpiredAssistantDiagnostics(now);
+  await purgeExpiredAssistantDiagnostics(now);
   const diagnosticId = randomUUID();
   const deletionToken = randomBytes(24).toString("base64url");
   const stored: StoredDiagnostic = {
@@ -39,34 +42,38 @@ export function saveAssistantDiagnostic(
     createdAt: now.toISOString(),
     expiresAt: new Date(now.getTime() + retentionMs).toISOString(),
   };
-  diagnostics.set(diagnosticId, stored);
+  await (await getOperationsData()).diagnostics.put(stored);
   return { diagnostic: publicDiagnostic(stored), deletionToken };
 }
 
-export function deleteAssistantDiagnostic(
+export async function deleteAssistantDiagnostic(
   diagnosticId: string,
   deletionToken: string,
 ) {
-  const existing = diagnostics.get(diagnosticId);
+  const table = (await getOperationsData()).diagnostics;
+  const existing = await table.get(diagnosticId);
   if (!existing || existing.deletionToken !== deletionToken) return false;
-  return diagnostics.delete(diagnosticId);
+  await table.delete(diagnosticId);
+  return true;
 }
 
-export function purgeExpiredAssistantDiagnostics(now = new Date()) {
-  for (const [id, diagnostic] of diagnostics) {
+export async function purgeExpiredAssistantDiagnostics(now = new Date()) {
+  const table = (await getOperationsData()).diagnostics;
+  for (const diagnostic of await table.list(PURGE_SCAN_LIMIT)) {
     if (new Date(diagnostic.expiresAt).getTime() <= now.getTime()) {
-      diagnostics.delete(id);
+      await table.delete(diagnostic.diagnosticId);
     }
   }
 }
 
-export function listAssistantDiagnosticsForTests() {
-  purgeExpiredAssistantDiagnostics();
-  return [...diagnostics.values()].map(publicDiagnostic);
+export async function listAssistantDiagnosticsForTests() {
+  await purgeExpiredAssistantDiagnostics();
+  const table = (await getOperationsData()).diagnostics;
+  return (await table.list(PURGE_SCAN_LIMIT)).map(publicDiagnostic);
 }
 
-export function clearAssistantDiagnosticsForTests() {
-  diagnostics.clear();
+export async function clearAssistantDiagnosticsForTests() {
+  await (await getOperationsData()).diagnostics.clear();
 }
 
 function publicDiagnostic({

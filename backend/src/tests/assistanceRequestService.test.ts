@@ -29,7 +29,7 @@ test("supported assistance types are explicitly validated", () => {
 });
 
 test("app-selected arrival bus IDs can create standardized assistance requests", async () => {
-  clearAllRequests();
+  await clearAllRequests();
 
   const result = await createStandardizedAssistanceRequest(
     {
@@ -50,7 +50,7 @@ test("app-selected arrival bus IDs can create standardized assistance requests",
 });
 
 test("wheelchair ramp requests are rejected for non-accessible vehicles", async () => {
-  clearAllRequests();
+  await clearAllRequests();
 
   await assert.rejects(
     async () =>
@@ -71,7 +71,7 @@ test("wheelchair ramp requests are rejected for non-accessible vehicles", async 
 });
 
 test("terminal request statuses cannot be overwritten by later simulator commands", async () => {
-  clearAllRequests();
+  await clearAllRequests();
 
   const result = await createStandardizedAssistanceRequest(
     {
@@ -97,7 +97,7 @@ test("terminal request statuses cannot be overwritten by later simulator command
 });
 
 test("extended dwell time is treated as bus-facing assistance without ramp validation", async () => {
-  clearAllRequests();
+  await clearAllRequests();
 
   const result = await createStandardizedAssistanceRequest(
     {
@@ -117,7 +117,7 @@ test("extended dwell time is treated as bus-facing assistance without ramp valid
 });
 
 test("verification status is stored separately from selected assistance needs", async () => {
-  clearAllRequests();
+  await clearAllRequests();
 
   const result = await createStandardizedAssistanceRequest(
     {
@@ -142,7 +142,7 @@ test("verification status is stored separately from selected assistance needs", 
 });
 
 test("multiple selected needs share one request lifecycle", async () => {
-  clearAllRequests();
+  await clearAllRequests();
 
   const result = await createStandardizedAssistanceRequestBundle(
     {
@@ -162,7 +162,7 @@ test("multiple selected needs share one request lifecycle", async () => {
     { autoAcknowledge: false },
   );
 
-  assert.equal(getAllRequests().length, 1);
+  assert.equal((await getAllRequests()).length, 1);
   assert.deepEqual(result.request.assistanceTypes, [
     "WHEELCHAIR_RAMP",
     "BUS_AUDIO_IDENTIFICATION",
@@ -171,7 +171,7 @@ test("multiple selected needs share one request lifecycle", async () => {
 });
 
 test("an existing partial request does not swallow a newly added need", async () => {
-  clearAllRequests();
+  await clearAllRequests();
 
   const rampOnly = await createStandardizedAssistanceRequest(
     {
@@ -220,7 +220,7 @@ test("assistance preferences map differently for boarding and alighting", () => 
 });
 
 test("standardized alighting requests preserve phase and stop code", async () => {
-  clearAllRequests();
+  await clearAllRequests();
 
   const result = await createStandardizedAssistanceRequest(
     {

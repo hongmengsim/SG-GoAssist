@@ -6,7 +6,11 @@ import {
 } from "@buspass/shared";
 import crypto from "crypto";
 import { getBusById } from "../data/buses.mock";
-import { createRequest, processSimulatorCommand } from "./aviator";
+import {
+  attachCaseToRequest,
+  createRequest,
+  processSimulatorCommand,
+} from "./aviator";
 import { logger } from "./logger";
 import { toBusRequest } from "./busRequest";
 import { publishEvent } from "../events/eventHub";
@@ -83,10 +87,14 @@ export async function createStandardizedAssistanceRequestBundle(
     createdAt: new Date().toISOString(),
   };
 
-  const savedRequest = createRequest(candidate);
+  const created = await createRequest(candidate);
   const assistanceCase = await recordPassengerRequest(candidate);
-  savedRequest.caseId = assistanceCase.caseId;
-  savedRequest.assistanceCaseState = assistanceCase.state;
+  const savedRequest =
+    (await attachCaseToRequest(
+      created.requestId,
+      assistanceCase.caseId,
+      assistanceCase.state,
+    )) ?? created;
   const duplicateOfRequestId =
     savedRequest.requestId !== candidate.requestId
       ? savedRequest.requestId

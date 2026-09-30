@@ -62,7 +62,8 @@ Legend: `[x]` built and verified by a test or a run (evidence given), `[ ]` not 
 - [x] **Async storage ports (decision 0005, step 1, 1 Oct 2026):** all storage interfaces and the case service and its callers are asynchronous, so a network database can replace SQLite behind them. Backend 341 tests pass; the end-to-end scenario and the full verify pass. Steps 2 to 4 are tracked below.
 - [x] **Shared event bus (decision 0005, step 2, 1 Oct 2026):** `BrokerEventBus` over a `MessageBroker` port, a `RedisBroker` adapter, and `GOASSIST_EVENT_BUS=redis`; 20 new tests (in-memory broker, fake Redis server, gateway). **Not run against a real Redis or with two real processes** (`docs/runbooks/multi-process.md`).
 - [x] **Shared lock (decision 0005, step 3, 1 Oct 2026):** `KeyedLock` with an in-process and a database-lease implementation replaces every in-process mutex and restores atomic read-modify-write in the case service (a burst of 20 simultaneous requests ends on one case, and the same burst without the lock races). Tested across two SQLite connections on one file, not across two real backend processes.
-- [ ] Not done (step 4): moving the remaining in-memory state (legacy request and vehicle maps, diagnostics map, simulated bus) out of the process. The system is not yet multi-process.
+- [x] **No domain state in process memory (decision 0005, step 4, 1 Oct 2026):** legacy requests, vehicle statuses, announcements and assistant diagnostics moved into the shared tables; request waiters use the event bus plus polling.
+- [ ] **Still not multi-process:** the data is in SQLite files per process, so two processes see different data. Left to do: a Postgres adapter for the repositories and lease store, then the definition of done in decision 0005 (the end-to-end scenario and the load test with two real backend processes on shared Postgres and Redis). Rate limits and metrics are per process.
 
 ### Operator halt
 
