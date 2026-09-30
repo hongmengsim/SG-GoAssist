@@ -122,6 +122,8 @@ Legend: `[x]` built and verified by a test or a run (evidence given), `[ ]` not 
 
 ## Hardware bring-up log (branch `hardware-bringup`)
 
+To continue this work in a new session, start with `docs/runbooks/hardware-bring-up-handoff.md`. Helper scripts used during the bring-up are in `docs/runbooks/hardware-bringup-tools/`.
+
 Only what was run on hardware and shown in pasted output is marked "verified on hardware". Everything else stays not verified. The ramp is simulated only; no camera frames are stored.
 
 ### Stage 1: ESP32 serial link (Pi #1, 30 Sep 2026)
