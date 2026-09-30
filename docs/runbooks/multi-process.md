@@ -1,6 +1,6 @@
 # Running more than one backend process
 
-**Status (1 Oct 2026): the event bus can be shared through Redis and has been checked against a real Redis with two real backend processes (`npm run check:multi-process`). Storage is still one SQLite file per process, so two processes must NOT be run against the same data yet (decision 0005, steps 3 and 4).** This page says what works today, and how to check the Redis part against a real server.
+**Status (1 Oct 2026): two backend processes can share events (Redis), data (Postgres) and locks (database leases), and this has been checked with two real processes (`npm run check:multi-process`, and the end-to-end scenario on Postgres with one). Processes on separate machines and more than two have not been tried.** This page says what works today, and how to check the Redis part against a real server.
 
 ## What works today
 
@@ -15,7 +15,19 @@
 - **Locks.** `GOASSIST_LOCKS=database` shares locks through the operations database (built and tested with two connections on one file). It only excludes processes that share that file, so it is not enough until the data itself is in a shared database.
 - **In-memory state.** Moved into the shared tables (decision 0005, step 4); what stays per process is listed there (WebSocket connections, rate-limit and metrics counters, the simulated bus timer).
 
-## Checking the Redis adapter against a real server
+## Setting up Postgres and Redis on Windows (WSL)
+
+Inside the Ubuntu shell (not PowerShell): `sudo apt install -y postgresql redis-server`, then `sudo service postgresql start` and `sudo service redis-server start`, then create a user and database (`sudo -u postgres psql -c "CREATE USER goassist WITH PASSWORD '...';"` and `... "CREATE DATABASE goassist OWNER goassist;"`). Both are reachable from Windows at `localhost:5432` and `localhost:6379`. Put the password only in an environment variable.
+
+## Running against them
+
+- Install the two clients without saving them: `npm install --no-save --workspace @buspass/backend pg ioredis`.
+- Backend: `GOASSIST_DATABASE_URL=postgres://user:PASSWORD@host:5432/goassist GOASSIST_EVENT_BUS=redis GOASSIST_REDIS_URL=redis://host:6379 GOASSIST_LOCKS=database`. All four together are what a multi-process run needs.
+- Tests of the Postgres adapters: set `GOASSIST_TEST_DATABASE_URL` and run `npm test --workspace @buspass/backend` (each test uses a throwaway schema).
+- Two real processes: `npm run check:multi-process` (set `GOASSIST_DATABASE_URL` too for the shared-data part).
+- Load: `npm run load:test -- --processes 2 --rate 600` with the same variables set.
+
+## Checking the Redis adapter against a real server (older instructions)
 
 1. Start Redis (for example `redis-server`, or Docker: `docker run -p 6379:6379 redis:7`).
 2. Install the client where the backend can find it: `npm install ioredis --workspace @buspass/backend`, then `git checkout -- package-lock.json` if you do not want the lockfile change.

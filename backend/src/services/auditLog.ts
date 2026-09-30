@@ -19,6 +19,17 @@ export interface AuditQuery {
   busId?: string;
 }
 
+/**
+ * Where audit events go. Writes are fire-and-forget (batched behind the scenes, so a request
+ * never waits for them); a read sees every event written before it.
+ */
+export interface AuditSink {
+  append(event: OperationsAuditEvent): void;
+  appendBatch(events: OperationsAuditEvent[]): void;
+  read(query: AuditQuery): Promise<OperationsAuditEvent[]>;
+  reset(removeFile: boolean): void | Promise<void>;
+}
+
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS audit_events (
     sequence INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -52,7 +63,7 @@ interface AuditRow {
  * an ndjson file that has to be read whole (acceptable for a demo-sized log). Either way
  * every event is also appended to the ndjson file, which is the human-readable copy.
  */
-export class AuditLog {
+export class AuditLog implements AuditSink {
   constructor(
     private readonly database: SqliteDatabase | undefined,
     readonly path: string,

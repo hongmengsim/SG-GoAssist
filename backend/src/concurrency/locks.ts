@@ -1,12 +1,11 @@
-import type { SqliteDatabase } from "../storage/sqlite";
 import { logger } from "../services/logger";
 import {
   DistributedKeyedLock,
   InProcessKeyedLock,
   type DistributedLockOptions,
   type KeyedLock,
+  type LeaseStore,
 } from "./keyedLock";
-import { SqliteLeaseStore } from "./leaseStores";
 
 /**
  * The process-wide lock the services use. It starts in-process; the server swaps in a shared
@@ -42,20 +41,20 @@ function positive(value: string | undefined): number | undefined {
 
 /**
  * Chooses the lock from the environment: nothing or `memory` for one process, `database`
- * to share leases through the operations database so several processes exclude each other.
- * An unknown value, or `database` without a database, is refused rather than quietly
+ * to share leases through the shared database (SQLite file or Postgres) so several processes
+ * exclude each other. An unknown value, or `database` without one, is refused rather than quietly
  * falling back to a lock that would not protect anything across processes.
  */
 export function lockFromEnvironment(
   env: LockEnvironment,
-  database: SqliteDatabase | undefined,
+  leases: LeaseStore | undefined,
 ): KeyedLock {
   const kind = (env.GOASSIST_LOCKS ?? "memory").trim().toLowerCase();
   if (kind === "memory" || kind === "") return new InProcessKeyedLock();
   if (kind === "database") {
-    if (!database)
+    if (!leases)
       throw new Error(
-        "GOASSIST_LOCKS=database needs a database, but SQLite is not available on this runtime",
+        "GOASSIST_LOCKS=database needs a shared database, but the data is held in memory",
       );
     const options: DistributedLockOptions = {
       ttlMs: positive(env.GOASSIST_LOCK_TTL_MS),
@@ -64,7 +63,7 @@ export function lockFromEnvironment(
     for (const key of Object.keys(options) as Array<keyof typeof options>)
       if (options[key] === undefined) delete options[key];
     logger.info("Locks are shared through the database");
-    return new DistributedKeyedLock(new SqliteLeaseStore(database), options);
+    return new DistributedKeyedLock(leases, options);
   }
   throw new Error(`Unknown GOASSIST_LOCKS: ${kind} (use memory or database)`);
 }

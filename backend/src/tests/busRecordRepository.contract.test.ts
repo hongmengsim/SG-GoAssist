@@ -5,7 +5,20 @@ import {
   SqliteBusRecordRepository,
 } from "../busOperations/busRecordRepositories";
 import type { BusRecord, BusRecordRepository } from "../busOperations/ports";
+import {
+  DocumentBusRecordRepository,
+  busRecordTableSpec,
+} from "../busOperations/documentRepositories";
+import { MemoryDocumentTable } from "../storage/documentTable";
 import { openSqliteDatabase } from "../storage/sqlite";
+import { PostgresDocumentTable } from "../storage/postgresTables";
+import {
+  makeTestPool,
+  postgresSkip,
+  registerPostgresCleanup,
+} from "./helpers/postgres";
+
+registerPostgresCleanup();
 
 interface Sample extends BusRecord {
   note: string;
@@ -47,6 +60,24 @@ const adapters: Array<{
       openDatabases.push(database);
       return new SqliteBusRecordRepository<Sample>(database, "sample_records");
     },
+  },
+  {
+    name: "document table (memory)",
+    create: () =>
+      new DocumentBusRecordRepository<Sample>(
+        new MemoryDocumentTable(busRecordTableSpec<Sample>("sample_records")),
+      ),
+  },
+  {
+    name: "postgres",
+    skip: postgresSkip,
+    create: () =>
+      new DocumentBusRecordRepository<Sample>(
+        new PostgresDocumentTable(
+          makeTestPool(),
+          busRecordTableSpec<Sample>("sample_records"),
+        ),
+      ),
   },
 ];
 

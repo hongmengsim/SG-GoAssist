@@ -7,7 +7,20 @@ import type { BusStatus } from "@buspass/shared";
 import { MemoryBusStatusRepository } from "../busOperations/memoryRepositories";
 import { SqliteBusStatusRepository } from "../busOperations/sqliteRepositories";
 import type { BusStatusRepository } from "../busOperations/ports";
+import {
+  DocumentBusStatusRepository,
+  busStatusTableSpec,
+} from "../busOperations/documentRepositories";
+import { MemoryDocumentTable } from "../storage/documentTable";
 import { openSqliteDatabase } from "../storage/sqlite";
+import { PostgresDocumentTable } from "../storage/postgresTables";
+import {
+  makeTestPool,
+  postgresSkip,
+  registerPostgresCleanup,
+} from "./helpers/postgres";
+
+registerPostgresCleanup();
 
 function status(busId: string, overrides: Partial<BusStatus> = {}): BusStatus {
   return {
@@ -54,6 +67,25 @@ const adapters: Array<{ name: string; create: () => Subject; skip?: string }> =
           cleanup: () => database.close(),
         };
       },
+    },
+    {
+      name: "document table (memory)",
+      create: () => ({
+        repository: new DocumentBusStatusRepository(
+          new MemoryDocumentTable(busStatusTableSpec),
+        ),
+        cleanup: () => undefined,
+      }),
+    },
+    {
+      name: "postgres",
+      skip: postgresSkip,
+      create: () => ({
+        repository: new DocumentBusStatusRepository(
+          new PostgresDocumentTable(makeTestPool(), busStatusTableSpec),
+        ),
+        cleanup: () => undefined,
+      }),
     },
   ];
 

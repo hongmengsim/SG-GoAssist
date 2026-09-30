@@ -54,7 +54,7 @@ setupStateChangeListener();
 getOperationsData()
   .then((data) => {
     // Locks: in this process (default) or shared through the database for several processes.
-    configureLock(lockFromEnvironment(process.env, data.sqlite));
+    configureLock(lockFromEnvironment(process.env, data.leases));
     httpServer.listen(PORT, () => {
       logger.info(`Backend server running on http://localhost:${PORT}`);
       logger.info(`WebSocket endpoint running on ws://localhost:${PORT}`);

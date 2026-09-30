@@ -1,18 +1,28 @@
 #!/usr/bin/env node
 /**
- * Checks, against a REAL Redis server, that an event published by one backend process reaches
- * an operator connected to another (decision 0005, step 2). It starts two backend processes on
- * different ports with separate data directories, both using the Redis event bus.
+ * Checks, with two REAL backend processes, what decision 0005 promises about running more
+ * than one.
+ *
+ *   Part 1 (needs Redis): an event published by one process reaches an operator connected to
+ *   the other exactly once, and a scoped operator still sees nothing outside its scope.
+ *
+ *   Part 2 (also needs Postgres): the two processes share their data and their locks. A bus
+ *   status posted to one is readable from the other, its audit event is visible from both,
+ *   and 20 passengers asking at the same moment through BOTH processes end up on ONE case
+ *   with nobody lost. A control run with per-process locks shows the race the shared lock
+ *   removes (informational: it can occasionally pass by luck).
  *
  *   npm run build --workspace @buspass/backend
- *   npm install --no-save --workspace @buspass/backend ioredis      # the client is not a dependency
- *   GOASSIST_REDIS_URL=redis://localhost:6379 npm run check:multi-process
+ *   npm install --no-save --workspace @buspass/backend ioredis pg     # neither is a dependency
+ *   GOASSIST_REDIS_URL=redis://localhost:6379 \
+ *   GOASSIST_DATABASE_URL=postgres://user:PASSWORD@localhost:5432/dbname \
+ *   npm run check:multi-process
  *
- * It does NOT check shared data: each process has its own SQLite files, so a read on the other
- * process still returns 404. The script prints that, so nobody mistakes push sharing for a
- * multi-process backend.
+ * Without GOASSIST_DATABASE_URL only part 1 runs. Part 2 works in a throwaway schema that is
+ * dropped afterwards. Secrets come from the environment only.
  */
 import { spawn } from "node:child_process";
+import crypto from "node:crypto";
 import { createRequire } from "node:module";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -24,13 +34,12 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const WebSocket = require("ws");
 
 const redisUrl = process.env.GOASSIST_REDIS_URL ?? "redis://localhost:6379";
+const databaseUrl = process.env.GOASSIST_DATABASE_URL;
 const server = join(root, "backend", "dist", "server.js");
 const ports = [
   Number(process.env.CHECK_PORT_A ?? 3110),
   Number(process.env.CHECK_PORT_B ?? 3120),
 ];
-const children = [];
-const directories = [];
 const failures = [];
 
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
@@ -38,29 +47,54 @@ const check = (ok, message) => {
   console.log(`${ok ? "PASS" : "FAIL"}  ${message}`);
   if (!ok) failures.push(message);
 };
+const note = (message) => console.log(`NOTE  ${message}`);
 
-function start(port) {
-  const data = mkdtempSync(join(tmpdir(), "goassist-xp-"));
-  directories.push(data);
-  const child = spawn(process.execPath, [server], {
-    env: {
-      ...process.env,
-      PORT: String(port),
-      GOASSIST_DATA_DIR: data,
-      GOASSIST_EVENT_BUS: "redis",
-      GOASSIST_REDIS_URL: redisUrl,
-      GOASSIST_AUTO_ACK: "off",
-      GOASSIST_OPERATOR_TOKEN: "",
-      GOASSIST_DEVICE_SECRET: "",
-    },
-    stdio: "ignore",
-  });
-  children.push(child);
-  return child;
+/** Starts the two processes with `extraEnv`, runs `work`, then stops them. */
+async function withTwoProcesses(extraEnv, work) {
+  const children = [];
+  const directories = [];
+  try {
+    for (const port of ports) {
+      const data = mkdtempSync(join(tmpdir(), "goassist-xp-"));
+      directories.push(data);
+      children.push(
+        spawn(process.execPath, [server], {
+          env: {
+            ...process.env,
+            PORT: String(port),
+            GOASSIST_DATA_DIR: data,
+            GOASSIST_EVENT_BUS: "redis",
+            GOASSIST_REDIS_URL: redisUrl,
+            GOASSIST_AUTO_ACK: "off",
+            GOASSIST_OPERATOR_TOKEN: "",
+            GOASSIST_DEVICE_SECRET: "",
+            GOASSIST_RATE_LIMIT: "off",
+            // Part 1 must not inherit the shared database: each process keeps its own data.
+            GOASSIST_DATABASE_URL: "",
+            GOASSIST_LOCKS: "memory",
+            ...extraEnv,
+          },
+          stdio: "ignore",
+        }),
+      );
+    }
+    for (const port of ports) await waitForHealth(port);
+    await work(ports);
+  } finally {
+    for (const child of children) child.kill();
+    await sleep(500);
+    for (const directory of directories) {
+      try {
+        rmSync(directory, { recursive: true, force: true });
+      } catch {
+        // Windows may still hold the files; the temp directory is disposable.
+      }
+    }
+  }
 }
 
 async function waitForHealth(port) {
-  for (let i = 0; i < 100; i += 1) {
+  for (let i = 0; i < 120; i += 1) {
     try {
       if ((await fetch(`http://localhost:${port}/health`)).ok) return;
     } catch {
@@ -71,7 +105,6 @@ async function waitForHealth(port) {
   throw new Error(`backend on port ${port} did not start`);
 }
 
-/** Connects an operator socket and returns the messages it receives. */
 async function operator(port, scope = {}) {
   const socket = new WebSocket(`ws://localhost:${port}`);
   const messages = [];
@@ -90,22 +123,18 @@ async function operator(port, scope = {}) {
   return { socket, messages };
 }
 
-async function postStatus(port, busId) {
-  return fetch(
-    `http://localhost:${port}/api/operations/vehicles/${busId}/status`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        busService: "95",
-        stopCode: "18331",
-        movement: "POSITIONED_AT_STOP",
-        simulated: true,
-        observedAt: new Date().toISOString(),
-      }),
-    },
-  );
-}
+const postStatus = (port, busId) =>
+  fetch(`http://localhost:${port}/api/operations/vehicles/${busId}/status`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      busService: "95",
+      stopCode: "18331",
+      movement: "POSITIONED_AT_STOP",
+      simulated: true,
+      observedAt: new Date().toISOString(),
+    }),
+  });
 
 async function received(watcher, busId, milliseconds = 4000) {
   const deadline = Date.now() + milliseconds;
@@ -121,80 +150,177 @@ async function received(watcher, busId, milliseconds = 4000) {
   return false;
 }
 
-try {
-  const [portA, portB] = ports;
-  start(portA);
-  start(portB);
-  await waitForHealth(portA);
-  await waitForHealth(portB);
+const getJson = async (port, path) => {
+  const response = await fetch(`http://localhost:${port}${path}`);
+  return {
+    status: response.status,
+    body: response.ok ? await response.json() : undefined,
+  };
+};
 
-  const onA = await operator(portA);
-  const onB = await operator(portB);
-  const scopedOnA = await operator(portA, { buses: ["AV-XP-OTHER"] });
-  await sleep(300); // let each process join its Redis channels
+/** Twenty passengers ask at once, alternating between the two processes. */
+async function burst([portA, portB], stopCode) {
+  const passengers = 20;
+  await Promise.all(
+    Array.from({ length: passengers }, (_, n) =>
+      fetch(
+        `http://localhost:${n % 2 === 0 ? portA : portB}/api/operations/passenger-help`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            stopCode,
+            busId: "BUS-95-01",
+            busService: "95",
+            anonymousToken: `passenger-${stopCode}-${n}`,
+            idempotencyKey: `burst-${stopCode}-${n}`,
+          }),
+        },
+      ),
+    ),
+  );
+  const { body } = await getJson(
+    portA,
+    "/api/operations/cases?busId=BUS-95-01",
+  );
+  const cases = (body?.cases ?? []).filter(
+    (item) => item.stopCode === stopCode,
+  );
+  const intents = cases.reduce((sum, item) => sum + item.intents.length, 0);
+  return { passengers, cases: cases.length, intents };
+}
 
-  const first = await postStatus(portB, "AV-XP-01");
-  check(
-    first.status === 202,
-    `bus status accepted by process B (HTTP ${first.status})`,
-  );
-  check(
-    await received(onA, "AV-XP-01"),
-    "an operator on process A receives the event published by process B",
-  );
-  check(
-    await received(onB, "AV-XP-01"),
-    "an operator on process B receives its own process's event once it has been through Redis",
-  );
-
-  const second = await postStatus(portA, "AV-XP-02");
-  check(
-    second.status === 202,
-    `bus status accepted by process A (HTTP ${second.status})`,
-  );
-  check(
-    await received(onB, "AV-XP-02"),
-    "an operator on process B receives the event published by process A",
-  );
-
-  await sleep(300);
-  const onceOnA = onA.messages.filter(
-    (m) => m.type === "BUS_STATUS" && m.status?.busId === "AV-XP-01",
-  ).length;
-  check(
-    onceOnA === 1,
-    `the operator on A is told once, not twice (${onceOnA})`,
-  );
-  check(
-    !scopedOnA.messages.some((m) => m.type === "BUS_STATUS"),
-    "an operator scoped to another bus receives nothing",
-  );
-
-  const readOnA = await fetch(
-    `http://localhost:${portA}/api/operations/vehicles/AV-XP-01/status`,
-  );
+async function partOneEvents() {
   console.log(
-    `NOTE  the same bus read from process A returns HTTP ${readOnA.status}: pushes are shared, data is not (each process has its own SQLite files)`,
+    "\n-- Part 1: events shared through Redis (each process keeps its own data) --",
   );
-  for (const w of [onA, onB, scopedOnA]) w.socket.close();
+  await withTwoProcesses({}, async ([portA, portB]) => {
+    const onA = await operator(portA);
+    const onB = await operator(portB);
+    const scopedOnA = await operator(portA, { buses: ["AV-XP-OTHER"] });
+    await sleep(300);
+    const first = await postStatus(portB, "AV-XP-01");
+    check(
+      first.status === 202,
+      `bus status accepted by process B (HTTP ${first.status})`,
+    );
+    check(
+      await received(onA, "AV-XP-01"),
+      "an operator on process A receives the event published by process B",
+    );
+    check(
+      await received(onB, "AV-XP-01"),
+      "an operator on process B receives its own process's event through Redis",
+    );
+    const second = await postStatus(portA, "AV-XP-02");
+    check(
+      second.status === 202,
+      `bus status accepted by process A (HTTP ${second.status})`,
+    );
+    check(
+      await received(onB, "AV-XP-02"),
+      "an operator on process B receives the event published by process A",
+    );
+    await sleep(300);
+    const once = onA.messages.filter(
+      (m) => m.type === "BUS_STATUS" && m.status?.busId === "AV-XP-01",
+    ).length;
+    check(once === 1, `the operator on A is told once, not twice (${once})`);
+    check(
+      !scopedOnA.messages.some((m) => m.type === "BUS_STATUS"),
+      "an operator scoped to another bus receives nothing",
+    );
+    const read = await getJson(
+      portA,
+      "/api/operations/vehicles/AV-XP-01/status",
+    );
+    note(
+      `the same bus read from process A returns HTTP ${read.status}: with separate SQLite files pushes are shared, data is not`,
+    );
+    for (const w of [onA, onB, scopedOnA]) w.socket.close();
+  });
+}
+
+async function partTwoSharedData() {
+  console.log("\n-- Part 2: data and locks shared through Postgres --");
+  const { Pool } = require("pg");
+  const schema = `xp_${crypto.randomBytes(5).toString("hex")}`;
+  const admin = new Pool({ connectionString: databaseUrl, max: 1 });
+  await admin.query(`CREATE SCHEMA ${schema}`);
+  const joiner = databaseUrl.includes("?") ? "&" : "?";
+  const url = `${databaseUrl}${joiner}options=${encodeURIComponent(`-c search_path=${schema}`)}`;
+  try {
+    await withTwoProcesses(
+      { GOASSIST_DATABASE_URL: url, GOASSIST_LOCKS: "database" },
+      async (both) => {
+        const [portA, portB] = both;
+        const posted = await postStatus(portB, "AV-XP-SHARED");
+        check(
+          posted.status === 202,
+          `bus status accepted by process B (HTTP ${posted.status})`,
+        );
+        const read = await getJson(
+          portA,
+          "/api/operations/vehicles/AV-XP-SHARED/status",
+        );
+        check(
+          read.status === 200 && read.body?.busId === "AV-XP-SHARED",
+          "the bus status posted to B is readable from A (shared data)",
+        );
+        await sleep(150);
+        const audit = await getJson(
+          portA,
+          "/api/operations/audit?busId=AV-XP-SHARED&limit=10",
+        );
+        check(
+          audit.status === 200 &&
+            audit.body.events.some((e) => e.eventType === "BUS_STATUS_CHANGED"),
+          "the audit event written by B is visible from A",
+        );
+        const result = await burst(both, "18331");
+        check(
+          result.cases === 1 && result.intents === result.passengers,
+          `${result.passengers} passengers asking at once through both processes end on one case with nobody lost (${result.cases} case, ${result.intents} intents)`,
+        );
+      },
+    );
+    console.log(
+      "\n-- Control: the same burst with each process holding only its own lock --",
+    );
+    await withTwoProcesses(
+      { GOASSIST_DATABASE_URL: url, GOASSIST_LOCKS: "memory" },
+      async (both) => {
+        const result = await burst(both, "18332");
+        note(
+          result.cases === 1 && result.intents === result.passengers
+            ? `no race showed this time (${result.cases} case, ${result.intents} intents); it can pass by luck`
+            : `the race shows without the shared lock: ${result.cases} cases, ${result.intents} of ${result.passengers} intents`,
+        );
+      },
+    );
+  } finally {
+    await admin
+      .query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`)
+      .catch(() => undefined);
+    await admin.end().catch(() => undefined);
+  }
+}
+
+try {
+  await partOneEvents();
+  if (databaseUrl) await partTwoSharedData();
+  else
+    note(
+      "GOASSIST_DATABASE_URL is not set, so part 2 (shared data and locks) was not run",
+    );
 } catch (error) {
   failures.push(String(error));
   console.log(`FAIL  ${error}`);
-} finally {
-  for (const child of children) child.kill();
-  await sleep(400);
-  for (const directory of directories) {
-    try {
-      rmSync(directory, { recursive: true, force: true });
-    } catch {
-      // Windows may still hold the database files; the temp directory is disposable.
-    }
-  }
 }
 
 console.log(
   failures.length === 0
-    ? "\nAll checks passed against a real Redis."
+    ? "\nAll checks passed."
     : `\n${failures.length} check(s) failed.`,
 );
 process.exit(failures.length === 0 ? 0 : 1);

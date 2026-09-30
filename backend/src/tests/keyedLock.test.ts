@@ -277,7 +277,7 @@ test("the lock is chosen from the environment, and a wrong choice is refused", a
   assert.ok(lockFromEnvironment({}, undefined) instanceof InProcessKeyedLock);
   assert.throws(
     () => lockFromEnvironment({ GOASSIST_LOCKS: "database" }, undefined),
-    /needs a database/,
+    /needs a shared database/,
   );
   assert.throws(
     () => lockFromEnvironment({ GOASSIST_LOCKS: "zookeeper" }, undefined),
@@ -292,9 +292,90 @@ test("the lock is chosen from the environment, and a wrong choice is refused", a
       GOASSIST_LOCK_TTL_MS: "2000",
       GOASSIST_LOCK_TIMEOUT_MS: "nonsense",
     },
-    database,
+    new SqliteLeaseStore(database),
   );
   assert.ok(lock instanceof DistributedKeyedLock);
   assert.equal(await lock.run("k", async () => "ok"), "ok");
   database.close();
 });
+
+// ---- the same lock behaviour on Postgres (runs only when GOASSIST_TEST_DATABASE_URL is set) ----
+
+import { PostgresLeaseStore } from "../concurrency/postgresLeaseStore";
+import {
+  makeTestPool,
+  postgresSkip,
+  registerPostgresCleanup,
+} from "./helpers/postgres";
+
+registerPostgresCleanup();
+
+test(
+  "postgres lease: held blocks others, expires, and only its owner can renew or release",
+  { skip: postgresSkip },
+  async () => {
+    const leases = new PostgresLeaseStore(makeTestPool());
+    assert.equal(await leases.tryAcquire("k", "a", 150), true);
+    assert.equal(await leases.tryAcquire("k", "b", 150), false);
+    assert.equal(await leases.renew("k", "b", 150), false);
+    await leases.release("k", "b");
+    assert.equal(
+      await leases.tryAcquire("k", "c", 150),
+      false,
+      "b must not free a's lease",
+    );
+    await sleep(200);
+    assert.equal(
+      await leases.tryAcquire("k", "b", 150),
+      true,
+      "an expired lease can be taken",
+    );
+    assert.equal(
+      await leases.renew("k", "a", 150),
+      false,
+      "the old owner lost it",
+    );
+    assert.equal(await leases.renew("k", "b", 150), true);
+    await leases.release("k", "b");
+    assert.equal(await leases.tryAcquire("k", "c", 150), true);
+  },
+);
+
+test(
+  "postgres locks: two connection pools (two processes) exclude each other, and the control loses updates",
+  { skip: postgresSkip },
+  async () => {
+    const pool = makeTestPool();
+    const other = pool; // the same schema; two lock objects with their own local queues stand in for two processes
+    await pool.query(
+      "CREATE TABLE counter (id INTEGER PRIMARY KEY, value INTEGER)",
+    );
+    await pool.query("INSERT INTO counter VALUES (1, 0)");
+    const lockA = new DistributedKeyedLock(new PostgresLeaseStore(pool));
+    const lockB = new DistributedKeyedLock(new PostgresLeaseStore(other));
+    const read = async () =>
+      Number(
+        (
+          (await pool.query("SELECT value FROM counter WHERE id = 1"))
+            .rows[0] as { value: number }
+        ).value,
+      );
+    const bump = async () => {
+      const value = await read();
+      await tick();
+      await pool.query("UPDATE counter SET value = $1 WHERE id = 1", [
+        value + 1,
+      ]);
+    };
+    const rounds = 20;
+    await Promise.all([
+      ...Array.from({ length: rounds }, () => lockA.run("k", bump)),
+      ...Array.from({ length: rounds }, () => lockB.run("k", bump)),
+    ]);
+    assert.equal(await read(), rounds * 2);
+
+    await pool.query("UPDATE counter SET value = 0 WHERE id = 1");
+    await Promise.all(Array.from({ length: rounds * 2 }, () => bump()));
+    assert.ok((await read()) < rounds * 2, "without the lock updates are lost");
+  },
+);

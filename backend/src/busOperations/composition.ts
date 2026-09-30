@@ -7,7 +7,17 @@ import { OperatorHaltService, type StoredHalt } from "./operatorHalt";
 import { AuditBatcher } from "./auditBatcher";
 import { getAuditLog } from "../services/operationsData";
 import type { OperationsAuditEvent } from "../services/auditLog";
+import { openPostgres, type PgPool } from "../storage/postgres";
+import { PostgresDocumentTable } from "../storage/postgresTables";
 import { openSqliteDatabase, type SqliteDatabase } from "../storage/sqlite";
+import {
+  DocumentBayRepository,
+  DocumentBusRecordRepository,
+  DocumentBusStatusRepository,
+  bayTableSpec,
+  busRecordTableSpec,
+  busStatusTableSpec,
+} from "./documentRepositories";
 import {
   BusOperationsService,
   type AuditEventInput,
@@ -30,6 +40,7 @@ import {
 import { bridgeMovementToVehicleEvents } from "./movementBridge";
 import type {
   BayRepository,
+  BusRecord,
   BusRecordRepository,
   BusStatusRepository,
 } from "./ports";
@@ -38,11 +49,13 @@ import {
   SqliteBusStatusRepository,
 } from "./sqliteRepositories";
 
-export type StorageDriver = "memory" | "sqlite";
+export type StorageDriver = "memory" | "sqlite" | "postgres";
 
 export interface BusOperationsOptions {
   driver: StorageDriver;
   dataDirectory?: string;
+  /** Use this Postgres pool (the caller keeps ownership); otherwise `GOASSIST_DATABASE_URL`. */
+  postgres?: PgPool;
   publish?: BusOperationsDeps["publish"];
   audit?: BusOperationsDeps["audit"];
   now?: () => number;
@@ -90,6 +103,30 @@ export function createBusOperations(
   let bays: BayRepository | undefined;
   let database: SqliteDatabase | undefined;
   let driver = options.driver;
+  let pgPool: PgPool | undefined;
+  let ownsPool = false;
+  let pgRecord:
+    | (<T extends BusRecord>(table: string) => BusRecordRepository<T>)
+    | undefined;
+
+  if (driver === "postgres") {
+    const url = process.env.GOASSIST_DATABASE_URL?.trim();
+    if (!options.postgres && !url)
+      throw new Error("The postgres driver needs GOASSIST_DATABASE_URL");
+    pgPool = options.postgres ?? openPostgres(url as string);
+    ownsPool = !options.postgres;
+    const pool = pgPool;
+    repository = new DocumentBusStatusRepository(
+      new PostgresDocumentTable(pool, busStatusTableSpec),
+    );
+    bays = new DocumentBayRepository(
+      new PostgresDocumentTable(pool, bayTableSpec),
+    );
+    pgRecord = <T extends BusRecord>(table: string) =>
+      new DocumentBusRecordRepository<T>(
+        new PostgresDocumentTable<T>(pool, busRecordTableSpec<T>(table)),
+      );
+  }
 
   if (driver === "sqlite") {
     const directory =
@@ -126,12 +163,14 @@ export function createBusOperations(
   const repositories = Object.fromEntries(
     REPORT_KINDS.map((kind) => [
       kind,
-      database
-        ? new SqliteBusRecordRepository<AnyReport>(
-            database,
-            REPORT_TABLES[kind],
-          )
-        : new MemoryBusRecordRepository<AnyReport>(),
+      pgRecord
+        ? pgRecord<AnyReport>(REPORT_TABLES[kind])
+        : database
+          ? new SqliteBusRecordRepository<AnyReport>(
+              database,
+              REPORT_TABLES[kind],
+            )
+          : new MemoryBusRecordRepository<AnyReport>(),
     ]),
   ) as unknown as Record<ReportKind, BusRecordRepository<AnyReport>>;
   const reports = new BusReportsService({
@@ -141,9 +180,11 @@ export function createBusOperations(
     now: options.now ?? Date.now,
   });
   const halts = new OperatorHaltService({
-    repository: (database
-      ? new SqliteBusRecordRepository<StoredHalt>(database, "operator_halt")
-      : new MemoryBusRecordRepository<StoredHalt>()) as BusRecordRepository<StoredHalt>,
+    repository: (pgRecord
+      ? pgRecord<StoredHalt>("operator_halt")
+      : database
+        ? new SqliteBusRecordRepository<StoredHalt>(database, "operator_halt")
+        : new MemoryBusRecordRepository<StoredHalt>()) as BusRecordRepository<StoredHalt>,
     publish,
     audit,
     now: options.now ?? Date.now,
@@ -157,6 +198,7 @@ export function createBusOperations(
     close: () => {
       batcher.flush();
       database?.close();
+      if (ownsPool) void pgPool?.end();
     },
   };
 }
@@ -171,12 +213,15 @@ let current: BusOperations | undefined;
 
 function defaultOptions(): BusOperationsOptions {
   const forced = process.env.GOASSIST_BUS_OPS_DRIVER;
+  const hasDatabaseUrl = Boolean(process.env.GOASSIST_DATABASE_URL?.trim());
   const driver: StorageDriver =
-    forced === "sqlite" || forced === "memory"
+    forced === "sqlite" || forced === "memory" || forced === "postgres"
       ? forced
       : process.env.NODE_TEST_CONTEXT
         ? "memory"
-        : "sqlite";
+        : hasDatabaseUrl
+          ? "postgres"
+          : "sqlite";
   return { driver, dataDirectory: process.env.GOASSIST_DATA_DIR };
 }
 

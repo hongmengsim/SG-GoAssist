@@ -5,6 +5,11 @@
  *   node scripts/load-test.mjs                      default: 100 status messages/s for 10 s
  *   node scripts/load-test.mjs --rate 1000 --seconds 20 --buses 2000
  *   node scripts/load-test.mjs --overload           browsing flood must not stop acknowledgements
+ *   node scripts/load-test.mjs --processes 2        two backend processes, requests alternate between them
+ *                                                   (set GOASSIST_DATABASE_URL, GOASSIST_REDIS_URL,
+ *                                                   GOASSIST_EVENT_BUS=redis and GOASSIST_LOCKS=database
+ *                                                   to share data, events and locks; without them each
+ *                                                   process keeps its own SQLite files)
  *
  * It starts the built backend on a free port with its real SQLite storage, then drives it open
  * loop (requests are issued on schedule whether or not earlier ones finished, as real buses do).
@@ -32,6 +37,7 @@ const CHANGE_RATIO = flag("change-ratio", 0.05);
 const P95_LIMIT = flag("p95-ms", 100);
 const MIN_SUCCESS = flag("min-success", 0.99);
 const OVERLOAD = args.includes("--overload");
+const PROCESSES = Math.max(1, Math.trunc(flag("processes", 1)));
 // By default every bus has already reported once, as in a running system. The one-time storm of first
 // reports (each is a change, so each is audited) is a different question: pass --cold to include it.
 const COLD = args.includes("--cold");
@@ -142,6 +148,7 @@ async function drive(
     state.set(busId, movement);
     pending += 1;
     const t0 = performance.now();
+    const target = Array.isArray(base) ? base[(sent - 1) % base.length] : base;
     try {
       const payload = JSON.stringify({
         busService: "95",
@@ -150,7 +157,7 @@ async function drive(
         observedAt: new Date().toISOString(),
       });
       const status = await request(
-        base,
+        target,
         "POST",
         `/api/operations/vehicles/${busId}/status`,
         {
@@ -244,7 +251,7 @@ async function overload(backend) {
       const batch = await Promise.all(
         Array.from({ length: 50 }, () =>
           request(
-            backend.base,
+            backend.base[0],
             "GET",
             "/api/bus-stops/nearby?lat=1.3&lng=103.8",
           ).catch(() => "error"),
@@ -273,11 +280,17 @@ async function overload(backend) {
   return shed && heard;
 }
 
-const backend = await startBackend();
+const started = [];
+for (let i = 0; i < PROCESSES; i += 1) started.push(await startBackend());
+const backend = { base: started.map((b) => b.base), started };
+if (PROCESSES > 1)
+  console.log(
+    `Running ${PROCESSES} backend processes; requests alternate between them`,
+  );
 let pass = false;
 try {
   pass = OVERLOAD ? await overload(backend) : await sustained(backend);
 } finally {
-  await stopBackend(backend);
+  for (const one of started) await stopBackend(one);
 }
 process.exit(pass ? 0 : 1);
