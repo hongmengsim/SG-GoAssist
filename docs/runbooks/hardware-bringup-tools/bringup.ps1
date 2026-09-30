@@ -60,7 +60,7 @@ $secretCheck
 npm.cmd start --workspace '@buspass/backend'
 "@ },
     @{ Title = 'CONSOLE SERVER (this PC)'; Script = "npm.cmd run console" },
-    @{ Title = 'TUNNEL to Pi'; Script = "Write-Host 'Tunnel: status page on 8770, camera live view on 8780 (only with the agent stopped).'; Write-Host 'After you type the Pi password NOTHING is printed and the cursor just sits here. That is normal (ssh -N): it means the tunnel is up.'; Write-Host 'To confirm, in the SCRATCH tab run: Get-NetTCPConnection -LocalPort 8770,8780 -State Listen. Ctrl+C here closes the tunnel.'; ssh -N -L 8770:127.0.0.1:8770 -L 8780:127.0.0.1:8780 $pi" },
+    @{ Title = 'TUNNEL to Pi'; Script = "Write-Host 'Tunnel to the Pi: status page on 8770, camera live view on 8780 (only with the agent stopped).'; Write-Host 'Type the Pi password when asked. Once you are in, this tab prints TUNNEL IS UP and then stays quiet. Ctrl+C closes it.'; ssh -L 8770:127.0.0.1:8770 -L 8780:127.0.0.1:8780 $pi 'echo TUNNEL IS UP - leave this tab open; sleep 2147483647'" },
     @{ Title = 'SCRATCH (this PC)'; Script = @"
 $secretCheck
 Write-Host 'SCRATCH: one-off commands only (scp, git).'
