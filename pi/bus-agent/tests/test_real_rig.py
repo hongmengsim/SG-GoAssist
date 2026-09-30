@@ -8,6 +8,7 @@ from beam_reading import FakeLineSource
 from bus_agent.backend import FakeBackend
 from bus_agent.config import parse_config
 from bus_agent.console import apply_command
+from bus_agent.ramp import DEPLOYING, RampSim
 from bus_agent.real_mode import RealSensors
 from bus_agent.runner import Runner, build_real_rig
 
@@ -30,13 +31,55 @@ class FakeFrame:
         return 40.0
 
 
-def rig(runner_output=None):
+def rig(runner_output=None, lines=None):
     clock = Clock()
     settings = parse_config({"busId": "AV-095-01", "busService": "95", "backendUrl": "http://x"})
-    lines = FakeLineSource()
+    lines = lines if lines is not None else FakeLineSource()
     sensors = RealSensors(lines, lambda: FakeFrame(), lambda frame: runner_output or [])
     built = build_real_rig(settings, sensors, FakeBackend(), clock=clock, start_worker=False)
     return built, lines, clock
+
+
+class SendingLines(FakeLineSource):
+    """A line source that can also send the two laser commands, as the real serial source does."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.sent: list = []
+
+    def send(self, command: str) -> None:
+        self.sent.append(command)
+
+
+class RealRigLaserTests(unittest.TestCase):
+    def test_a_source_that_can_send_gets_marker_lasers_wired_to_the_ramp(self) -> None:
+        built, lines, clock = rig(lines=SendingLines())
+        self.assertIsNotNone(built.lasers)
+        built.agent.ramp = RampSim(DEPLOYING)
+        clock.now += 0.2
+        built.agent.tick()
+        self.assertIn("LASERS ON", lines.sent)
+
+    def test_they_stay_off_while_the_ramp_is_stowed(self) -> None:
+        built, lines, clock = rig(lines=SendingLines())
+        for _ in range(10):
+            clock.now += 0.2
+            built.agent.tick()
+        self.assertEqual([], lines.sent)
+
+    def test_a_source_that_cannot_send_gets_no_lasers_and_still_runs(self) -> None:
+        built, lines, clock = rig()
+        self.assertIsNone(built.lasers)
+        clock.now += 0.2
+        built.agent.tick()
+
+    def test_closing_the_lasers_turns_them_off(self) -> None:
+        built, lines, clock = rig(lines=SendingLines())
+        built.agent.ramp = RampSim(DEPLOYING)
+        clock.now += 0.2
+        built.agent.tick()
+        built.lasers.close()
+        self.assertEqual("LASERS OFF", lines.sent[-1])
 
 
 class RealRigTests(unittest.TestCase):

@@ -209,6 +209,11 @@ class SimulatedSourceTests(unittest.TestCase):
 class FakeSerial:
     def __init__(self, chunks) -> None:
         self.chunks = list(chunks)
+        self.written: list = []
+
+    def write(self, data: bytes) -> int:
+        self.written.append(data)
+        return len(data)
 
     @property
     def in_waiting(self) -> int:
@@ -216,6 +221,47 @@ class FakeSerial:
 
     def read(self, size: int = 1) -> bytes:
         return self.chunks.pop(0) if self.chunks else b""
+
+
+class LaserLinesTests(unittest.TestCase):
+    """The ESP32 answers laser commands with its own lines; they must not disturb the beam."""
+
+    def test_laser_confirmations_and_the_timeout_notice_do_not_blank_a_clear_beam(self) -> None:
+        for line in ("LASERS,1", "LASERS,0", "LASER_TIMEOUT: heartbeat lost; outputs OFF", "DEMO,APAS_3_LASER_V1"):
+            with self.subTest(line=line):
+                reader, source, clock = calibrated_reader()
+                source.push("11,VL53L0X,500,VALID")
+                self.assertEqual("BEAM_CLEAR", reader.poll().state)
+                source.push(line)
+                self.assertEqual("BEAM_CLEAR", reader.poll().state)
+
+
+class SerialSendTests(unittest.TestCase):
+    """The reader is read-only except for the two commands that switch the marker lasers."""
+
+    def test_the_two_laser_commands_are_written_with_a_newline(self) -> None:
+        port = FakeSerial([])
+        source = SerialLineSource(port)
+        source.send("LASERS ON")
+        source.send("LASERS OFF")
+        self.assertEqual([b"LASERS ON\n", b"LASERS OFF\n"], port.written)
+
+    def test_anything_else_is_refused_and_nothing_is_written(self) -> None:
+        port = FakeSerial([])
+        source = SerialLineSource(port)
+        for command in ("KEEPALIVE", "STATUS", "lasers on", "LASERS ON\nLASERS OFF", "", "RESET"):
+            with self.subTest(command=command):
+                with self.assertRaises(ValueError):
+                    source.send(command)
+        self.assertEqual([], port.written)
+
+    def test_a_write_error_reaches_the_caller(self) -> None:
+        class Dead(FakeSerial):
+            def write(self, data: bytes) -> int:
+                raise OSError(5, "Input/output error")
+
+        with self.assertRaises(OSError):
+            SerialLineSource(Dead([])).send("LASERS ON")
 
 
 class SerialLineSourceTests(unittest.TestCase):

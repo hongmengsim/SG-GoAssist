@@ -21,6 +21,7 @@ from safety_gate.models import BACKEND_LINK_LOST, CAMERA_DEGRADED, DEPLOYMENT_TI
 from . import ramp as ramp_sim
 from .adapters import beam_input, camera_input
 from .backend import Backend, BackendError, BackendRefused, BackendTimeout
+from .lasers import LaserMarker
 from .posting import DEFAULT_HEARTBEAT_SECONDS, ChangeGate
 
 log = logging.getLogger(__name__)
@@ -88,6 +89,7 @@ class BusAgent:
         config: AgentConfig = AgentConfig(),
         policy: Policy = DEFAULT_POLICY,
         gate_config: GateConfig = GateConfig(),
+        lasers: Optional[LaserMarker] = None,
     ) -> None:
         self.bus_id = bus_id
         self.bus_service = bus_service
@@ -100,6 +102,7 @@ class BusAgent:
         self._config = config
         self._policy = policy
         self._gate_config = gate_config
+        self._lasers = lasers
         self._gate = ChangeGate(config.heartbeat_seconds, clock)
 
         self.movement = TRAVELLING
@@ -197,6 +200,17 @@ class BusAgent:
         except Exception:  # noqa: BLE001 - a fail-stop agent cannot report its own halt
             log.exception("The agent tick failed; halting the ramp")
             self.ramp = ramp_sim.step(self.ramp, "HALT", (CAMERA_DEGRADED,), 0.0, self._config.deploy_seconds)
+        self._mark_zone()
+
+    def _mark_zone(self) -> None:
+        """Keeps the marker lasers in step with the ramp. It runs on every tick, even after a failed one,
+        so a halted ramp that may be partly out keeps its zone marked."""
+        if self._lasers is None:
+            return
+        try:
+            self._lasers.update(self.ramp.state)
+        except Exception:  # noqa: BLE001 - the lasers must never stop the safety loop
+            log.exception("The marker lasers failed")
 
     def _tick(self) -> None:
         now = self._clock()
