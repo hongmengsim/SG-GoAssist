@@ -190,15 +190,33 @@ class Runner:
         self._events = events
         self._commands = commands if commands is not None else queue.Queue()
         self._clock = clock
+        self._warmed_up = False
+        self._calibrated = False
+        self._calibration_warned = False
 
     def step(self) -> None:
         """Apply pushed events and console lines, then run one agent tick."""
         self._drain(self._events, self._rig.agent.handle_event)
         self._drain(self._commands, lambda line: log.info("%s", apply_command(self._rig, line)))
         self._rig.agent.tick()
+        if self._auto_calibrate and self._warmed_up and not self._calibrated:
+            self._try_calibrate()
         if self._board is not None:
             agent = self._rig.agent
             self._board.publish(snapshot(agent, agent.last_beam, self._controls))
+
+    def _try_calibrate(self) -> None:
+        """Simulated sensors only: the path is empty by construction, so a reference that was refused (a
+        slow start leaves the readings too spread out or too old) is simply tried again on the next tick."""
+        try:
+            reference = self._rig.beam.calibrate()
+        except ValueError as error:
+            if not self._calibration_warned:
+                log.warning("Beam calibration not ready yet (%s); trying again on the next ticks", error)
+                self._calibration_warned = True
+            return
+        self._calibrated = True
+        log.info("Simulated beam calibrated at %s mm", reference)
 
     @staticmethod
     def _drain(source: queue.Queue, handle: Callable) -> None:
@@ -223,11 +241,8 @@ class Runner:
         if not self._auto_calibrate:
             log.info("The beam is NOT calibrated: run the calibrate command with the path empty")
             return
-        try:
-            reference = self._rig.beam.calibrate()
-            log.info("Simulated beam calibrated at %s mm", reference)
-        except ValueError as error:
-            log.error("Beam calibration failed: %s", error)
+        self._warmed_up = True
+        self._try_calibrate()  # if it is refused, step() keeps trying
 
     def run(self, stop: threading.Event) -> None:
         while not stop.is_set():

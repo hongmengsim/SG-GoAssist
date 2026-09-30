@@ -2,6 +2,7 @@
 
 import queue
 import unittest
+from unittest import mock
 
 from bus_agent.backend import FakeBackend
 from bus_agent.console import apply_command
@@ -129,6 +130,57 @@ class RunnerTests(unittest.TestCase):
         clock.now += 0.2
         runner.step()
         self.assertEqual("POSITIONED_AT_STOP", built.agent.movement)
+
+
+class SimulatedCalibrationTests(unittest.TestCase):
+    """A simulated bus takes its own reference. A slow start (a loaded machine) must not leave it uncalibrated forever."""
+
+    def slow_start_up(self, runner, clock, seconds_per_tick):
+        def slow_sleep(_seconds):
+            clock.now += seconds_per_tick
+
+        with mock.patch("bus_agent.runner.time.sleep", slow_sleep):
+            runner.start_up(FakeBackend())
+
+    def test_a_slow_start_up_that_misses_the_calibration_window_is_retried_until_it_takes(self) -> None:
+        built, backend, clock = rig()
+        runner = Runner(built, queue.Queue(), clock=clock)
+        self.slow_start_up(runner, clock, 0.6)  # ten ticks spread over 6 s: the reference is refused at first
+        self.assertEqual("UNCALIBRATED", built.agent.last_beam.state)
+        for _ in range(30):
+            clock.now += 0.2
+            runner.step()
+        self.assertEqual("BEAM_CLEAR", built.agent.last_beam.state)
+        self.assertNotIn("TOF_NOT_CALIBRATED", built.agent.last_decision.reasons)
+
+    def test_a_normal_start_up_calibrates_once_and_is_not_recalibrated_every_tick(self) -> None:
+        built, backend, clock = rig()
+        runner = Runner(built, queue.Queue(), clock=clock)
+        with mock.patch.object(built.beam, "calibrate", wraps=built.beam.calibrate) as calibrate:
+            self.slow_start_up(runner, clock, 0.2)
+            for _ in range(30):
+                clock.now += 0.2
+                runner.step()
+        self.assertEqual(1, calibrate.call_count)
+        self.assertEqual("BEAM_CLEAR", built.agent.last_beam.state)
+
+    def test_without_auto_calibration_the_beam_stays_uncalibrated_until_someone_calibrates_it(self) -> None:
+        built, backend, clock = rig()
+        runner = Runner(built, queue.Queue(), clock=clock, auto_calibrate=False)
+        self.slow_start_up(runner, clock, 0.2)
+        for _ in range(30):
+            clock.now += 0.2
+            runner.step()
+        self.assertEqual("UNCALIBRATED", built.agent.last_beam.state)
+        self.assertIn("TOF_NOT_CALIBRATED", built.agent.last_decision.reasons)
+
+    def test_steps_before_start_up_never_calibrate(self) -> None:
+        built, backend, clock = rig()
+        runner = Runner(built, queue.Queue(), clock=clock)
+        for _ in range(30):
+            clock.now += 0.2
+            runner.step()
+        self.assertEqual("UNCALIBRATED", built.agent.last_beam.state)
 
 
 if __name__ == "__main__":
