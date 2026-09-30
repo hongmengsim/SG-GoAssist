@@ -65,7 +65,7 @@ class ParseTests(unittest.TestCase):
         for bad in (
             {}, {"busId": "x"}, valid(busId=""), valid(busId=5), valid(busService=""),
             valid(backendUrl="ftp://x"), valid(backendUrl=""), valid(heartbeatSeconds="fast"),
-            valid(heartbeatSeconds=0), valid(deploySeconds=-1), valid(maxCameraAgeSeconds=0),
+            valid(heartbeatSeconds=0), valid(deploySeconds=-1), valid(maxCameraAgeSeconds=0), valid(maxCameraAgeSeconds=5.5),
             valid(minDetectionConfidence=1.5), valid(cameraIndex=-1), valid(cameraIndex="0"),
             valid(serialPort=""), valid(modelPath=5),
         ):

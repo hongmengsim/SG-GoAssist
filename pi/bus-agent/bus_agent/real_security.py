@@ -26,3 +26,13 @@ def real_mode_findings(backend_url: str, secret: Optional[str]) -> tuple[list[st
             f"the backend at {parts.hostname} is reached over plain http; use https outside a trusted bench network"
         )
     return errors, warnings
+
+
+def timeout_warnings(settings: object) -> list[str]:
+    """The two safety timeouts default to off until the team agrees values; say so at start-up."""
+    warnings = []
+    if getattr(settings, "deployment_timeout_seconds", None) is None:
+        warnings.append("deploymentTimeoutSeconds is not set: a stuck deployment will not raise help-required")
+    if getattr(settings, "link_loss_halt_seconds", None) is None:
+        warnings.append("linkLossHaltSeconds is not set: a lost backend link will not halt the ramp")
+    return warnings

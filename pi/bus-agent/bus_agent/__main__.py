@@ -24,7 +24,7 @@ from .console import HELP
 from .event_listener import EventListener
 from .http_backend import HttpBackend
 from .recording import ReplayError
-from .real_security import real_mode_findings
+from .real_security import real_mode_findings, timeout_warnings
 from .real_mode import PreflightFailed, build_real_sensors, default_factories
 from .runner import Runner, build_real_rig, build_replay_rig, build_simulated_rig
 from .status_page import StatusBoard, StatusServer
@@ -89,7 +89,7 @@ def main(argv: "list[str] | None" = None) -> int:
     secret = os.environ.get("DEVICE_SHARED_SECRET") or None
     if args.real:
         errors, warnings = real_mode_findings(args.backend, secret)
-        for warning in warnings:
+        for warning in [*warnings, *timeout_warnings(settings)]:
             log.warning("%s", warning)
         if errors:
             print("Refusing to start with real sensors:", file=sys.stderr)

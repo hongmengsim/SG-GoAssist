@@ -117,7 +117,7 @@ def parse_config(data: object) -> AgentSettings:
         ramp_polygon=_polygon(data["rampPolygon"]) if "rampPolygon" in data else DEFAULT_POLYGON,
         heartbeat_seconds=_number(data, "heartbeatSeconds", 5.0, 0, 3600, low_open=True),
         deploy_seconds=_number(data, "deploySeconds", 4.0, 0, 600, low_open=True),
-        max_camera_age_seconds=_number(data, "maxCameraAgeSeconds", 1.0, 0, 60, low_open=True),
+        max_camera_age_seconds=_number(data, "maxCameraAgeSeconds", 1.0, 0, 5, low_open=True),
         min_detection_confidence=_number(data, "minDetectionConfidence", 0.25, 0.0, 1.0),
         deployment_timeout_seconds=(
             _number(data, "deploymentTimeoutSeconds", 0, 0, 3600, low_open=True)

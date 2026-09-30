@@ -7,7 +7,8 @@ import unittest
 from unittest import mock
 
 from bus_agent.__main__ import _read_commands
-from bus_agent.real_security import real_mode_findings
+from bus_agent.config import parse_config
+from bus_agent.real_security import real_mode_findings, timeout_warnings
 
 
 class StdinTests(unittest.TestCase):
@@ -38,6 +39,18 @@ class RealModeSecurityTests(unittest.TestCase):
 
     def test_plain_http_to_this_machine_is_fine(self) -> None:
         self.assertEqual(([], []), real_mode_findings("http://localhost:3000", "s"))
+
+
+class TimeoutWarningTests(unittest.TestCase):
+    BASE = {"busId": "AV-1", "busService": "95", "backendUrl": "http://localhost:3000"}
+
+    def test_unset_safety_timeouts_are_called_out_at_start_up(self) -> None:
+        warnings = timeout_warnings(parse_config(dict(self.BASE)))
+        self.assertEqual(2, len(warnings))
+
+    def test_set_timeouts_need_no_warning(self) -> None:
+        settings = parse_config({**self.BASE, "deploymentTimeoutSeconds": 30, "linkLossHaltSeconds": 10})
+        self.assertEqual([], timeout_warnings(settings))
 
 
 if __name__ == "__main__":
