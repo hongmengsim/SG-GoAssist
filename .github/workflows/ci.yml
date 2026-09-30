@@ -113,10 +113,12 @@ jobs:
         run: npm run check:multi-process
         env:
           GOASSIST_DATABASE_URL: postgres://goassist:ci-only-password@localhost:5432/goassist
+          GOASSIST_ALLOW_INSECURE: "true"
       - name: the whole end-to-end scenario across two processes
         run: npm run e2e:scenario:two
         env:
           GOASSIST_DATABASE_URL: postgres://goassist:ci-only-password@localhost:5432/goassist
+          GOASSIST_ALLOW_INSECURE: "true"
 
   end-to-end:
     runs-on: ubuntu-latest

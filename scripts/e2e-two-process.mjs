@@ -45,6 +45,7 @@ const code = await new Promise((done) => {
       env: {
         ...process.env,
         GOASSIST_DATABASE_URL: scoped,
+        GOASSIST_ALLOW_INSECURE: "true",
         GOASSIST_EVENT_BUS: "redis",
         GOASSIST_REDIS_URL: redisUrl,
         GOASSIST_LOCKS: "database",
