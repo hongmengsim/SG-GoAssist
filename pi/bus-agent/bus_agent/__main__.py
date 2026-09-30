@@ -19,7 +19,7 @@ import threading
 from .async_backend import AsyncBackend
 from pathlib import Path
 
-from .config import ConfigError, load_config
+from .config import ConfigError, choose_backend_url, load_config
 from .console import HELP
 from .event_listener import EventListener
 from .http_backend import HttpBackend
@@ -30,6 +30,8 @@ from .runner import Runner, build_real_rig, build_replay_rig, build_simulated_ri
 from .status_page import StatusBoard, StatusServer
 
 log = logging.getLogger("bus_agent")
+
+DEFAULT_BACKEND_URL = "http://localhost:3000"
 
 
 def _read_commands(commands: "queue.Queue[str]", stop: threading.Event) -> None:
@@ -54,7 +56,7 @@ def main(argv: "list[str] | None" = None) -> int:
     parser.add_argument("--replay", help="feed the agent from a recording directory instead of live sensors (reports say not live)")
     parser.add_argument("--bus-id")
     parser.add_argument("--bus-service", default="95")
-    parser.add_argument("--backend", default="http://localhost:3000")
+    parser.add_argument("--backend", help="backend address; with --real it wins over backendUrl in the config file, so the address can follow the network")
     parser.add_argument("--no-events", action="store_true", help="poll only; no WebSocket push")
     parser.add_argument("--status-port", type=int, default=0, help="serve the local status page on this port (0 = off)")
     parser.add_argument("--status-listen", default="127.0.0.1", help="address for the status page; 0.0.0.0 exposes it on the LAN")
@@ -72,6 +74,7 @@ def main(argv: "list[str] | None" = None) -> int:
             parser.error("--real needs --config")
         try:
             settings = load_config(Path(args.config))
+            args.backend = choose_backend_url(args.backend, settings.backend_url)
             sensors = build_real_sensors(settings, default_factories())
         except ConfigError as error:
             print(f"Configuration error: {error}", file=sys.stderr)
@@ -82,9 +85,15 @@ def main(argv: "list[str] | None" = None) -> int:
             for problem in failure.problems:
                 print(f"  - {problem}", file=sys.stderr)
             return 2
-        args.bus_id, args.bus_service, args.backend = settings.bus_id, settings.bus_service, settings.backend_url
-    elif not args.bus_id:
-        parser.error("--simulate and --replay need --bus-id")
+        args.bus_id, args.bus_service = settings.bus_id, settings.bus_service
+    else:
+        if not args.bus_id:
+            parser.error("--simulate and --replay need --bus-id")
+        try:
+            args.backend = choose_backend_url(args.backend, DEFAULT_BACKEND_URL)
+        except ConfigError as error:
+            parser.error(str(error))
+    log.info("Backend address for this run: %s", args.backend)
 
     secret = os.environ.get("DEVICE_SHARED_SECRET") or None
     if args.real:

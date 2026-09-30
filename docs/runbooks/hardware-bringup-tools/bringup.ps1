@@ -6,6 +6,11 @@
 param([switch]$DryRun, [switch]$NoPi, [switch]$PiOnly, [string]$Record = '', [string]$Pi = 'pi@goassist-pi1.local')
 
 # The repository root is three folders above this script, so nothing here is specific to one PC.
+# This PC's current address on the network the Pi shares. It can change when the hotspot hands out a new one.
+$pcIp = try { (Get-NetIPConfiguration | Where-Object { $_.IPv4DefaultGateway -and $_.NetAdapter.Status -eq 'Up' } | Select-Object -First 1).IPv4Address.IPAddress } catch { $null }
+if (-not $pcIp) { $pcIp = '.' }   # not detected: the check on the Pi then always passes
+# The agent is started with this address, which wins over backendUrl in agent.json, so the file needs no edit when the network changes.
+$backendArg = if ($pcIp -ne '.') { ' --backend http://' + $pcIp + ':3000' } else { '' }
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
 $pi = $Pi
 $consoleUrl = 'http://localhost:5173/?mode=live&backend=http://localhost:3000'
@@ -33,7 +38,7 @@ if ($Record -and $Record -notmatch '^[A-Za-z0-9_-]+$') { throw '-Record may cont
 $recordArg = if ($Record) { " --record recordings/$Record" } else { '' }
 
 $remoteAgent = @'
-echo Paste the device secret, then press Enter; read -rs DEVICE_SHARED_SECRET; echo; if [ ${#DEVICE_SHARED_SECRET} -eq 0 ]; then echo NO SECRET RECEIVED - the agent was NOT started. Close this tab and open it again.; exit 1; fi; echo secret fingerprint on the Pi: $(printf %s $DEVICE_SHARED_SECRET | sha256sum | cut -c1-8) - it must equal the SCRATCH tab fingerprint; export DEVICE_SHARED_SECRET; cd ~/SG-GoAssist/pi/bus-agent && python3 -m bus_agent --real --config agent.json --status-port 8770
+echo Paste the device secret, then press Enter; read -rs DEVICE_SHARED_SECRET; echo; if [ ${#DEVICE_SHARED_SECRET} -eq 0 ]; then echo NO SECRET RECEIVED - the agent was NOT started. Close this tab and open it again.; exit 1; fi; echo secret fingerprint on the Pi: $(printf %s $DEVICE_SHARED_SECRET | sha256sum | cut -c1-8) - it must equal the SCRATCH tab fingerprint; export DEVICE_SHARED_SECRET; cd ~/SG-GoAssist/pi/bus-agent; python3 -m bus_agent --real --config agent.json@@BACKENDARG@@ --status-port 8770
 '@
 
 $secretCheck = @'
@@ -48,6 +53,7 @@ Write-Host ('Device secret fingerprint: ' + $fp + '   (the PI AGENT tab prints i
 '@
 
 $matchCheck = @'
+Write-Host 'This PC address on the shared network: @@PCIP@@. The PI AGENT tab starts the agent with --backend http://@@PCIP@@:3000, so agent.json needs no edit when the address changes.'
 Write-Host 'Checking that this session matches the running backend (waits up to 60 s for it to start)...'
 $up = $false
 for ($i = 0; $i -lt 30; $i++) { try { Invoke-RestMethod http://localhost:3000/ready -TimeoutSec 2 | Out-Null; $up = $true; break } catch { Start-Sleep 2 } }
@@ -68,11 +74,11 @@ Write-Host 'Secrets are copied from HERE, on demand, like this (then clear the c
 Write-Host '  Operator token, for the console page:   Set-Clipboard `$env:OPERATOR_API_TOKEN'
 Write-Host '  Device secret, for the PI AGENT tab:    Set-Clipboard `$env:DEVICE_SHARED_SECRET'
 $fingerprintShow
-$matchCheck
+$($matchCheck.Replace('@@PCIP@@', $pcIp))
 "@ }
 )
 if (-not $NoPi) {
-    $tabs += @{ Title = 'PI AGENT'; Script = ("Write-Host 'PI AGENT: first copy the device secret in the SCRATCH tab (Set-Clipboard `$env:DEVICE_SHARED_SECRET), then paste it below when asked.'; ssh -t $pi '" + $remoteAgent.Trim() + $recordArg + "'") }
+    $tabs += @{ Title = 'PI AGENT'; Script = ("Write-Host 'PI AGENT: first copy the device secret in the SCRATCH tab (Set-Clipboard `$env:DEVICE_SHARED_SECRET), then paste it below when asked.'; ssh -t $pi '" + $remoteAgent.Trim().Replace('@@BACKENDARG@@', $backendArg) + $recordArg + "'") }
     $tabs += @{ Title = 'PI CHECKS'; Script = "ssh $pi" }
 }
 

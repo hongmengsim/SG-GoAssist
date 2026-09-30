@@ -130,6 +130,20 @@ def parse_config(data: object) -> AgentSettings:
     )
 
 
+def choose_backend_url(launch_url: Optional[str], configured_url: str) -> str:
+    """The backend address for this run.
+
+    The address depends on the network the device is on and can change (a hotspot hands out new
+    ones), so an address given at launch wins over the file; the file is the fallback.
+    """
+    text = (launch_url or "").strip().rstrip("/")
+    if not text:
+        return configured_url
+    if not text.startswith(("http://", "https://")):
+        raise ConfigError("--backend must start with http:// or https://")
+    return text
+
+
 def load_config(path: Path) -> AgentSettings:
     try:
         text = Path(path).read_text(encoding="utf-8")

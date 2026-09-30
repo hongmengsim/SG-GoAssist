@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from bus_agent.config import ConfigError, DEFAULT_POLYGON, load_config, parse_config
+from bus_agent.config import ConfigError, DEFAULT_POLYGON, choose_backend_url, load_config, parse_config
 
 
 def valid(**overrides):
@@ -89,6 +89,29 @@ class ParseTests(unittest.TestCase):
             with self.subTest(key=key):
                 with self.assertRaisesRegex(ConfigError, "environment"):
                     parse_config(valid(**{key: "x"}))
+
+
+class BackendChoiceTests(unittest.TestCase):
+    """The backend address depends on the network the device is on, so a launch may override the file."""
+
+    def test_an_address_given_at_launch_wins_over_the_file(self) -> None:
+        self.assertEqual(
+            "http://172.20.10.3:3000",
+            choose_backend_url("http://172.20.10.3:3000", "http://172.20.10.4:3000"),
+        )
+
+    def test_the_file_is_used_when_nothing_is_given_at_launch(self) -> None:
+        self.assertEqual("http://192.168.1.10:3000", choose_backend_url(None, "http://192.168.1.10:3000"))
+        self.assertEqual("http://192.168.1.10:3000", choose_backend_url("", "http://192.168.1.10:3000"))
+
+    def test_a_trailing_slash_and_spaces_are_tidied(self) -> None:
+        self.assertEqual("http://172.20.10.3:3000", choose_backend_url(" http://172.20.10.3:3000/ ", "http://x:1"))
+
+    def test_an_address_at_launch_must_be_http_or_https(self) -> None:
+        for bad in ("172.20.10.3:3000", "ftp://172.20.10.3", "ws://172.20.10.3:3000"):
+            with self.subTest(bad=bad):
+                with self.assertRaises(ConfigError):
+                    choose_backend_url(bad, "http://x:1")
 
 
 class FileTests(unittest.TestCase):
