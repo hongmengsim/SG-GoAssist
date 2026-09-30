@@ -3,7 +3,7 @@ import type {
   OperatorStatusUpdateMessage,
 } from "@buspass/shared";
 import type { AuditEventInput } from "./busOperationsService";
-import { KeyedMutex } from "./keyedMutex";
+import { getLock } from "../concurrency/locks";
 import type { BusRecord, BusRecordRepository } from "./ports";
 import { asObject, fail, optionalText } from "./validation";
 
@@ -33,15 +33,13 @@ const toHalt = (stored: StoredHalt): OperatorHalt => ({
  * audited and pushed.
  */
 export class OperatorHaltService {
-  private readonly mutex = new KeyedMutex();
-
   constructor(private readonly deps: OperatorHaltDeps) {}
 
   async set(input: unknown, busId: string): Promise<OperatorHalt> {
     const body = asObject(input, "Operator halt");
     if (typeof body.halted !== "boolean") fail("halted must be true or false");
     const reason = optionalText(body.reason, "reason", MAX_REASON);
-    return this.mutex.run(busId, async () => {
+    return getLock().run(`halt:${busId}`, async () => {
       const existing = await this.deps.repository.get(busId);
       if (
         existing &&

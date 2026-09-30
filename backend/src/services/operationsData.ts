@@ -236,6 +236,11 @@ export class OperationsData {
     }
   }
 
+  /** The SQLite connection, when there is one (for the shared lock leases). */
+  get sqlite(): SqliteDatabase | undefined {
+    return this.database;
+  }
+
   /** A cheap read used by the readiness check: fails if the storage is unusable. */
   async ping(): Promise<void> {
     await this.cases.count();

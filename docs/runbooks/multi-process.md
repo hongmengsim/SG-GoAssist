@@ -11,7 +11,7 @@
 ## What does not work yet
 
 - **Shared data.** Cases and bus data live in `operations.sqlite` and `bus-operations.sqlite` in each process's data directory. Two processes would each see only their own data. A Postgres adapter is the planned fix.
-- **Concurrency.** Bus reports, operator halts and bay coordination use an in-process lock; two processes could interleave a read-modify-write.
+- **Locks.** `GOASSIST_LOCKS=database` shares locks through the operations database (built and tested with two connections on one file). It only excludes processes that share that file, so it is not enough until the data itself is in a shared database.
 - **In-memory state.** The older request and vehicle maps and the assistant diagnostics live in process memory.
 
 ## Checking the Redis adapter against a real server

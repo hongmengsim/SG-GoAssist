@@ -14,6 +14,7 @@ import {
   publishOperationsEvent,
 } from "./assistanceCaseService";
 import { processVehicleCommand } from "./aviator";
+import { withLock } from "../concurrency/locks";
 import { getOperationsData } from "./operationsData";
 import { getPrecisionDockingAssessment } from "./precisionDockingService";
 
@@ -26,7 +27,16 @@ const SECURE_STOP_SPEED_KPH = 2;
 const MAX_LOCALIZATION_ERROR_METERS = 25;
 const DOOR_LOCALIZATION_ERROR_METERS = 10;
 
-export async function assignAutonomousRoute(
+export function assignAutonomousRoute(
+  busId: string,
+  assignment: AutonomousRouteAssignment,
+): Promise<AutonomousVehicleState> {
+  return withLock(`vehicle:${busId}`, () =>
+    assignAutonomousRouteUnlocked(busId, assignment),
+  );
+}
+
+async function assignAutonomousRouteUnlocked(
   busId: string,
   assignment: AutonomousRouteAssignment,
 ): Promise<AutonomousVehicleState> {
@@ -87,7 +97,15 @@ export async function listAutonomousVehicles(): Promise<
   return await (await getOperationsData()).vehicles.list(LIST_LIMIT);
 }
 
-export async function startAutonomousRoute(
+export function startAutonomousRoute(
+  busId: string,
+): Promise<AutonomousVehicleState> {
+  return withLock(`vehicle:${busId}`, () =>
+    startAutonomousRouteUnlocked(busId),
+  );
+}
+
+async function startAutonomousRouteUnlocked(
   busId: string,
 ): Promise<AutonomousVehicleState> {
   const state = await getAutonomousVehicleState(busId);
@@ -105,7 +123,16 @@ export async function startAutonomousRoute(
   });
 }
 
-export async function updateAutonomousMotion(
+export function updateAutonomousMotion(
+  busId: string,
+  motion: AutonomousMotionUpdate,
+): Promise<AutonomousVehicleState> {
+  return withLock(`vehicle:${busId}`, () =>
+    updateAutonomousMotionUnlocked(busId, motion),
+  );
+}
+
+async function updateAutonomousMotionUnlocked(
   busId: string,
   motion: AutonomousMotionUpdate,
 ): Promise<AutonomousVehicleState> {
@@ -182,7 +209,13 @@ export async function updateAutonomousMotion(
   return await saveAndPublish(updated);
 }
 
-export async function openAutonomousDoors(
+export function openAutonomousDoors(
+  busId: string,
+): Promise<AutonomousVehicleState> {
+  return withLock(`vehicle:${busId}`, () => openAutonomousDoorsUnlocked(busId));
+}
+
+async function openAutonomousDoorsUnlocked(
   busId: string,
 ): Promise<AutonomousVehicleState> {
   const state = await getAutonomousVehicleState(busId);
@@ -225,7 +258,16 @@ export async function openAutonomousDoors(
   });
 }
 
-export async function departAutonomousStop(
+export function departAutonomousStop(
+  busId: string,
+  nextStopDistanceMeters?: number,
+): Promise<AutonomousVehicleState> {
+  return withLock(`vehicle:${busId}`, () =>
+    departAutonomousStopUnlocked(busId, nextStopDistanceMeters),
+  );
+}
+
+async function departAutonomousStopUnlocked(
   busId: string,
   nextStopDistanceMeters?: number,
 ): Promise<AutonomousVehicleState> {
@@ -281,7 +323,20 @@ export async function departAutonomousStop(
   });
 }
 
-export async function applyAutonomyOverride(
+export function applyAutonomyOverride(
+  busId: string,
+  action: "STOP" | "RESUME" | "MANUAL",
+  clearance?: {
+    obstacleCleared?: boolean;
+    localizationAccuracyMeters?: number;
+  },
+): Promise<AutonomousVehicleState> {
+  return withLock(`vehicle:${busId}`, () =>
+    applyAutonomyOverrideUnlocked(busId, action, clearance),
+  );
+}
+
+async function applyAutonomyOverrideUnlocked(
   busId: string,
   action: "STOP" | "RESUME" | "MANUAL",
   clearance?: {

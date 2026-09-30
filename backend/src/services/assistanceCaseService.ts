@@ -20,6 +20,7 @@ import {
 } from "@buspass/shared";
 import { getBusById } from "../data/buses.mock";
 import { logger } from "./logger";
+import { withLock } from "../concurrency/locks";
 import {
   getAuditLog,
   getOperationsData,
@@ -36,6 +37,12 @@ const TERMINAL_STATES: AssistanceCaseState[] = [
   "FAILED",
   "CANCELLED",
 ];
+/**
+ * Every operation that reads a case and writes it back runs under this one lock. The old
+ * synchronous code could not interleave two such operations; asynchronous code can, and
+ * with several processes the lock is shared through the database (see concurrency/).
+ */
+const OPERATIONS_LOCK = "case-service";
 /** Reads that must stay bounded, whatever is stored. Retention keeps the real numbers far lower. */
 const CASE_LIST_LIMIT = 10_000;
 const METRICS_CASE_LIMIT = 50_000;
@@ -74,7 +81,15 @@ export function publishOperationsEvent(message: StatusUpdateMessage): void {
   emit(message);
 }
 
-export async function submitSignalObservation(
+export function submitSignalObservation(
+  input: SignalObservation,
+): Promise<AssistanceCase> {
+  return withLock(OPERATIONS_LOCK, () =>
+    submitSignalObservationUnlocked(input),
+  );
+}
+
+async function submitSignalObservationUnlocked(
   input: SignalObservation,
 ): Promise<AssistanceCase> {
   validateObservation(input);
@@ -195,7 +210,15 @@ export async function submitSignalObservation(
   return await evaluateCase(target.caseId);
 }
 
-export async function recordPassengerRequest(
+export function recordPassengerRequest(
+  request: PassengerAssistanceRequest,
+): Promise<AssistanceCase> {
+  return withLock(OPERATIONS_LOCK, () =>
+    recordPassengerRequestUnlocked(request),
+  );
+}
+
+async function recordPassengerRequestUnlocked(
   request: PassengerAssistanceRequest,
 ): Promise<AssistanceCase> {
   await ensureMockVehicleCapability(request.busId, request.busService);
@@ -227,7 +250,16 @@ export async function recordPassengerRequest(
   return caseRecord;
 }
 
-export async function synchronizeLegacyCaseStatus(
+export function synchronizeLegacyCaseStatus(
+  caseId: string,
+  status: AssistanceRequestStatus,
+): Promise<AssistanceCase> {
+  return withLock(OPERATIONS_LOCK, () =>
+    synchronizeLegacyCaseStatusUnlocked(caseId, status),
+  );
+}
+
+async function synchronizeLegacyCaseStatusUnlocked(
   caseId: string,
   status: AssistanceRequestStatus,
 ): Promise<AssistanceCase> {
@@ -261,7 +293,15 @@ export async function synchronizeLegacyCaseStatus(
   return publishCase(item);
 }
 
-export async function registerVehicleCapability(
+export function registerVehicleCapability(
+  capability: VehicleCapability,
+): Promise<VehicleCapability> {
+  return withLock(OPERATIONS_LOCK, () =>
+    registerVehicleCapabilityUnlocked(capability),
+  );
+}
+
+async function registerVehicleCapabilityUnlocked(
   capability: VehicleCapability,
 ): Promise<VehicleCapability> {
   if (
@@ -290,7 +330,13 @@ export async function registerVehicleCapability(
   return normalized;
 }
 
-export async function ingestSafetyTelemetry(
+export function ingestSafetyTelemetry(
+  input: SafetyTelemetry,
+): Promise<SafetyTelemetry> {
+  return withLock(OPERATIONS_LOCK, () => ingestSafetyTelemetryUnlocked(input));
+}
+
+async function ingestSafetyTelemetryUnlocked(
   input: SafetyTelemetry,
 ): Promise<SafetyTelemetry> {
   if (
@@ -382,7 +428,13 @@ export async function ingestSafetyTelemetry(
   return telemetry;
 }
 
-export async function updateActuatorStatus(
+export function updateActuatorStatus(
+  input: ActuatorStatus,
+): Promise<AssistanceCase> {
+  return withLock(OPERATIONS_LOCK, () => updateActuatorStatusUnlocked(input));
+}
+
+async function updateActuatorStatusUnlocked(
   input: ActuatorStatus,
 ): Promise<AssistanceCase> {
   if (
@@ -452,7 +504,17 @@ export async function updateActuatorStatus(
   return await evaluateCase(input.caseId);
 }
 
-export async function applyOperatorAction(
+export function applyOperatorAction(
+  caseId: string,
+  action: "CONFIRM" | "ESCALATE" | "CANCEL" | "COMPLETE" | "RETRY",
+  reason?: string,
+): Promise<AssistanceCase> {
+  return withLock(OPERATIONS_LOCK, () =>
+    applyOperatorActionUnlocked(caseId, action, reason),
+  );
+}
+
+async function applyOperatorActionUnlocked(
   caseId: string,
   action: "CONFIRM" | "ESCALATE" | "CANCEL" | "COMPLETE" | "RETRY",
   reason?: string,
@@ -495,7 +557,17 @@ export async function applyOperatorAction(
   return publishCase(item);
 }
 
-export async function assignCaseVehicle(
+export function assignCaseVehicle(
+  caseId: string,
+  busId: string,
+  busService?: string,
+): Promise<AssistanceCase> {
+  return withLock(OPERATIONS_LOCK, () =>
+    assignCaseVehicleUnlocked(caseId, busId, busService),
+  );
+}
+
+async function assignCaseVehicleUnlocked(
   caseId: string,
   busId: string,
   busService?: string,
@@ -532,7 +604,16 @@ export async function recordDeviceHeartbeat(
   return input;
 }
 
-export async function recordPassengerFeedback(
+export function recordPassengerFeedback(
+  caseId: string,
+  score: 1 | 2 | 3 | 4 | 5,
+): Promise<AssistanceCase> {
+  return withLock(OPERATIONS_LOCK, () =>
+    recordPassengerFeedbackUnlocked(caseId, score),
+  );
+}
+
+async function recordPassengerFeedbackUnlocked(
   caseId: string,
   score: 1 | 2 | 3 | 4 | 5,
 ): Promise<AssistanceCase> {
@@ -969,7 +1050,13 @@ async function finishFromActuatorStatuses(
   return await saveAndPublish(item);
 }
 
-async function expireActuatorCommands(nowMs = Date.now()): Promise<void> {
+function expireActuatorCommands(nowMs = Date.now()): Promise<void> {
+  return withLock(OPERATIONS_LOCK, () => expireActuatorCommandsUnlocked(nowMs));
+}
+
+async function expireActuatorCommandsUnlocked(
+  nowMs = Date.now(),
+): Promise<void> {
   const data = await getOperationsData();
   const expired: ActuatorCommand[] = [];
   for (const command of await data.openCommands(OPEN_COMMAND_LIMIT)) {
@@ -1276,7 +1363,11 @@ async function deriveBoardingIntent(
   };
 }
 
-async function refreshStaleCases(): Promise<void> {
+function refreshStaleCases(): Promise<void> {
+  return withLock(OPERATIONS_LOCK, () => refreshStaleCasesUnlocked());
+}
+
+async function refreshStaleCasesUnlocked(): Promise<void> {
   const data = await getOperationsData();
   for (const item of await data.cases.listOpen(OPEN_CASE_LIMIT)) {
     if (
