@@ -244,7 +244,8 @@ function action(actions, id, label, cls, extra = "") {
     !state.enabled && state.reason
       ? `<span class="why">${esc(state.reason)}</span>`
       : "";
-  return `<button class="${cls}" data-act="${id}" ${extra} ${state.enabled ? "" : "disabled"}>${esc(state.label ?? label)}</button>${reason}`;
+  const intent = state.intent ? ` data-intent="${esc(state.intent)}"` : "";
+  return `<button class="${cls}" data-act="${id}"${intent} ${extra} ${state.enabled ? "" : "disabled"}>${esc(state.label ?? label)}</button>${reason}`;
 }
 
 export function stopPage(state, stopCode, ui, actions) {

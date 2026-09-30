@@ -356,3 +356,10 @@ export function reportAge(state, busId, nowMs) {
     stale: seconds > STALE_AFTER_SECONDS,
   };
 }
+
+/** What the operator is asked to confirm for the halt button: a halt, or releasing one. */
+export function haltConfirmText(release, busId) {
+  return release
+    ? `Release the operator halt on ${busId}? The bus may deploy its ramp again once its own checks allow it.`
+    : `Halt deployment on ${busId}?`;
+}

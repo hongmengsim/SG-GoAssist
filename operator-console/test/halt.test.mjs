@@ -156,3 +156,39 @@ test("live: Halt posts halted true and Release posts halted false", async () => 
   assert.equal((await on.source.perform("halt", { busId: B1 })).ok, true);
   assert.equal(on.api.posts[0].halted, false);
 });
+
+// ---- C-H3: what the operator confirms is what is sent ----------------------------------------
+
+import { haltConfirmText } from "../src/viewmodel.js";
+
+test("the confirmation says release when the action is a release, and halt when it is a halt", () => {
+  assert.match(haltConfirmText(true, B1), /release/i);
+  assert.doesNotMatch(haltConfirmText(true, B1), /^Halt deployment/);
+  assert.match(haltConfirmText(false, B1), /^Halt deployment on AV-095-01/);
+});
+
+test("the halt button carries the intent it will confirm", () => {
+  const released = { halt: { enabled: true, label: "Release halt", intent: "release" } };
+  const halting = { halt: { enabled: true, label: "Halt bus", intent: "halt" } };
+  const ui = { kind: "ALL", busId: "ALL", requestId: "ALL" };
+  const state = reduce(initialState(), halt(true));
+  assert.match(busPage(state, B1, ui, released), /data-intent="release"/);
+  assert.match(busPage(state, B1, ui, halting), /data-intent="halt"/);
+});
+
+test("the live source sends the intent that was confirmed, even if the console's view changed meanwhile", async () => {
+  // The console still thinks the bus is halted, but the operator confirmed a plain halt.
+  const { fetchFn, posts } = backend(true);
+  const source = createLiveSource({
+    baseUrl: "http://x",
+    fetchFn,
+    WebSocketCtor: FakeSocket,
+  });
+  source.start();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  await source.perform("halt", { busId: B1, release: false });
+  assert.equal(posts.at(-1).halted, true);
+  await source.perform("halt", { busId: B1, release: true });
+  assert.equal(posts.at(-1).halted, false);
+  source.stop();
+});

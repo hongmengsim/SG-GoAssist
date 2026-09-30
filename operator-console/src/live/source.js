@@ -321,8 +321,8 @@ export function createLiveSource({
       deploy: { enabled: false, reason: DEPLOY_UNAVAILABLE },
       halt:
         busId && state.buses[busId]?.operatorHalt?.halted
-          ? { enabled: true, label: "Release halt" }
-          : { enabled: Boolean(busId), label: "Halt bus" },
+          ? { enabled: true, label: "Release halt", intent: "release" }
+          : { enabled: Boolean(busId), label: "Halt bus", intent: "halt" },
       cancel: request?.caseId
         ? { enabled: true }
         : {
@@ -334,10 +334,16 @@ export function createLiveSource({
     };
   }
 
-  /** Halts the bus, or releases the halt if it is already on. The bus adds it to its own reasons. */
-  async function toggleHalt(busId) {
+  /**
+   * Halts the bus or releases the halt, as the operator confirmed (`release`). Without an explicit
+   * intent it flips the state it last saw. The bus adds the halt to its own reasons.
+   */
+  async function toggleHalt(busId, release) {
     if (!busId) return { ok: false, message: "Open a bus to halt it." };
-    const halted = Boolean(state.buses[busId]?.operatorHalt?.halted);
+    const halted =
+      typeof release === "boolean"
+        ? release
+        : Boolean(state.buses[busId]?.operatorHalt?.halted);
     try {
       await request(
         "POST",
@@ -408,7 +414,7 @@ export function createLiveSource({
     // are refused here.
     if (action === "case" || action === "autonomy")
       return performCaseAction(action, context);
-    if (action === "halt") return toggleHalt(busId);
+    if (action === "halt") return toggleHalt(busId, context.release);
     if (action !== "proceed" && action !== "cancel") {
       return {
         ok: false,

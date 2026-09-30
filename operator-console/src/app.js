@@ -7,7 +7,7 @@ import { simulatedTag, tag } from "./html.js";
 import { createLiveSource } from "./live/source.js";
 import { createMockSource } from "./mock/source.js";
 import { handlePlayground, playgroundHtml } from "./mock/playground.js";
-import { busIds, stopCodes } from "./viewmodel.js";
+import { busIds, haltConfirmText, stopCodes } from "./viewmodel.js";
 import {
   breadcrumbs,
   busPage,
@@ -221,11 +221,14 @@ $("root").addEventListener("click", (event) => {
   }
   const button = event.target.closest("[data-act]");
   if (!button || button.disabled) return;
-  const { act, bus, stop } = button.dataset;
+  const { act, bus, stop, intent } = button.dataset;
   if (act === "deploy" || act === "proceed")
     run(act, { busId: bus, stopCode: stop });
-  if (act === "halt")
-    ask(`Halt deployment on ${bus}?`, () => run("halt", { busId: bus }));
+  if (act === "halt") {
+    // The button says what it will do; the confirmation and the request follow the same intent.
+    const release = intent === "release";
+    ask(haltConfirmText(release, bus), () => run("halt", { busId: bus, release }));
+  }
   if (act === "cancel")
     ask(
       `Cancel the accepted request on ${bus}? The passenger will be told it cannot be fulfilled.`,
