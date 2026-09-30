@@ -1,3 +1,4 @@
+import { configure } from "@testing-library/react-native";
 import { AccessibilityInfo } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
@@ -53,3 +54,8 @@ jest.mock("expo-speech", () => ({
 beforeEach(async () => {
   await AsyncStorage.clear();
 });
+
+// Async queries (findBy, waitFor) wait longer than the 1 s default: under load (a full test run
+// with other suites busy) the journey screens can take longer than that to appear, which made
+// different tests fail on different runs.
+configure({ asyncUtilTimeout: 5000 });
