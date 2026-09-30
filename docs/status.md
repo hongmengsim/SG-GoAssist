@@ -210,3 +210,10 @@ Setup: backend built from this branch on the PC (Node v22.15.1, `GOASSIST_AUTO_A
 
 - **Verified on hardware:** with the fix (commit 9e1439c) copied to the Pi and the agent restarted at 05:04:12 UTC, the backend audit file shows `RAMP_SAFETY_CHANGED` entries per minute falling from about 190 to 250 (04:58 to 05:03, before the restart) to 57, 18, 42, 21 and 7 (05:04 to 05:08). That is roughly a 75 to 97 percent drop. After 05:08:12 the audit file gained no new rows for over four minutes, which fits a steady decision producing no new rows; it does not by itself show the agent was still posting.
 - **Not verified:** that the rate is at the intended one message per bus every five seconds when nothing changes (the backend audits only content changes, so heartbeat posts do not show in the audit file); what caused the remaining changes (hand and object movement, beam flicker); that the agent was still reporting after 05:08:12 (needs the console's "Last report" age).
+
+### Stage 5 incident: `401 Invalid device signature` after a relaunch (30 Sep 2026)
+
+- **What happened:** after the backend and the Pi agent were relaunched with new secrets, the agent's posts and polls were rejected with `401 Invalid device signature` for at least five minutes (the console showed "Last report 5 min ago"; the backend audit stopped at 05:08:12 UTC). The Pi could not report, receive commands or acknowledge.
+- **Cause: not determined.** The two suspects were a device-secret mismatch (a paste after the launcher's 90 s timed clipboard had cleared, or a second launch) and a clock difference over 60 s. The hash and clock comparison was not run. A full restart of everything with fresh secrets cleared it: from 05:18:11 UTC the backend audit shows the agent re-registered and reporting again, with no `401` seen by CE2.
+- **Change made:** the launcher no longer copies the device secret automatically; both secrets are now copied from its SCRATCH tab on demand. This is a guess at the cause, not a confirmed fix.
+- **Also seen in the audit:** the earlier blocked test case was cancelled from the console (`OPERATOR_CANCEL`, `ASSISTANCE_CANCELLED_RAMP_SAFE`).
