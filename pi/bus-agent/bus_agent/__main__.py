@@ -24,6 +24,7 @@ from .console import HELP
 from .event_listener import EventListener
 from .http_backend import HttpBackend
 from .recording import ReplayError
+from .real_security import real_mode_findings
 from .real_mode import PreflightFailed, build_real_sensors, default_factories
 from .runner import Runner, build_real_rig, build_replay_rig, build_simulated_rig
 from .status_page import StatusBoard, StatusServer
@@ -39,7 +40,9 @@ def _read_commands(commands: "queue.Queue[str]", stop: threading.Event) -> None:
             return
         if text:
             commands.put(text)
-    stop.set()
+    # End of input is not a request to stop: under a service manager there is no terminal, and
+    # the agent must keep running. Only an explicit "quit" (or Ctrl+C) stops it.
+    log.info("Console input closed; the agent keeps running")
 
 
 def main(argv: "list[str] | None" = None) -> int:
@@ -84,6 +87,15 @@ def main(argv: "list[str] | None" = None) -> int:
         parser.error("--simulate and --replay need --bus-id")
 
     secret = os.environ.get("DEVICE_SHARED_SECRET") or None
+    if args.real:
+        errors, warnings = real_mode_findings(args.backend, secret)
+        for warning in warnings:
+            log.warning("%s", warning)
+        if errors:
+            print("Refusing to start with real sensors:", file=sys.stderr)
+            for problem in errors:
+                print(f"  - {problem}", file=sys.stderr)
+            return 2
     token = os.environ.get("OPERATOR_API_TOKEN") or None
     # Every network call runs on a worker thread so a stuck connection cannot delay the safety loop.
     backend = AsyncBackend(HttpBackend(args.backend, args.bus_id, secret=secret))
