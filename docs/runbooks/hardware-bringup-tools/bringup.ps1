@@ -42,7 +42,7 @@ $matchCheck = @'
 Write-Host 'Checking that this session matches the running backend (waits up to 60 s for it to start)...'
 $up = $false
 for ($i = 0; $i -lt 30; $i++) { try { Invoke-RestMethod http://localhost:3000/ready -TimeoutSec 2 | Out-Null; $up = $true; break } catch { Start-Sleep 2 } }
-if ($up) { python docsunbooks\hardware-bringup-tools\check_secret.py http://localhost:3000 } else { Write-Host 'Backend not ready after 60 s: look at the BACKEND tab.' }
+if ($up) { python docs\runbooks\hardware-bringup-tools\check_secret.py http://localhost:3000 } else { Write-Host 'Backend not ready after 60 s: look at the BACKEND tab.' }
 '@
 
 $tabs = @(
