@@ -120,7 +120,7 @@ Legend: `[x]` built and verified by a test or a run (evidence given), `[ ]` not 
 - **Contract change process:** additions to `contracts/` (operator-only messages, report types) were made ahead of a written proposal; recorded in `docs/interfaces/message-additions.md`.
 - **The 1 Oct 2026 security and code reviews** (four independent reviewers: backend security, backend code, the Pi agent, the operator console) produced findings that are recorded in `docs/reviews/2026-10-01-reviews.md` with their status.
 
-## Hardware bring-up log (branch `hardware-bringup`)
+## Hardware bring-up log (worked on the branch `hardware-bringup`, since merged into `main`)
 
 To continue this work in a new session, start with `docs/runbooks/hardware-bring-up-handoff.md`. Helper scripts used during the bring-up are in `docs/runbooks/hardware-bringup-tools/`.
 

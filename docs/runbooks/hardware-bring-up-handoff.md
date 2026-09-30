@@ -1,6 +1,6 @@
 # Hardware bring-up: handoff for the next session
 
-Written 1 Oct 2026 (the work ran on 30 Sep 2026) on branch `hardware-bringup`. Read this first, then `docs/status.md` (section "Hardware bring-up log"), then `docs/runbooks/hardware-bring-up.md`, then `docs/reviews/2026-10-01-reviews.md`. This file assumes you have no memory of the earlier session. Everything you need is in this repository; nothing else is available to you.
+Written 1 Oct 2026 (the work ran on 30 Sep 2026) on the branch `hardware-bringup`, which has since been merged into `main` and deleted. Read this first, then `docs/status.md` (section "Hardware bring-up log"), then `docs/runbooks/hardware-bring-up.md`, then `docs/reviews/2026-10-01-reviews.md`. This file assumes you have no memory of the earlier session. Everything you need is in this repository; nothing else is available to you.
 
 ## Who and what
 
@@ -76,7 +76,7 @@ The evidence, with exact numbers and times, is in `docs/status.md`. In short (al
 ## Coordination
 
 - Another session works on backend storage (Postgres and multi-process, decision 0005). `main` was updated from `integration` on 1 Oct 2026; this branch has been merged up to that point and nothing here has been merged into `main`. Do not touch `main`.
-- Push only `hardware-bringup`. Do not open a PR unless CE2 asks.
+- Work on a new branch from `main`. Do not push to `main`, open a PR or merge unless CE2 asks.
 
 ## Next steps
 
