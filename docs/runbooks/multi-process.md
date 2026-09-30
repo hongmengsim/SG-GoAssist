@@ -1,12 +1,13 @@
 # Running more than one backend process
 
-**Status (1 Oct 2026): the event bus can be shared through Redis, but that has only been tested against a fake Redis. Storage is still one SQLite file per process, so two processes must NOT be run against the same data yet (decision 0005, steps 3 and 4).** This page says what works today, and how to check the Redis part against a real server.
+**Status (1 Oct 2026): the event bus can be shared through Redis and has been checked against a real Redis with two real backend processes (`npm run check:multi-process`). Storage is still one SQLite file per process, so two processes must NOT be run against the same data yet (decision 0005, steps 3 and 4).** This page says what works today, and how to check the Redis part against a real server.
 
 ## What works today
 
 - `GOASSIST_EVENT_BUS=redis` with `GOASSIST_REDIS_URL=redis://host:6379` makes the process publish and receive events through Redis. An event published in one process reaches operator and passenger WebSocket clients connected to another; scoping is unchanged. Without those variables the bus stays in-process, exactly as before.
 - Tested: the broker event bus and the Redis adapter against an in-memory broker and a fake Redis server (18 tests), and the WebSocket gateway receiving an event that another process published (2 tests).
-- Not tested: a real Redis server, or two real backend processes.
+- Tested for real: `npm run check:multi-process` starts two backend processes on different ports against a Redis server and checks that a bus status posted to one reaches an operator on the other exactly once. It passed on 1 Oct 2026 (Redis in WSL Ubuntu 22.04).
+- Not tested: shared data across processes (each still has its own SQLite files).
 
 ## What does not work yet
 
