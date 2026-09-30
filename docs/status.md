@@ -116,3 +116,13 @@ Legend: `[x]` built and verified by a test or a run (evidence given), `[ ]` not 
 - **Unresolved from the 29 Sep handoff:** alighting and destination scope in the app (documented, not hidden), backend as both cloud and controller, final ToF sensor, submission deadline.
 - **Contract change process:** additions to `contracts/` (operator-only messages, report types) were made ahead of a written proposal; recorded in `docs/interfaces/message-additions.md`.
 - **CI is unverified** until something is pushed.
+
+## Hardware bring-up log (branch `hardware-bringup`)
+
+Only what was run on hardware and shown in pasted output is marked "verified on hardware". Everything else stays not verified. The ramp is simulated only; no camera frames are stored.
+
+### Stage 1: ESP32 serial link (Pi #1, 30 Sep 2026)
+
+- **Verified on hardware:** the Pi sees the ESP32 as `/dev/ttyACM0` (`1a86:55d3 QinHeng USB Single Serial`, `cdc_acm` driver; there is no `/dev/serial/by-id/` entry, so configure the `ttyACM0` path). Reading 115200 baud with nothing sent gave `time_ms,VL53L0X,distance_mm,status` lines about every 294 ms for 10 s with no restart. `VALID` distances and `NA,INVALID_status_2` lines both arrive. Distance readings therefore need no handshake or keepalive; a writer is still untested for the lasers.
+- **Not verified:** stable power. Before that read the ESP32 restarted about every 3 s, with `over-current change` messages on all four USB ports. After a re-plug at 362.9 s the log stayed quiet for about 72 s. `vcgencmd get_throttled` returned `0x50000` (under-voltage and throttling have occurred since boot; none at the time of the check). The Pi supply is marginal; the cause of the earlier loop is not proven.
+- **Not verified:** the backstop distance. The readings sat at 21 to 27 mm, then 47 to 258 mm with gaps; where the board and hand were was not recorded. Calibration needs a reference of 150 to 1000 mm.
