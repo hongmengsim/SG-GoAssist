@@ -15,6 +15,7 @@ import {
 
 const AUDIT_LIMIT = 200;
 const RECONNECT_MS = 2000;
+const MAX_HELD_MESSAGES = 1000;
 const REFRESH_DELAY_MS = 500;
 const DEVICE_FRESH_MS = 15000;
 const CASE_ACTIONS = new Set([
@@ -59,6 +60,10 @@ export function createLiveSource({
   let cancelRefresh = null;
   let currentToken = token;
   let snapshotRun = 0;
+  // Reads of the backend's current state that are in flight. A message pushed meanwhile is newer
+  // than the data those reads will return, so it is kept and applied again after them.
+  let reading = 0;
+  const held = [];
   const listeners = new Set();
 
   const notify = () => listeners.forEach((listener) => listener());
@@ -73,6 +78,21 @@ export function createLiveSource({
     connection = { status, detail };
     revision += 1;
     notify();
+  }
+
+  function beginReading() {
+    reading += 1;
+  }
+  function endReading() {
+    reading -= 1;
+    if (reading > 0 || held.length === 0) return;
+    const queued = held.splice(0);
+    apply(queued.reduce(reduce, state));
+    scheduleRefresh();
+  }
+  function hold(message) {
+    if (held.length >= MAX_HELD_MESSAGES) held.shift();
+    held.push(message);
   }
 
   const authHeaders = () =>
@@ -103,6 +123,7 @@ export function createLiveSource({
 
   async function loadSnapshot() {
     const run = (snapshotRun += 1);
+    beginReading();
     try {
       const [statuses, ramps, decisions, help, requests, audit] =
         await Promise.all([
@@ -168,6 +189,8 @@ export function createLiveSource({
           error instanceof Error ? error.message : String(error),
         );
       }
+    } finally {
+      endReading();
     }
   }
 
@@ -241,6 +264,7 @@ export function createLiveSource({
   // re-read shortly after anything changes.
   async function refreshLists() {
     cancelRefresh = null;
+    beginReading();
     try {
       const [audit, requests, caseData] = await Promise.all([
         get(`/api/operations/audit?limit=${AUDIT_LIMIT}`),
@@ -253,6 +277,8 @@ export function createLiveSource({
       apply(applyCaseData(next, caseData));
     } catch {
       // The next pushed message or reconnect refreshes again; the connection tag shows real failures.
+    } finally {
+      endReading();
     }
   }
 
@@ -291,6 +317,9 @@ export function createLiveSource({
           "auth-required",
           "The backend needs the operator token.",
         );
+      // Shown at once, and kept when a read is in flight so it is applied again on top of that
+      // read's older data.
+      if (reading > 0) hold(message);
       const next = reduce(state, message);
       if (next !== state) {
         apply(next);
