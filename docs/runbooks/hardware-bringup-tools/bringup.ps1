@@ -38,6 +38,13 @@ if (-not $env:DEVICE_SHARED_SECRET -or -not $env:OPERATOR_API_TOKEN) {
 }
 '@
 
+$matchCheck = @'
+Write-Host 'Checking that this session matches the running backend (waits up to 60 s for it to start)...'
+$up = $false
+for ($i = 0; $i -lt 30; $i++) { try { Invoke-RestMethod http://localhost:3000/ready -TimeoutSec 2 | Out-Null; $up = $true; break } catch { Start-Sleep 2 } }
+if ($up) { python docsunbooks\hardware-bringup-tools\check_secret.py http://localhost:3000 } else { Write-Host 'Backend not ready after 60 s: look at the BACKEND tab.' }
+'@
+
 $tabs = @(
     @{ Title = 'BACKEND (this PC)'; Script = @"
 $secretCheck
@@ -51,6 +58,7 @@ Write-Host 'SCRATCH: one-off commands only (scp, git).'
 Write-Host 'Secrets are copied from HERE, on demand, like this (then clear the clipboard with: Set-Clipboard `$null):'
 Write-Host '  Operator token, for the console page:   Set-Clipboard `$env:OPERATOR_API_TOKEN'
 Write-Host '  Device secret, for the PI AGENT tab:    Set-Clipboard `$env:DEVICE_SHARED_SECRET'
+$matchCheck
 "@ }
 )
 if (-not $NoPi) {
