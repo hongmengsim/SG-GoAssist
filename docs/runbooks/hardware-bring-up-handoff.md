@@ -60,7 +60,7 @@ The evidence, with exact numbers and times, is in `docs/status.md`. In short (al
 
 ## Open issues, in priority order
 
-1. **An unplugged or vanished ESP32 can raise out of the agent's tick** (`SerialLineSource.read_lines` in `pi/tof-link/beam_reading.py` has no handling; `BusAgent._decide` calls it unguarded). It is finding `P-M1` in `docs/reviews/2026-10-01-reviews.md` and was independently seen on hardware. Fix it test-first, then run the unplug check.
+1. **An unplugged or vanished ESP32 used to raise out of the agent's tick** (finding `P-M1` in `docs/reviews/2026-10-01-reviews.md`, also seen on hardware as `OSError: [Errno 5] Input/output error`). **Fixed in code** on 1 Oct 2026: `BeamReader.poll` in `pi/tof-link/beam_reading.py` now reports `UNKNOWN` with no distance and logs once, with tests at the beam level and the agent level. **Not yet checked on hardware:** unplug the ESP32 with the agent running and confirm `UNKNOWN`, a halt, and no crash. Known limit: after the ESP32 is replugged its port is a new device, so the old handle keeps failing and the beam stays `UNKNOWN` until the agent is restarted (safe, but not self-healing).
 2. The reviews document lists other open Pi agent findings that overlap the tests still to run: `P-H1` (a stale halt poll can release an operator halt), `P-H2` and `P-M6` (the link-loss halt can fail to fire), `P-H3` (arrive before the backend answers), `P-M2` (halt state after a Pi restart), and console findings `C-H3` (the "Release halt" confirmation text) and `C-H4` (a re-render every 5 s wipes typed input, including the token field). Read them before Stage 8, and say which ones the hardware run confirms or contradicts.
 3. The Pi status page shows a `SIMULATED` badge on real runs (`.mark { display: inline-block }` in `pi/bus-agent/bus_agent/status.html` overrides the `hidden` attribute).
 4. The operator console labels the simulated interlocks (vehicle stopped, parking brake, door open) `FROM THE BUS` without saying they are simulated; it shows decision times in UTC beside a local clock; the backend counts "Devices online 0" while the Pi reports; and the audit log has no event for the bus's acknowledgement of a request. The last three are backend or console items for the teammate or the other session.
@@ -82,7 +82,7 @@ The evidence, with exact numbers and times, is in `docs/status.md`. In short (al
 
 1. Tidy: stop any running agent or replay on the Pi; make sure ports 3000, 5173, 8770 and 8780 are free.
 2. Finish Stage 6: put the backstop 250 to 300 mm from the ToF and fix it; record `recordings/run-02` with `--record` after a successful `calibrate`; replay it with `--backend http://127.0.0.1:9 --no-events` so nothing reaches the real backend.
-3. Fix the serial-read guard (open issue 1), then unplug the ESP32 with the agent running and check `UNKNOWN` and a halt.
+3. Unplug the ESP32 with the agent running and check `UNKNOWN`, a halt and no crash (the code fix is in; see open issue 1).
 4. Stage 7: Pi #2 as `--simulate` with live signed traffic.
 5. Stage 8: both buses, an operator halt (from the console), a deployment timeout, a link-loss halt. Note the review findings above as you go.
 6. Wrap up: a full install and `npm run verify` (on the worktree used so far, `verify:fast` passed 10 of 11; the passenger-app typecheck failed only because that package was not installed), the final table, and ask CE2 about a PR.
