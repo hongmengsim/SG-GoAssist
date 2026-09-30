@@ -108,6 +108,48 @@ export function verifyDeviceSignature(check: DeviceSignatureCheck): boolean {
   );
 }
 
+/**
+ * The signature on a response to a signed request: HMAC-SHA256 over
+ * `<the request's signature>.<status>.` followed by the exact body bytes. Binding it to the
+ * request's own signature (used once, never repeated) means an answer cannot be replayed for
+ * another request, and one forged without the secret cannot pass, for example a false
+ * "halted: false" that would release an operator halt.
+ */
+export function responseSignature(
+  secret: string,
+  requestSignature: string,
+  status: number,
+  body: Buffer,
+): string {
+  return crypto
+    .createHmac("sha256", secret)
+    .update(`${requestSignature}.${status}.`)
+    .update(body)
+    .digest("hex");
+}
+
+/** Makes every answer to this (verified) request carry `x-response-signature`. */
+function signResponses(
+  res: Response,
+  secret: string,
+  requestSignature: string,
+): void {
+  const send = res.send.bind(res);
+  res.send = ((body?: unknown) => {
+    const bytes = Buffer.isBuffer(body)
+      ? body
+      : Buffer.from(
+          typeof body === "string" ? body : JSON.stringify(body ?? {}),
+          "utf8",
+        );
+    res.setHeader(
+      "x-response-signature",
+      responseSignature(secret, requestSignature, res.statusCode, bytes),
+    );
+    return send(body as never);
+  }) as Response["send"];
+}
+
 export type DeviceCheck =
   | { ok: true; deviceId: string; signature: string; signed: boolean }
   | { ok: false; status: number; error: string };
@@ -182,6 +224,10 @@ export function verifyDeviceRequest(
   if (check.signed && !rememberSignature(check.signature)) {
     res.status(401).json({ error: "This signed request was already used" });
     return;
+  }
+  if (check.signed) {
+    const secret = deviceSecretFor(check.deviceId);
+    if (secret) signResponses(res, secret, check.signature);
   }
   next();
 }

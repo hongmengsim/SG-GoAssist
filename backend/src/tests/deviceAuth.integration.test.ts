@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import crypto from "crypto";
 import { classifyRequest } from "../platform/rateLimit";
+import { responseSignature } from "../routes/auth";
 import { requestJson, startTestServer } from "./helpers/integration";
 
 const stamp = () => new Date().toISOString();
@@ -198,4 +199,48 @@ test("bus traffic gets the never-shed safety class only when its signature was v
     "safety",
     "trusted by default, as before",
   );
+});
+
+test("a response to a signed request is signed too, bound to that request, so a forged answer can be told apart", async () => {
+  await withSecrets(
+    { DEVICE_SHARED_SECRET: "shared-secret" },
+    async (baseUrl) => {
+      const path = "/api/operations/vehicles/AV-1/operator-halt";
+      const headers = sign("shared-secret", "AV-1", "GET", path, "{}");
+      const response = await fetch(`${baseUrl}${path}`, { headers });
+      const raw = Buffer.from(await response.arrayBuffer());
+      const supplied = response.headers.get("x-response-signature");
+      assert.ok(supplied, "the response carries a signature");
+      assert.equal(
+        supplied,
+        responseSignature(
+          "shared-secret",
+          headers["x-signature"],
+          response.status,
+          raw,
+        ),
+      );
+      assert.notEqual(
+        supplied,
+        responseSignature(
+          "other-secret",
+          headers["x-signature"],
+          response.status,
+          raw,
+        ),
+      );
+    },
+  );
+});
+
+test("with no device secret (development) responses are not signed", async () => {
+  const server = await startTestServer();
+  try {
+    const response = await fetch(
+      `${server.baseUrl}/api/operations/vehicles/AV-1/operator-halt`,
+    );
+    assert.equal(response.headers.get("x-response-signature"), null);
+  } finally {
+    await server.close();
+  }
 });
