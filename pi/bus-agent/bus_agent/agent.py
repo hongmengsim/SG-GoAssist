@@ -176,7 +176,12 @@ class BusAgent:
         elif kind == "OPERATOR_HALT":
             halt = message.get("halt") or {}
             if halt.get("busId") == self.bus_id and isinstance(halt.get("halted"), bool):
-                self.set_operator_halt(halt["halted"])
+                if halt["halted"]:
+                    self.set_operator_halt(True)
+                else:
+                    # A push is not authenticated, so it can start a halt but never end one. The
+                    # release is taken from the next signed read, which is asked for at once.
+                    self._next_request_poll = 0.0
                 # Any halt read that started before this push is older than it.
                 invalidate = getattr(self._backend, "invalidate_halt", None)
                 if invalidate is not None:

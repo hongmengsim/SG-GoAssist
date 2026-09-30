@@ -78,5 +78,27 @@ class NanConfidenceTests(unittest.TestCase):
         self.assertTrue(math.isnan(item.confidence))
 
 
+class PushedReleaseTests(unittest.TestCase):
+    EVENT = {"type": "OPERATOR_HALT", "halt": {"busId": BUS, "halted": False}}
+
+    def test_a_pushed_release_never_releases_by_itself(self) -> None:
+        world = World()
+        world.backend.operator_halt = {"halted": True}  # the backend still says halted
+        world.agent.handle_event({"type": "OPERATOR_HALT", "halt": {"busId": BUS, "halted": True}})
+        world.agent.handle_event(self.EVENT)  # a forged or mistaken release push
+        world.tick(30)
+        self.assertIn("OPERATOR_HALT", world.agent.last_decision.reasons)
+
+    def test_a_release_the_backend_confirms_on_the_next_read_takes_effect_at_once(self) -> None:
+        world = World()
+        world.backend.operator_halt = {"halted": True}
+        world.agent.handle_event({"type": "OPERATOR_HALT", "halt": {"busId": BUS, "halted": True}})
+        world.tick(2)
+        world.backend.operator_halt = {"halted": False}
+        world.agent.handle_event(self.EVENT)
+        world.tick(2)  # a read is asked for straight away, not after the 5 s poll
+        self.assertNotIn("OPERATOR_HALT", world.agent.last_decision.reasons)
+
+
 if __name__ == "__main__":
     unittest.main()
