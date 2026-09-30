@@ -456,7 +456,8 @@ class TimeoutAndLinkTests(unittest.TestCase):
         self.assertNotIn("DEPLOYMENT_TIMEOUT", world.agent.last_decision.reasons)
 
     def test_a_lost_link_halts_a_deployment_only_when_configured(self) -> None:
-        world = World(config=AgentConfig(link_loss_halt_seconds=3.0))
+        # A slow deployment, so the outage is still going on while the ramp is moving.
+        world = World(config=AgentConfig(link_loss_halt_seconds=3.0, deploy_seconds=10.0))
         world.positioned_with_request()
         world.deploy(4)
         self.assertEqual("DEPLOYING", world.agent.ramp.state)
@@ -478,10 +479,11 @@ class TimeoutAndLinkTests(unittest.TestCase):
         inner = FakeBackend()
         backend = AsyncBackend(inner, retry_seconds=0.02, poll_seconds=0.0)
         try:
-            world = World(config=AgentConfig(link_loss_halt_seconds=1.0), backend=backend)
+            # The worker measures real time, so this test waits in real time.
+            world = World(config=AgentConfig(link_loss_halt_seconds=0.3), backend=backend)
             world.agent.arrive(STOP)
             inner.fail_all = True
-            for _ in range(40):
+            for _ in range(60):
                 world.tick()
                 time.sleep(0.01)  # let the worker notice the failures
             self.assertIn("BACKEND_LINK_LOST", world.agent.last_decision.reasons)

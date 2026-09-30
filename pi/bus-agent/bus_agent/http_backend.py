@@ -6,6 +6,7 @@ has no body, and the backend then signs an empty JSON object, so that is what is
 
 from __future__ import annotations
 
+import http.client
 import json
 import time
 import urllib.error
@@ -119,7 +120,7 @@ class HttpBackend:
         )
         try:
             status, raw = self._transport(method, self._base + path, headers, payload, self._timeout)
-        except (OSError, TimeoutError) as error:
+        except (OSError, TimeoutError, http.client.HTTPException) as error:
             raise BackendError(f"{method} {path} failed: {error}") from error
         return self._interpret(method, path, status, raw)
 

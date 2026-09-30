@@ -43,9 +43,35 @@ class _Now:
     abandoned: bool = False
 
 
+class _Guarded:
+    """Wraps the real backend so that any error it raises reaches the worker as a BackendError.
+
+    A library error nobody thought of (``http.client.HTTPException``, a bad response) would
+    otherwise end the worker thread silently and leave the link looking healthy.
+    """
+
+    def __init__(self, inner: object) -> None:
+        self._target = inner
+
+    def __getattr__(self, name: str):
+        attribute = getattr(self._target, name)
+        if not callable(attribute):
+            return attribute
+
+        def call(*args, **kwargs):
+            try:
+                return attribute(*args, **kwargs)
+            except BackendError:
+                raise
+            except Exception as error:  # noqa: BLE001 - the whole point is to catch everything
+                raise BackendError(f"{name} failed: {error!r}") from error
+
+        return call
+
+
 class AsyncBackend:
     def __init__(self, inner: Backend, retry_seconds: float = 1.0, poll_seconds: float = 1.0) -> None:
-        self._inner = inner
+        self._inner = _Guarded(inner)
         self._retry = retry_seconds
         self._poll = poll_seconds
         self._cond = threading.Condition()
@@ -64,13 +90,35 @@ class AsyncBackend:
         # Bumped when a push tells the agent something newer than any halt read in flight.
         self._halt_epoch = 0
         self._last_poll = {"requests": 0.0, "commands": 0.0, "halt": 0.0}
-        self.last_error: Optional[str] = None
+        # Failures are tracked per direction (sending, polling): a success in one must not hide a
+        # failure in the other.
+        self._errors: dict[str, Optional[str]] = {"post": None, "poll": None}
+        self._failing_since: dict[str, Optional[float]] = {"post": None, "poll": None}
+        self._last_success = time.monotonic()
         self._thread = threading.Thread(target=self._run, name="backend-io", daemon=True)
         self._thread.start()
 
     @property
     def running(self) -> bool:
         return self._thread.is_alive()
+
+    @property
+    def last_error(self) -> Optional[str]:
+        """The text of a current failure in either direction, or None when both are working."""
+        with self._cond:
+            return self._errors["post"] or self._errors["poll"]
+
+    def link_problem_seconds(self) -> float:
+        """How long the link has had a problem: the longer of the time since anything worked and
+        the time a direction has been failing. Infinite if the worker thread is dead. A stuck
+        call blocks the worker, so this keeps growing even though no error is ever recorded."""
+        if not self._thread.is_alive():
+            return float("inf")
+        now = time.monotonic()
+        with self._cond:
+            since = [t for t in self._failing_since.values() if t is not None]
+            longest_failing = now - min(since) if since else 0.0
+            return max(now - self._last_success, longest_failing)
 
     def stop(self) -> None:
         with self._cond:
@@ -84,7 +132,7 @@ class AsyncBackend:
         with self._cond:
             self._posts[kind] = body
             self._cond.notify_all()
-            error = self.last_error
+            error = self._errors["post"]
         if error is not None:
             raise BackendError(error)
         return "QUEUED"
@@ -158,7 +206,12 @@ class AsyncBackend:
                     self._cond.wait(self._retry)
                 if self._stopped:
                     return
-            failed = self._do_one_round()
+            try:
+                failed = self._do_one_round()
+            except Exception as error:  # noqa: BLE001 - the worker must outlive any surprise
+                log.exception("The backend worker hit an unexpected error")
+                self._failed(error)
+                failed = True
             if failed:
                 with self._cond:
                     if not self._stopped:
@@ -177,13 +230,17 @@ class AsyncBackend:
             or (self._want_halt and now - self._last_poll["halt"] >= self._poll)
         )
 
-    def _succeeded(self) -> None:
+    def _succeeded(self, direction: str = "post") -> None:
         with self._cond:
-            self.last_error = None
+            self._errors[direction] = None
+            self._failing_since[direction] = None
+            self._last_success = time.monotonic()
 
-    def _failed(self, error: Exception) -> None:
+    def _failed(self, error: Exception, direction: str = "post") -> None:
         with self._cond:
-            self.last_error = str(error)
+            self._errors[direction] = str(error)
+            if self._failing_since[direction] is None:
+                self._failing_since[direction] = time.monotonic()
 
     def _do_one_round(self) -> bool:
         """Runs each kind of pending work once. Returns True if anything failed."""
@@ -308,12 +365,12 @@ class AsyncBackend:
             try:
                 items = fetch()
             except BackendError as error:
-                self._failed(error)
+                self._failed(error, "poll")
                 failed = True
                 continue
             with self._cond:
                 if name == "halt" and epoch != self._halt_epoch:
                     continue  # a push overtook this read; the next one will be fresh
                 setattr(self, cache_attr, items if name == "halt" else list(items))
-            self._succeeded()
+            self._succeeded("poll")
         return failed

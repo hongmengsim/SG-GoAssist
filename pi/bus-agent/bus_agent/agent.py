@@ -120,7 +120,8 @@ class BusAgent:
         self.last_beam = None  # the latest BeamReading, for the status page
         self._deploy_started: Optional[float] = None
         self._help_raised = False
-        self._link_ok_at = self._clock()
+        # Since when each direction (sending, polling) has been failing; None while it works.
+        self._failing_since: dict[str, Optional[float]] = {"post": None, "poll": None}
 
     # ---- controls the scenario, the status page and the backend link call -------------------
 
@@ -220,11 +221,12 @@ class BusAgent:
 
     # ---- timeout and link loss (R1; both off unless configured) ------------------------------------
 
-    def _note_link_ok(self) -> None:
-        # A non-blocking backend answers polls from its cache, so its own view of the last delivery
-        # decides whether the link is really working.
-        if getattr(self._backend, "last_error", None) is None:
-            self._link_ok_at = self._clock()
+    def _note_ok(self, direction: str) -> None:
+        self._failing_since[direction] = None
+
+    def _note_failed(self, direction: str) -> None:
+        if self._failing_since[direction] is None:
+            self._failing_since[direction] = self._clock()
 
     def _deployment_timed_out(self, now: float) -> bool:
         limit = self._config.deployment_timeout_seconds
@@ -237,7 +239,16 @@ class BusAgent:
 
     def _link_lost(self, now: float) -> bool:
         limit = self._config.link_loss_halt_seconds
-        return limit is not None and now - self._link_ok_at > limit
+        if limit is None:
+            return False
+        # A non-blocking backend answers from a cache and queues sends, so its own worker knows
+        # whether the link works (and whether the worker is alive at all).
+        probe = getattr(self._backend, "link_problem_seconds", None)
+        if probe is not None:
+            return probe() > limit
+        return any(
+            since is not None and now - since > limit for since in self._failing_since.values()
+        )
 
     def _add_time_and_link_reasons(self, decision: Decision, now: float) -> Decision:
         """These can only add a halt, never take one away."""
@@ -304,8 +315,9 @@ class BusAgent:
             items = fetch()
         except BackendError as error:
             log.warning("Backend poll failed: %s", error)
+            self._note_failed("poll")
             return
-        self._note_link_ok()
+        self._note_ok("poll")
         for item in items:
             handle(item)
 
@@ -315,8 +327,9 @@ class BusAgent:
             halt = self._backend.pending_operator_halt()
         except BackendError as error:
             log.warning("Could not read the operator halt: %s", error)
+            self._note_failed("poll")
             return
-        self._note_link_ok()
+        self._note_ok("poll")
         if isinstance(halt, dict) and isinstance(halt.get("halted"), bool):
             self.set_operator_halt(halt["halted"])
 
@@ -372,6 +385,7 @@ class BusAgent:
             self._backend.report_actuator(command["commandId"], body)
         except BackendError as error:
             log.warning("Could not report actuator status: %s", error)
+            self._note_failed("post")
             return
         self._gate.sent(key, body)
 
@@ -436,7 +450,7 @@ class BusAgent:
     def _post(self, kind: str, body: dict) -> None:
         self._backend.post(kind, body)
         self._gate.sent(kind, body)
-        self._note_link_ok()
+        self._note_ok("post")
         self.link = {"ok": True, "error": None}
 
     def _post_now(self, kind: str, body: dict) -> None:
@@ -461,4 +475,5 @@ class BusAgent:
             self._post(kind, body)
         except BackendError as error:
             log.warning("Could not post %s: %s", kind, error)
+            self._note_failed("post")
             self.link = {"ok": False, "error": str(error)}
