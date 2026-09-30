@@ -82,6 +82,46 @@ export function openPostgres(
   return pool;
 }
 
+interface SharedEntry {
+  pool: PgPool;
+  users: number;
+}
+const sharedPools = new Map<string, SharedEntry>();
+
+/**
+ * One pool per database for the whole process. The bus operations and the case data each used to
+ * open their own, doubling the connections one backend holds. Each caller gets a handle whose
+ * `end()` gives its share back; the pool itself closes with the last one.
+ */
+export function acquirePostgres(
+  url: string,
+  options: OpenPostgresOptions = {},
+): PgPool {
+  const key = `${url}|${options.schema ?? ""}`;
+  let entry = sharedPools.get(key);
+  if (!entry) {
+    entry = { pool: openPostgres(url, options), users: 0 };
+    sharedPools.set(key, entry);
+  }
+  entry.users += 1;
+  const shared = entry;
+  let released = false;
+  const handle: PgPool = {
+    on: (event, listener) => shared.pool.on?.(event, listener),
+    query: (text, values) => shared.pool.query(text, values),
+    connect: () => shared.pool.connect(),
+    end: async () => {
+      if (released) return;
+      released = true;
+      shared.users -= 1;
+      if (shared.users > 0) return;
+      if (sharedPools.get(key) === shared) sharedPools.delete(key);
+      await shared.pool.end();
+    },
+  };
+  return handle;
+}
+
 /** Runs work in one transaction on one connection; rolls back if it throws. */
 export async function inTransaction<T>(
   pool: PgPool,

@@ -26,6 +26,7 @@ import {
   getAuditLog,
   getOperationsData,
   resetOperationsData,
+  TERMINAL_ACTUATOR_STATES,
 } from "./operationsData";
 import { fuseRampObstacleAssessment } from "./rampObstacleService";
 import {
@@ -687,8 +688,13 @@ export async function listPendingActuatorCommands(
   const data = await getOperationsData();
   const pending: ActuatorCommand[] = [];
   for (const command of await data.openCommands(OPEN_COMMAND_LIMIT)) {
-    if (busId && command.busId !== busId) continue;
     const status = await data.statuses.get(command.commandId);
+    if (status && TERMINAL_ACTUATOR_STATES.includes(status.state)) {
+      // Stored as finished but never closed (a crash between the two writes of a status).
+      await data.commands.setIndex(command.commandId, "open", undefined);
+      continue;
+    }
+    if (busId && command.busId !== busId) continue;
     if (!status || ["ISSUED", "ACCEPTED", "IN_PROGRESS"].includes(status.state))
       pending.push(command);
   }

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   CONNECT_TIMEOUT_MS,
   STATEMENT_TIMEOUT_MS,
+  acquirePostgres,
   openPostgres,
   type PgPool,
 } from "../storage/postgres";
@@ -54,4 +55,29 @@ test("a schema name that is not a plain identifier is refused", () => {
       }),
     /Invalid schema name/,
   );
+});
+
+test("the parts of one process share one pool per database, and it is closed with the last of them", async () => {
+  let created = 0;
+  let ended = 0;
+  class Counted extends FakePool {
+    constructor(config: Record<string, unknown>) {
+      super(config);
+      created += 1;
+    }
+    override async end() {
+      ended += 1;
+    }
+  }
+  const first = acquirePostgres("postgres://x/shared", { poolClass: Counted });
+  const second = acquirePostgres("postgres://x/shared", { poolClass: Counted });
+  assert.equal(created, 1, "one pool for two users");
+  await first.end();
+  assert.equal(ended, 0, "still in use by the other");
+  await first.end();
+  assert.equal(ended, 0, "ending twice counts once");
+  await second.end();
+  assert.equal(ended, 1, "closed with the last user");
+  acquirePostgres("postgres://x/shared", { poolClass: Counted });
+  assert.equal(created, 2, "a new pool after all were closed");
 });

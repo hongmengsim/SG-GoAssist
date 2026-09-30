@@ -10,7 +10,6 @@ import {
   OperationsValidationError,
   getLatestSafetyTelemetry,
   ingestSafetyTelemetry,
-  listVehicleCapabilities,
   publishOperationsEvent,
 } from "./assistanceCaseService";
 import { processVehicleCommand } from "./aviator";
@@ -41,9 +40,8 @@ async function assignAutonomousRouteUnlocked(
   busId: string,
   assignment: AutonomousRouteAssignment,
 ): Promise<AutonomousVehicleState> {
-  const capability = (await listVehicleCapabilities()).find(
-    (item) => item.busId === busId,
-  );
+  // By key: reading a capped fleet list and searching it misses a bus beyond the cap.
+  const capability = await (await getOperationsData()).capabilities.get(busId);
   if (!capability?.autonomous) {
     throw new OperationsValidationError(
       "Vehicle must advertise autonomous mock-route capability",

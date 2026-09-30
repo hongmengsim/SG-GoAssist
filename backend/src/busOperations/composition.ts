@@ -8,7 +8,7 @@ import { OperatorHaltService, type StoredHalt } from "./operatorHalt";
 import { AuditBatcher } from "./auditBatcher";
 import { getAuditLog } from "../services/operationsData";
 import type { OperationsAuditEvent } from "../services/auditLog";
-import { openPostgres, type PgPool } from "../storage/postgres";
+import { acquirePostgres, type PgPool } from "../storage/postgres";
 import { PostgresDocumentTable } from "../storage/postgresTables";
 import { openSqliteDatabase, type SqliteDatabase } from "../storage/sqlite";
 import {
@@ -114,7 +114,7 @@ export function createBusOperations(
     const url = process.env.GOASSIST_DATABASE_URL?.trim();
     if (!options.postgres && !url)
       throw new Error("The postgres driver needs GOASSIST_DATABASE_URL");
-    pgPool = options.postgres ?? openPostgres(url as string);
+    pgPool = options.postgres ?? acquirePostgres(url as string);
     ownsPool = !options.postgres;
     const pool = pgPool;
     repository = new DocumentBusStatusRepository(

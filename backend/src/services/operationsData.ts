@@ -29,7 +29,7 @@ import { PostgresCaseRepository } from "../cases/postgresCaseRepository";
 import { PostgresLeaseStore } from "../concurrency/postgresLeaseStore";
 import { SqliteLeaseStore } from "../concurrency/leaseStores";
 import type { LeaseStore } from "../concurrency/keyedLock";
-import { openPostgres, type PgPool } from "../storage/postgres";
+import { acquirePostgres, type PgPool } from "../storage/postgres";
 import { PostgresDocumentTable } from "../storage/postgresTables";
 import { openSqliteDatabase, type SqliteDatabase } from "../storage/sqlite";
 import { PostgresAuditLog } from "./postgresAuditLog";
@@ -65,7 +65,7 @@ const RETENTION_INTERVAL_MS = 60_000;
 
 /** A command counts as open until a terminal status is recorded for it. */
 const OPEN = "1";
-const TERMINAL_ACTUATOR_STATES = [
+export const TERMINAL_ACTUATOR_STATES: readonly string[] = [
   "COMPLETED",
   "CANCELLED",
   "BLOCKED",
@@ -228,7 +228,7 @@ export class OperationsData {
       ? undefined
       : (options.postgres ??
         (databaseUrl && requested !== "sqlite"
-          ? openPostgres(databaseUrl)
+          ? acquirePostgres(databaseUrl)
           : undefined));
     this.ownsPostgres = !options.postgres && this.postgres !== undefined;
     this.database =
