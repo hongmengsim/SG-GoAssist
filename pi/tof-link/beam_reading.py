@@ -13,11 +13,14 @@ distance, never as clear.
 
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass
 from typing import Callable, Iterable, Optional, Protocol
 
 from demo_state import BeamState
+
+log = logging.getLogger(__name__)
 
 BEAM_CLEAR = "BEAM_CLEAR"
 BLOCKED = "BLOCKED"
@@ -63,10 +66,24 @@ class BeamReader:
         self._beam = beam if beam is not None else BeamState()
         self._clock = clock
         self._simulated = simulated
+        self._source_failed = False
 
     def poll(self) -> BeamReading:
         now = self._clock()
-        for line in self._source.read_lines():
+        try:
+            lines = list(self._source.read_lines())
+        except Exception as error:  # noqa: BLE001 - any failed read means the beam cannot be trusted
+            # An unplugged ESP32 raises OSError from the serial read. The beam is then UNKNOWN at once,
+            # never the last reading, and the caller's loop carries on and halts.
+            self._beam.invalidate()
+            if not self._source_failed:
+                log.warning("Beam source failed (%s); the beam is UNKNOWN until it reads again", error)
+                self._source_failed = True
+            return BeamReading(UNKNOWN, None, self._simulated)
+        if self._source_failed:
+            log.info("Beam source is reading again")
+            self._source_failed = False
+        for line in lines:
             self._beam.accept(line, now)
         state = _STATE_NAMES.get(self._beam.check(now), UNKNOWN)
         distance = self._beam.mm if state in _STATES_WITH_DISTANCE else None
