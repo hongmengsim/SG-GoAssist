@@ -50,8 +50,20 @@ function requestFromPush(request) {
   };
 }
 
+// A request only moves forward: submitted, then confirmed, then finished (either way). A message
+// that arrives late, or a snapshot read before a push, must not undo that.
+const STATUS_RANK = { SENDING: 0, ACKNOWLEDGED: 1 };
+const rankOf = (status) => STATUS_RANK[status] ?? 2;
+
 function withRequest(state, requestId, patch) {
   const existing = state.requests[requestId] ?? { requestId };
+  if (patch.status === undefined) delete patch.status;
+  else if (
+    existing.status !== undefined &&
+    (rankOf(patch.status) < rankOf(existing.status) ||
+      (rankOf(existing.status) === 2 && rankOf(patch.status) === 2))
+  )
+    delete patch.status;
   return {
     ...state,
     requests: { ...state.requests, [requestId]: { ...existing, ...patch } },

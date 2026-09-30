@@ -208,9 +208,12 @@ $("root").addEventListener("click", (event) => {
   const vehicleButton = event.target.closest("[data-autonomy]");
   if (vehicleButton && !vehicleButton.disabled) {
     const { autonomy, bus } = vehicleButton.dataset;
-    return ask(`Send "${autonomy.toLowerCase()}" to ${bus}?`, () =>
-      run("autonomy", { busId: bus, action: autonomy }),
-    );
+    // Resuming tells the vehicle the obstacle is cleared, so the operator is asked to confirm that.
+    const question =
+      autonomy === "RESUME"
+        ? `Resume ${bus}? This tells the vehicle the obstacle is cleared and its position is accurate. Confirm only if you have checked.`
+        : `Send "${autonomy.toLowerCase()}" to ${bus}?`;
+    return ask(question, () => run("autonomy", { busId: bus, action: autonomy }));
   }
   const button = event.target.closest("[data-act]");
   if (!button || button.disabled) return;

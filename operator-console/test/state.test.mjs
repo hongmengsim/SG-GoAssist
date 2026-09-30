@@ -238,3 +238,41 @@ test("a request listed by the backend keeps its case id and drops the passenger 
   assert.equal(state.requests["REQ-5"].status, "ACKNOWLEDGED");
   assert.equal("sessionId" in state.requests["REQ-5"], false);
 });
+
+// ---- C-M: request status never goes backwards, and never becomes undefined --------------------
+
+test("a late SENDING never undoes ACKNOWLEDGED, and a finished request stays finished", () => {
+  let state = reduce(initialState(), {
+    type: "REQUEST_STATUS",
+    requestId: "R1",
+    status: "ACKNOWLEDGED",
+  });
+  state = reduce(state, { type: "REQUEST_STATUS", requestId: "R1", status: "SENDING" });
+  assert.equal(state.requests.R1.status, "ACKNOWLEDGED");
+  state = reduce(state, { type: "REQUEST_STATUS", requestId: "R1", status: "CANCELLED" });
+  state = reduce(state, { type: "REQUEST_STATUS", requestId: "R1", status: "ACKNOWLEDGED" });
+  assert.equal(state.requests.R1.status, "CANCELLED");
+});
+
+test("a status message with no status leaves the request as it was", () => {
+  const start = reduce(initialState(), {
+    type: "REQUEST_STATUS",
+    requestId: "R2",
+    status: "ACKNOWLEDGED",
+  });
+  const next = reduce(start, { type: "REQUEST_STATUS", requestId: "R2" });
+  assert.equal(next.requests.R2.status, "ACKNOWLEDGED");
+});
+
+test("a snapshot that lists an older status does not undo a newer push", () => {
+  let state = reduce(initialState(), {
+    type: "REQUEST_STATUS",
+    requestId: "R3",
+    status: "ACKNOWLEDGED",
+  });
+  state = reduce(state, {
+    type: "REQUEST_SNAPSHOT",
+    request: { requestId: "R3", status: "SENDING" },
+  });
+  assert.equal(state.requests.R3.status, "ACKNOWLEDGED");
+});

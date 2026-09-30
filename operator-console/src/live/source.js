@@ -160,9 +160,11 @@ export function createLiveSource({
       const stops = stopCodes(messages.reduce(reduce, state));
       const bays = [];
       for (const stop of stops) {
-        bays.push(
-          await get(`/api/operations/bays/${encodeURIComponent(stop)}`),
+        // One bay that cannot be read must not hide every other bus and stop.
+        const bay = await optional(
+          `/api/operations/bays/${encodeURIComponent(stop)}`,
         );
+        if (bay) bays.push(bay);
       }
       if (run !== snapshotRun) return;
       let next = messages.reduce(reduce, state);

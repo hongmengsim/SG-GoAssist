@@ -33,3 +33,39 @@ test("a 401 after the console has loaded asks for the token instead of staying C
   assert.equal(source.connection.status, "auth-required");
   source.stop();
 });
+
+test("one bay that cannot be read does not abort the whole snapshot", async () => {
+  const fetchFn = async (url) => {
+    const { pathname } = new URL(url);
+    if (pathname.startsWith("/api/operations/bays/"))
+      return { ok: false, status: 500, json: async () => ({ error: "boom" }) };
+    const data = {
+      "/api/operations/bus-status": {
+        statuses: [
+          { busId: "AV-1", busService: "95", stopCode: "18331", movement: "POSITIONED_AT_STOP", simulated: true, observedAt: "2026-09-30T00:00:00.000Z" },
+        ],
+      },
+    };
+    return {
+      ok: true,
+      status: 200,
+      json: async () => data[pathname] ?? { records: [], requests: [], events: [], cases: [] },
+    };
+  };
+  const source = createLiveSource({
+    baseUrl: "http://x",
+    fetchFn,
+    WebSocketCtor: class {
+      constructor() {
+        this.readyState = 1;
+      }
+      send() {}
+      close() {}
+    },
+    schedule: () => () => {},
+  });
+  source.start();
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.ok(source.state.buses["AV-1"], "the bus from the same snapshot is shown");
+  source.stop();
+});
