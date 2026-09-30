@@ -153,6 +153,8 @@ def main(argv: "list[str] | None" = None) -> int:
             status_server.stop()
         if args.real:
             rig.worker.stop()
+            if rig.lasers is not None:
+                rig.lasers.close()  # the firmware also turns them off by itself after about 2 s
             for recorder in rig.recorders:
                 recorder.close()
         backend.stop()

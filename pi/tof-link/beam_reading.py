@@ -6,7 +6,8 @@ BeamState (demo_state.py) is used exactly as it is. This module only
 * names its state the way contracts/ does (``BEAM CLEAR`` becomes ``BEAM_CLEAR``), and
 * returns one immutable ``BeamReading`` per poll.
 
-It is read-only: it never sends commands, so laser control stays with the demo scripts.
+Reading is all the beam logic does. The serial source can also send the two laser commands
+(``LASERS ON`` and ``LASERS OFF``) for the bus agent's marker lasers, and nothing else.
 A reading that is missing, stale, invalid or unrecognised is reported as UNKNOWN with no
 distance, never as clear.
 """
@@ -139,13 +140,27 @@ class SimulatedBeamSource:
         return [f"{self._time_ms},VL53L0X,{distance},VALID"]
 
 
+# The only commands this source will ever write: they switch the marker lasers. ``LASERS ON`` also
+# restarts the firmware's two-second watchdog, so repeating it keeps the lasers on.
+LASER_COMMANDS = frozenset({"LASERS ON", "LASERS OFF"})
+
+
 class SerialLineSource:
-    """Reads lines from a pyserial-like port (``in_waiting`` and ``read``). Never blocks."""
+    """Reads lines from a pyserial-like port (``in_waiting`` and ``read``). Never blocks.
+
+    Reading is all it does, except ``send`` for the two laser commands above; anything else is refused.
+    """
 
     def __init__(self, port: object, max_line_bytes: int = 1024) -> None:
         self._port = port
         self._max_line_bytes = max_line_bytes
         self._buffer = b""
+
+    def send(self, command: str) -> None:
+        """Writes one of the laser commands. Raises ValueError for anything else, OSError if the port fails."""
+        if command not in LASER_COMMANDS:
+            raise ValueError(f"only the laser commands may be sent, not {command!r}")
+        self._port.write((command + "\n").encode("ascii"))  # type: ignore[attr-defined]
 
     def read_lines(self) -> list[str]:
         waiting = self._port.in_waiting  # type: ignore[attr-defined]

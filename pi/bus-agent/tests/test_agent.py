@@ -9,6 +9,7 @@ from jsonschema import Draft7Validator
 from beam_reading import BeamReader, SimulatedBeamSource
 from bus_agent.agent import AgentConfig, BusAgent, DepartureBlocked
 from bus_agent.backend import FakeBackend
+from bus_agent.lasers import LaserMarker
 from bus_agent.sim_sensors import SimulatedCamera
 
 SCHEMAS = Path(__file__).resolve().parents[3] / "contracts" / "schema"
@@ -48,13 +49,18 @@ def command(command_id="CMD-1", kind="DEPLOY_RAMP"):
 class World:
     """One agent with simulated sensors and a fake clock that advances 0.2 s per tick."""
 
-    def __init__(self, bus_id=BUS, config=None, backend=None) -> None:
+    def __init__(self, bus_id=BUS, config=None, backend=None, laser_sink=None) -> None:
         self.now = 100.0
         self.clock = lambda: self.now
         self.backend = backend if backend is not None else FakeBackend()
         self.camera = SimulatedCamera(self.clock)
         self.beam_source = SimulatedBeamSource(reference_mm=500)
         self.beam = BeamReader(self.beam_source, clock=self.clock, simulated=True)
+        self.lasers = (
+            None
+            if laser_sink is None
+            else LaserMarker(laser_sink.send, clock=self.clock, hold_seconds=(config or AgentConfig()).deploy_seconds)
+        )
         self.agent = BusAgent(
             bus_id=bus_id,
             bus_service="95",
@@ -65,6 +71,7 @@ class World:
             clock=self.clock,
             iso_clock=lambda: "2026-09-30T00:00:00.000Z",
             config=config or AgentConfig(),
+            lasers=self.lasers,
         )
         for _ in range(10):  # let the beam collect its calibration readings
             self.tick()
@@ -86,6 +93,79 @@ class World:
 
     def statuses(self) -> list:
         return [body["state"] for _, body in self.backend.actuator_reports]
+
+
+class ListSink:
+    """Stands in for the ESP32's serial port. It records the laser commands and can fail like an unplugged one."""
+
+    def __init__(self) -> None:
+        self.sent: list = []
+        self.failing = False
+
+    def send(self, command: str) -> None:
+        if self.failing:
+            raise OSError(5, "Input/output error")
+        self.sent.append(command)
+
+
+class LaserFollowsRampTests(unittest.TestCase):
+    """Marker lasers show where people must not stand while the ramp is deploying, out, or retracting."""
+
+    def test_they_are_off_until_a_deployment_starts(self) -> None:
+        sink = ListSink()
+        world = World(laser_sink=sink)
+        world.positioned_with_request()
+        world.tick(10)
+        self.assertEqual("STOWED", world.agent.ramp.state)
+        self.assertEqual([], sink.sent)
+
+    def test_they_come_on_when_the_deployment_starts_and_stay_on_until_after_the_ramp_is_stowed(self) -> None:
+        sink = ListSink()
+        world = World(laser_sink=sink)
+        world.positioned_with_request()
+        world.deploy(4)
+        self.assertEqual("LASERS ON", sink.sent[0])
+        world.tick(30)  # the simulated deployment takes 4 s
+        self.assertEqual("DEPLOYED", world.agent.ramp.state)
+        self.assertNotIn("LASERS OFF", sink.sent)
+        world.backend.commands = [command("CMD-2", "RETRACT_RAMP")]
+        world.tick(6)
+        self.assertEqual("STOWED", world.agent.ramp.state)
+        world.tick(10)  # 2 s later: the retraction stand-in keeps them on
+        self.assertNotIn("LASERS OFF", sink.sent)
+        world.tick(25)  # 5 s more: past the hold
+        self.assertEqual(1, sink.sent.count("LASERS OFF"))
+        self.assertEqual("LASERS OFF", sink.sent[-1])
+
+    def test_they_stay_on_while_the_ramp_is_halted_because_it_may_be_partly_out(self) -> None:
+        sink = ListSink()
+        world = World(laser_sink=sink)
+        world.positioned_with_request()
+        world.deploy(4)
+        world.beam_source.set_blocked(True)
+        world.tick(15)
+        self.assertEqual("HALTED", world.agent.ramp.state)
+        self.assertNotIn("LASERS OFF", sink.sent)
+        self.assertEqual("LASERS ON", sink.sent[-1])
+
+    def test_a_dead_laser_port_never_stops_the_agent_or_its_halts(self) -> None:
+        sink = ListSink()
+        sink.failing = True
+        world = World(laser_sink=sink)
+        world.positioned_with_request()
+        with self.assertLogs("bus_agent.lasers", level="WARNING"):
+            world.deploy(4)
+            world.tick(30)
+        self.assertEqual("DEPLOYED", world.agent.ramp.state)
+        world.beam_source.set_blocked(True)
+        world.tick(5)
+        self.assertIn("TOF_BLOCKED", world.agent.last_decision.reasons)
+
+    def test_without_a_laser_port_the_agent_behaves_exactly_as_before(self) -> None:
+        world = World()
+        world.positioned_with_request()
+        world.deploy(30)
+        self.assertEqual("DEPLOYED", world.agent.ramp.state)
 
 
 class ContractTests(unittest.TestCase):

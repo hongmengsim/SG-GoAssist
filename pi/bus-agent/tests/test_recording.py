@@ -31,6 +31,23 @@ class LineTests(unittest.TestCase):
         self.addCleanup(self.directory.cleanup)
         self.path = Path(self.directory.name) / "beam.jsonl"
 
+    def test_a_laser_command_passes_through_and_is_not_recorded(self) -> None:
+        class Sending(FakeLineSource):
+            def __init__(self) -> None:
+                super().__init__()
+                self.sent: list = []
+
+            def send(self, command: str) -> None:
+                self.sent.append(command)
+
+        clock = Clock()
+        inner = Sending()
+        recorder = RecordingLineSource(inner, self.path, clock)
+        recorder.send("LASERS ON")
+        recorder.close()
+        self.assertEqual(["LASERS ON"], inner.sent)
+        self.assertEqual("", self.path.read_text(encoding="utf-8"), "only what the ESP32 sent is recorded")
+
     def test_recorded_lines_replay_at_the_same_offsets(self) -> None:
         clock = Clock()
         inner = FakeLineSource()

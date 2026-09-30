@@ -170,11 +170,13 @@ def _pyserial_opener(port: str, baud: int, timeout: float):  # pragma: no cover 
         import serial  # noqa: PLC0415
     except ImportError as error:
         raise SensorUnavailable("pyserial is not installed") from error
-    return serial.Serial(port, baud, timeout=timeout)
+    # A write that cannot finish (a stuck cable) gives up quickly instead of holding up the safety loop.
+    return serial.Serial(port, baud, timeout=timeout, write_timeout=0.2)
 
 
 def open_serial_line_source(port: str, baud: int = DEFAULT_BAUD, opener: Callable = _pyserial_opener) -> SerialLineSource:
-    """Opens the ESP32's serial port for reading. Reads never block; this never sends anything."""
+    """Opens the ESP32's serial port. Reads never block. The only thing ever written is one of the two
+    marker-laser commands, through ``SerialLineSource.send``."""
     try:
         connection = opener(port, baud, 0)
     except SensorUnavailable:

@@ -18,6 +18,7 @@ from .agent import AgentConfig, BusAgent
 from .backend import Backend, BackendError
 from .config import AgentSettings
 from .console import apply_command
+from .lasers import LaserMarker
 from .perception_worker import PerceptionWorker
 from .recording import RecordingLineSource, RecordingPerception, ReplayLineSource, ReplayPerception
 from .real_mode import RealSensors
@@ -96,6 +97,7 @@ class RealRig:
     worker: PerceptionWorker
     camera: RealCamera
     recorders: tuple = ()
+    lasers: Optional[LaserMarker] = None
 
 
 def build_real_rig(
@@ -118,6 +120,11 @@ def build_real_rig(
         perception = RecordingPerception(worker, Path(record_dir) / "perception.jsonl", clock)
         recorders = (beam_source, perception)
     beam = BeamReader(beam_source, clock=clock, simulated=False)
+    # The marker lasers share the ESP32's serial port with the beam reader. A source that cannot send (a
+    # fake, or none) means no lasers; the ramp logic does not depend on them. The hold after a stow stands
+    # in for retraction time, which the simulated ramp does not have; it is as long as a deployment.
+    send = getattr(beam_source, "send", None)
+    lasers = None if send is None else LaserMarker(send, clock=clock, hold_seconds=settings.deploy_seconds)
     agent = BusAgent(
         bus_id=settings.bus_id,
         bus_service=settings.bus_service,
@@ -134,10 +141,11 @@ def build_real_rig(
             link_loss_halt_seconds=settings.link_loss_halt_seconds,
         ),
         gate_config=GateConfig(max_camera_age_seconds=settings.max_camera_age_seconds),
+        lasers=lasers,
     )
     if start_worker:
         worker.start()
-    return RealRig(agent, beam, worker, camera, recorders)
+    return RealRig(agent, beam, worker, camera, recorders, lasers)
 
 
 @dataclass

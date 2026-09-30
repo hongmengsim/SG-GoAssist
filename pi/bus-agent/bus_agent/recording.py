@@ -52,6 +52,10 @@ class RecordingLineSource:
             self._file.write(json.dumps({"t": round(now - self._start, 3), "line": line}) + "\n")
         return lines
 
+    def send(self, command: str) -> None:
+        """Passes a laser command on to the real source. Only what the ESP32 sent is recorded."""
+        self._inner.send(command)
+
     def close(self) -> None:
         self._file.close()
 
