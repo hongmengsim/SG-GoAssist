@@ -126,3 +126,21 @@ Only what was run on hardware and shown in pasted output is marked "verified on 
 - **Verified on hardware:** the Pi sees the ESP32 as `/dev/ttyACM0` (`1a86:55d3 QinHeng USB Single Serial`, `cdc_acm` driver; there is no `/dev/serial/by-id/` entry, so configure the `ttyACM0` path). Reading 115200 baud with nothing sent gave `time_ms,VL53L0X,distance_mm,status` lines about every 294 ms for 10 s with no restart. `VALID` distances and `NA,INVALID_status_2` lines both arrive. Distance readings therefore need no handshake or keepalive; a writer is still untested for the lasers.
 - **Not verified:** stable power. Before that read the ESP32 restarted about every 3 s, with `over-current change` messages on all four USB ports. After a re-plug at 362.9 s the log stayed quiet for about 72 s. `vcgencmd get_throttled` returned `0x50000` (under-voltage and throttling have occurred since boot; none at the time of the check). The Pi supply is marginal; the cause of the earlier loop is not proven.
 - **Not verified:** the backstop distance. The readings sat at 21 to 27 mm, then 47 to 258 mm with gaps; where the board and hand were was not recorded. Calibration needs a reference of 150 to 1000 mm.
+
+### Stage 2: ToF beam states through `pi/tof-link` (Pi #1, 30 Sep 2026)
+
+Run with a throwaway script that drives `BeamReader` on the real ESP32 over `/dev/ttyACM0` (it sends nothing and stores nothing). The agent's own `calibrate` command was not used: `--real` refuses to start until the camera and model also open.
+
+- **Verified on hardware:**
+  - Before calibration the state was `UNCALIBRATED` (`UNKNOWN` for the first reading only).
+  - The first calibration attempt was refused ("Wait for 10 fresh valid readings"); the second gave a reference of 228.5 mm.
+  - With the path empty: `BEAM_CLEAR` at 226 to 234 mm.
+  - With a hand in the beam: `BLOCKED` at 34 to 115 mm.
+  - After the hand was withdrawn: `CHECKING`, then `BEAM_CLEAR`.
+  - With the backstop removed: `UNKNOWN` with no distance for the whole 6 s, never `BEAM_CLEAR`.
+- **Not verified:**
+  - Hand timing was loose. Both the hand-in and hand-out runs show `BLOCKED` twice, so the exact block and clear latency is not measured.
+  - Unplugging the ESP32 gives `UNKNOWN` within about a second and halts the gate: not tested (the halt needs the agent).
+  - The agent's own `calibrate` command and the gate's halt reasons: not tested (Stage 5).
+  - Stable power: `throttled=0x50000` and 390 over-current lines were still present at uptime 1024 s. The supply is still suspect.
+- **Observation:** clear readings drifted between 226 and 249 mm against a 228.5 mm reference, about 20 mm from the reference at the top, against a 30 mm margin. The margin is thin for this sensor and backstop.
