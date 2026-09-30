@@ -379,3 +379,37 @@ test(
     assert.ok((await read()) < rounds * 2, "without the lock updates are lost");
   },
 );
+
+test("closing the lock gives back the leases it holds, so a peer does not wait for them to expire", async () => {
+  const leases = new MemoryLeaseStore();
+  const dying = new DistributedKeyedLock(leases, { ttlMs: 60_000 });
+  const neverEnds = new Promise<void>(() => undefined);
+  void dying.run("k", () => neverEnds);
+  await sleep(20);
+  const peer = new DistributedKeyedLock(leases, { acquireTimeoutMs: 80 });
+  await assert.rejects(
+    peer.run("k", async () => "x"),
+    (error: unknown) => error instanceof LockTimeoutError,
+  );
+  await dying.close();
+  assert.equal(
+    await peer.run("k", async () => "took over at once"),
+    "took over at once",
+  );
+});
+
+test("the default wait for a lock is longer than the lease, so a dead peer is waited out", async () => {
+  const { DistributedKeyedLock: Lock } =
+    await import("../concurrency/keyedLock");
+  const source = Lock.toString();
+  assert.ok(source.length > 0);
+  // The two defaults are module constants; check them through behaviour instead of reflection:
+  // a lease that expires after 40 ms is overtaken by a waiter that uses the default timeout.
+  const leases = new MemoryLeaseStore();
+  await leases.tryAcquire("k", "dead peer", 40);
+  const lock = new Lock(leases);
+  assert.equal(
+    await lock.run("k", async () => "waited it out"),
+    "waited it out",
+  );
+});

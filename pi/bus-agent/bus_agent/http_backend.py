@@ -113,6 +113,8 @@ class HttpBackend:
                 self._bus_id,
                 payload if payload is not None else _EMPTY_OBJECT,
                 now_ms=self._now_ms(),
+                method=method,
+                path=path,
             )
         )
         try:

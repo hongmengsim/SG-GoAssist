@@ -19,7 +19,7 @@ import {
   getOperatorHalts,
 } from "../busOperations/composition";
 import {
-  getRequestsForBus,
+  getRequestsForBusWithStatus,
   getRequest,
   processSimulatorCommand,
 } from "../services/aviator";
@@ -101,8 +101,12 @@ router.get(
       Number.isFinite(requested) && requested >= 1
         ? Math.min(Math.trunc(requested), MAX_WAITING_REQUESTS)
         : MAX_WAITING_REQUESTS;
-    const requests = (await getRequestsForBus(req.params.busId))
-      .filter((request) => request.status === AssistanceRequestStatus.SENDING)
+    const requests = (
+      await getRequestsForBusWithStatus(
+        req.params.busId,
+        AssistanceRequestStatus.SENDING,
+      )
+    )
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
       .slice(0, limit)
       .map(toBusRequest);

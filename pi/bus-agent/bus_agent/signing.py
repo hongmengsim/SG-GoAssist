@@ -1,8 +1,11 @@
 """Signed device requests, matching backend/src/routes/auth.ts (verifyDeviceRequest).
 
-The signature is HMAC-SHA256 over ``<deviceId>.<timestamp>.`` followed by the exact request
-body bytes. The backend accepts timestamps within 60 seconds of its own clock. When no shared
-secret is configured, no headers are added (development mode), as on the backend.
+The signature is HMAC-SHA256 over ``<deviceId>.<timestamp>.<METHOD>.<path and query>.``
+followed by the exact request body bytes, so a signature cannot be replayed on another method
+or path. (The WebSocket subscription signs ``<deviceId>.<timestamp>.`` and a fixed body.) The
+backend accepts timestamps within 60 seconds of its own clock and refuses to see the same
+signature twice. When no secret is configured, no headers are added (development mode), as on
+the backend.
 """
 
 from __future__ import annotations
@@ -13,9 +16,18 @@ import time
 from typing import Optional
 
 
-def sign_body(secret: str, device_id: str, timestamp: str, body: bytes) -> str:
+def sign_body(
+    secret: str,
+    device_id: str,
+    timestamp: str,
+    body: bytes,
+    method: Optional[str] = None,
+    path: Optional[str] = None,
+) -> str:
+    """The signature. ``method`` and ``path`` are bound in for HTTP requests (both or neither)."""
     mac = hmac.new(secret.encode("utf-8"), digestmod=hashlib.sha256)
-    mac.update(f"{device_id}.{timestamp}.".encode("utf-8"))
+    context = "" if method is None else f"{method.upper()}.{path or ''}."
+    mac.update(f"{device_id}.{timestamp}.{context}".encode("utf-8"))
     mac.update(body)
     return mac.hexdigest()
 
@@ -25,6 +37,8 @@ def signed_headers(
     device_id: str,
     body: bytes,
     now_ms: Optional[int] = None,
+    method: Optional[str] = None,
+    path: Optional[str] = None,
 ) -> dict:
     if not secret:
         return {}
@@ -32,5 +46,5 @@ def signed_headers(
     return {
         "x-device-id": device_id,
         "x-timestamp": timestamp,
-        "x-signature": sign_body(secret, device_id, timestamp, body),
+        "x-signature": sign_body(secret, device_id, timestamp, body, method, path),
     }

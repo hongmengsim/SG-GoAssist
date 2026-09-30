@@ -224,13 +224,8 @@ export class SqliteDocumentTable<T> implements DocumentTable<T> {
         ${columns.join(",\n        ")}${columns.length ? "," : ""}
         body_json TEXT NOT NULL
       );
-      ${this.names
-        .map(
-          (_, position) =>
-            `CREATE INDEX IF NOT EXISTS ${this.table}_i${position} ON ${this.table} (i${position});`,
-        )
-        .join("\n")}
     `);
+    this.migrateIndexes();
     const insertColumns = [
       "doc_key",
       ...this.names.map((_, position) => `i${position}`),
@@ -272,6 +267,80 @@ export class SqliteDocumentTable<T> implements DocumentTable<T> {
       `DELETE FROM ${this.table} WHERE rowid IN
          (SELECT rowid FROM ${this.table} ORDER BY rowid LIMIT ?)`,
     );
+  }
+
+  /**
+   * Brings a table made by an older version up to the current index set: an index column that
+   * is missing is added, and one whose meaning changed (its name at that position is not the
+   * name last recorded) is refilled from the stored documents. Without this a table created
+   * before an index was added would fail with "no such column". A column derived from more than
+   * the document (the commands "open" flag) is refilled from the document alone, so changing
+   * such an index means reviewing this step.
+   */
+  private migrateIndexes(): void {
+    const db = this.database;
+    db.exec(
+      "CREATE TABLE IF NOT EXISTS doc_meta (doc_table TEXT PRIMARY KEY, index_names TEXT NOT NULL)",
+    );
+    const present = new Set(
+      (
+        db.prepare(`PRAGMA table_info(${this.table})`).all() as Array<{
+          name: string;
+        }>
+      ).map((column) => column.name),
+    );
+    const recorded = db
+      .prepare("SELECT index_names FROM doc_meta WHERE doc_table = ?")
+      .get(this.table) as { index_names: string } | undefined;
+    const previous = recorded
+      ? (JSON.parse(recorded.index_names) as string[])
+      : undefined;
+    const refill: number[] = [];
+    this.names.forEach((name, position) => {
+      if (!present.has(`i${position}`)) {
+        db.exec(`ALTER TABLE ${this.table} ADD COLUMN i${position} TEXT`);
+        refill.push(position);
+      } else if (previous && previous[position] !== name) {
+        refill.push(position);
+      }
+    });
+    this.names.forEach((_, position) =>
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS ${this.table}_i${position} ON ${this.table} (i${position})`,
+      ),
+    );
+    if (refill.length > 0) {
+      const rows = db
+        .prepare(`SELECT doc_key, body_json FROM ${this.table}`)
+        .all() as Array<{ doc_key: string; body_json: string }>;
+      const assignments = refill
+        .map((position) => `i${position} = ?`)
+        .join(", ");
+      const update = db.prepare(
+        `UPDATE ${this.table} SET ${assignments} WHERE doc_key = ?`,
+      );
+      db.exec("BEGIN");
+      try {
+        for (const row of rows) {
+          const doc = JSON.parse(row.body_json) as T;
+          update.run(
+            ...refill.map(
+              (position) =>
+                this.spec.indexes![this.names[position]](doc) ?? null,
+            ),
+            row.doc_key,
+          );
+        }
+        db.exec("COMMIT");
+      } catch (error) {
+        db.exec("ROLLBACK");
+        throw error;
+      }
+    }
+    db.prepare(
+      `INSERT INTO doc_meta (doc_table, index_names) VALUES (?, ?)
+       ON CONFLICT(doc_table) DO UPDATE SET index_names = excluded.index_names`,
+    ).run(this.table, JSON.stringify(this.names));
   }
 
   private column(index: string): string {

@@ -69,7 +69,12 @@ const specs = {
   requests: {
     name: "requests",
     key: (doc) => doc.requestId,
-    indexes: { busId: (doc) => doc.busId, status: (doc) => doc.status },
+    indexes: {
+      busId: (doc) => doc.busId,
+      status: (doc) => doc.status,
+      // One bus's requests in one state, found through the index however many others exist.
+      busStatus: (doc) => `${doc.busId}:${doc.status}`,
+    },
   } satisfies TableSpec<PassengerAssistanceRequest>,
   vehicleStatuses: {
     name: "vehicle_statuses",

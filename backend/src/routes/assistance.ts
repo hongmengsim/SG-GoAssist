@@ -1,3 +1,4 @@
+import { requireOperator } from "./auth";
 import { Router, Request, Response } from "express";
 import {
   AssistanceRequestResponse,
@@ -40,42 +41,54 @@ router.get("/buses/mock", (req: Request, res: Response) => {
   });
 });
 
-router.get("/simulator/announcements", async (req: Request, res: Response) => {
-  res.json({
-    count: (await getAnnouncementEvents()).length,
-    announcements: await getAnnouncementEvents(),
-  });
-});
-
-router.post("/simulator/command", async (req: Request, res: Response) => {
-  if (!isAutoAcknowledgeEnabled() && req.body?.command === "ACKNOWLEDGE") {
-    return res.status(403).json({
-      error: "Acknowledgement must come from the bus",
+router.get(
+  "/simulator/announcements",
+  requireOperator,
+  async (req: Request, res: Response) => {
+    res.json({
+      count: (await getAnnouncementEvents()).length,
+      announcements: await getAnnouncementEvents(),
     });
-  }
-  const result = await processSimulatorCommand(req.body);
-  res.status(result.success ? 200 : 400).json(result);
-});
+  },
+);
 
-router.post("/simulator/vehicle", async (req: Request, res: Response) => {
-  const { busId, status, busService, stopCode } = req.body;
+router.post(
+  "/simulator/command",
+  requireOperator,
+  async (req: Request, res: Response) => {
+    if (!isAutoAcknowledgeEnabled() && req.body?.command === "ACKNOWLEDGE") {
+      return res.status(403).json({
+        error: "Acknowledgement must come from the bus",
+      });
+    }
+    const result = await processSimulatorCommand(req.body);
+    res.status(result.success ? 200 : 400).json(result);
+  },
+);
 
-  if (!busId || !Object.values(VehicleStatus).includes(status)) {
-    return res.status(400).json({
-      error: "Invalid vehicle command",
-      required: ["busId", "status"],
-      allowedStatuses: Object.values(VehicleStatus),
+router.post(
+  "/simulator/vehicle",
+  requireOperator,
+  async (req: Request, res: Response) => {
+    const { busId, status, busService, stopCode } = req.body;
+
+    if (!busId || !Object.values(VehicleStatus).includes(status)) {
+      return res.status(400).json({
+        error: "Invalid vehicle command",
+        required: ["busId", "status"],
+        allowedStatuses: Object.values(VehicleStatus),
+      });
+    }
+
+    const result = await processVehicleCommand({
+      busId,
+      status,
+      busService,
+      stopCode,
     });
-  }
-
-  const result = await processVehicleCommand({
-    busId,
-    status,
-    busService,
-    stopCode,
-  });
-  res.status(result.success ? 200 : 409).json(result);
-});
+    res.status(result.success ? 200 : 409).json(result);
+  },
+);
 
 router.post("/request", async (req: Request, res: Response) => {
   try {
@@ -279,7 +292,7 @@ router.get("/:requestId", async (req: Request, res: Response) => {
   res.json(request);
 });
 
-router.get("/", async (req: Request, res: Response) => {
+router.get("/", requireOperator, async (req: Request, res: Response) => {
   const requests = await getAllRequests();
   res.json({
     count: requests.length,

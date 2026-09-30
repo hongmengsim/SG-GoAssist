@@ -108,7 +108,18 @@ function requestStatusMessage(
   };
 }
 
-export async function createRequest(
+/**
+ * Creates a request unless the bus already has an equivalent active one, in which case that
+ * one is returned. The check and the write are one step under a per-bus lock, so a double tap
+ * or a button bounce cannot make two.
+ */
+export function createRequest(
+  request: PassengerAssistanceRequest,
+): Promise<PassengerAssistanceRequest> {
+  return withLock(`dup:${request.busId}`, () => createRequestUnlocked(request));
+}
+
+async function createRequestUnlocked(
   request: PassengerAssistanceRequest,
 ): Promise<PassengerAssistanceRequest> {
   const duplicate = await findDuplicateActiveRequest(
@@ -180,16 +191,20 @@ export async function findDuplicateActiveRequest(
   assistanceTypes: AssistanceType[],
   phase?: PassengerAssistanceRequest["boardingOrAlighting"],
 ): Promise<PassengerAssistanceRequest | undefined> {
-  const forBus = await (
-    await getOperationsData()
-  ).requests.find("busId", busId, BUS_REQUEST_LIMIT);
-  return forBus.find(
-    (request) =>
-      (!phase || request.boardingOrAlighting === phase) &&
-      request.status !== AssistanceRequestStatus.CANCELLED &&
-      request.status !== AssistanceRequestStatus.FAILED &&
-      assistanceTypes.every((type) => request.assistanceTypes.includes(type)),
-  );
+  // Only the active states are read, through the (bus, status) index, so a bus with a long
+  // history of finished requests costs nothing here and none of them can hide a live one.
+  for (const status of [
+    AssistanceRequestStatus.SENDING,
+    AssistanceRequestStatus.ACKNOWLEDGED,
+  ]) {
+    const match = (await getRequestsForBusWithStatus(busId, status)).find(
+      (request) =>
+        (!phase || request.boardingOrAlighting === phase) &&
+        assistanceTypes.every((type) => request.assistanceTypes.includes(type)),
+    );
+    if (match) return match;
+  }
+  return undefined;
 }
 
 export async function getRequest(
@@ -205,7 +220,20 @@ export async function getAllRequests(
   return await (await getOperationsData()).requests.list(limit);
 }
 
-/** Requests for one bus, oldest first, found through the bus index. */
+/** One bus's requests in one status, oldest first, found through the (bus, status) index. */
+export async function getRequestsForBusWithStatus(
+  busId: string,
+  status: AssistanceRequestStatus,
+  limit = BUS_REQUEST_LIMIT,
+): Promise<PassengerAssistanceRequest[]> {
+  return (await getOperationsData()).requests.find(
+    "busStatus",
+    `${busId}:${status}`,
+    limit,
+  );
+}
+
+/** Some requests for one bus (the oldest, up to `limit`): only for reading a field they all share. */
 export async function getRequestsForBus(
   busId: string,
   limit = BUS_REQUEST_LIMIT,
@@ -463,10 +491,13 @@ async function processVehicleCommandUnlocked(
 async function triggerAudioIdentificationIfNeeded(
   busId: string,
 ): Promise<ExternalAnnouncementMessage | undefined> {
-  const request = (await getRequestsForBus(busId)).find(
-    (candidate) =>
-      candidate.status === AssistanceRequestStatus.ACKNOWLEDGED &&
-      candidate.assistanceTypes.includes("BUS_AUDIO_IDENTIFICATION"),
+  const request = (
+    await getRequestsForBusWithStatus(
+      busId,
+      AssistanceRequestStatus.ACKNOWLEDGED,
+    )
+  ).find((candidate) =>
+    candidate.assistanceTypes.includes("BUS_AUDIO_IDENTIFICATION"),
   );
 
   if (!request) {

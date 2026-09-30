@@ -28,6 +28,8 @@ export interface AuditSink {
   appendBatch(events: OperationsAuditEvent[]): void;
   read(query: AuditQuery): Promise<OperationsAuditEvent[]>;
   reset(removeFile: boolean): void | Promise<void>;
+  /** Writes anything still buffered (at shutdown). Sinks that write at once have nothing to do. */
+  flush?(): Promise<void>;
 }
 
 const SCHEMA = `

@@ -61,7 +61,8 @@ class PostTests(unittest.TestCase):
         self.assertEqual(BUS, call["headers"]["x-device-id"])
         self.assertEqual(str(NOW_MS), call["headers"]["x-timestamp"])
         self.assertEqual(
-            sign_body("s3cret", BUS, str(NOW_MS), call["body"]), call["headers"]["x-signature"]
+            sign_body("s3cret", BUS, str(NOW_MS), call["body"], "POST", "/api/operations/vehicles/AV-095-01/status"),
+            call["headers"]["x-signature"],
         )
 
     def test_without_a_secret_no_signature_is_sent(self) -> None:
@@ -117,7 +118,10 @@ class OtherCallsTests(unittest.TestCase):
         transport = FakeTransport(200, {"commands": []})
         backend(transport, secret="s3cret").pending_actuator_commands()
         headers = transport.calls[0]["headers"]
-        self.assertEqual(sign_body("s3cret", BUS, str(NOW_MS), b"{}"), headers["x-signature"])
+        self.assertEqual(
+            sign_body("s3cret", BUS, str(NOW_MS), b"{}", "GET", f"/api/operations/actuators/pending?busId={BUS}"),
+            headers["x-signature"],
+        )
         self.assertIsNone(transport.calls[0]["body"])
 
     def test_an_unexpected_shape_is_a_backend_error_not_a_crash(self) -> None:

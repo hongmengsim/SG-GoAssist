@@ -29,14 +29,23 @@ export const DEFAULT_LIMITS: LimitConfig = {
   browse: { perSecond: 30, burst: 60, shedAbove: 200 },
 };
 
-export function classifyRequest(method: string, path: string): RequestClass {
+/**
+ * Which allowance a request draws on. Bus traffic gets the safety class (never shed) only when
+ * `trustedDevice` is true, meaning its signature was verified; anything else is limited like
+ * an ordinary client, so nobody can claim safety priority by sending a device header.
+ */
+export function classifyRequest(
+  method: string,
+  path: string,
+  trustedDevice = true,
+): RequestClass {
   const safety =
     /^\/api\/operations\/(vehicles\/[^/]+\/[^/]+|actuators(\/.*)?|devices\/heartbeat)$/;
   if (path.startsWith("/api/operations/vehicles/") && method === "GET") {
     // Reading a bus's record is an operator action; only what a bus posts or polls is safety.
     if (!/\/requests$/.test(path)) return "operator";
   }
-  if (safety.test(path)) return "safety";
+  if (safety.test(path)) return trustedDevice ? "safety" : "operator";
   if (path.startsWith("/api/operations")) return "operator";
   if (path.startsWith("/api/assistance") || path.startsWith("/api/passenger"))
     return "passenger";

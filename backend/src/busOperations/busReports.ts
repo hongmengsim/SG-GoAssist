@@ -36,6 +36,8 @@ export type ReportOutcome = "CHANGED" | "HEARTBEAT" | "STALE";
 export type AnyReport =
   RampSimulationStatus | RampSafetyDecision | HelpRequired;
 
+/** How many times a report retries after losing a compare-and-swap to a newer refresh. */
+const MAX_WRITE_ATTEMPTS = 5;
 const MAX_OBJECTS_IN_ZONE = 50;
 const MAX_TEXT = 200;
 const MAX_CODE = 60;
@@ -253,16 +255,25 @@ export class BusReportsService {
         return { outcome: "HEARTBEAT" as const, record };
     }
     return getLock().run(`report:${kind}:${busId}`, async () => {
-      const existing = await repository.get(busId);
-      if (
-        existing &&
-        Date.parse(record.observedAt) < Date.parse(existing.observedAt)
-      ) {
-        return { outcome: "STALE" as const, record: existing };
+      // Written with a compare-and-swap on what was read: a repeat report may refresh the time
+      // without the lock in between, and must not be overwritten by an older change.
+      let existing: AnyReport | undefined;
+      for (let attempt = 0; ; attempt += 1) {
+        existing = await repository.get(busId);
+        if (
+          existing &&
+          Date.parse(record.observedAt) < Date.parse(existing.observedAt)
+        ) {
+          return { outcome: "STALE" as const, record: existing };
+        }
+        if (await repository.compareAndUpsert(existing, record)) break;
+        if (attempt >= MAX_WRITE_ATTEMPTS)
+          fail(
+            "This report could not be stored because the record kept changing; send it again",
+          );
       }
       const changed =
         !existing || withoutTime(existing) !== withoutTime(record);
-      await repository.upsert(record);
       if (!changed) return { outcome: "HEARTBEAT" as const, record };
       this.deps.audit({
         eventType: descriptor.auditType,

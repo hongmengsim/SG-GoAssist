@@ -1,3 +1,5 @@
+import { logger } from "../services/logger";
+
 /**
  * The part of node-postgres this backend uses. `pg` is not a dependency: it is loaded only
  * when Postgres is chosen (`GOASSIST_DATABASE_URL`), and tests can give these adapters any
@@ -16,6 +18,8 @@ export interface PgClient {
 }
 
 export interface PgPool {
+  /** Idle connections fail with an error event (a database restart); it must be handled. */
+  on?(event: "error", listener: (error: Error) => void): unknown;
   query(text: string, values?: unknown[]): Promise<PgResult>;
   connect(): Promise<PgClient>;
   end(): Promise<void>;
@@ -26,7 +30,16 @@ export interface OpenPostgresOptions {
   schema?: string;
   /** Most connections held open; the default suits one backend process. */
   maxConnections?: number;
+  /** Test seam: the class to build the pool from (default: the pg package's Pool). */
+  poolClass?: new (config: Record<string, unknown>) => PgPool;
+  /** Where a pool error is reported (default: the backend log). */
+  onError?: (error: Error) => void;
 }
+
+/** How long to wait for a connection, and how long a statement may run, in milliseconds. */
+export const CONNECT_TIMEOUT_MS = 5_000;
+export const STATEMENT_TIMEOUT_MS = 30_000;
+export const IDLE_TIMEOUT_MS = 30_000;
 
 const SCHEMA_NAME = /^[a-z_][a-z0-9_]*$/;
 
@@ -34,22 +47,39 @@ export function openPostgres(
   url: string,
   options: OpenPostgresOptions = {},
 ): PgPool {
-  let Pool: new (config: Record<string, unknown>) => PgPool;
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    ({ Pool } = require("pg") as { Pool: typeof Pool });
-  } catch {
-    throw new Error(
-      "GOASSIST_DATABASE_URL needs the pg package: npm install pg --workspace @buspass/backend",
-    );
+  let Pool = options.poolClass;
+  if (!Pool) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      ({ Pool } = require("pg") as { Pool: NonNullable<typeof Pool> });
+    } catch {
+      throw new Error(
+        "GOASSIST_DATABASE_URL needs the pg package: npm install pg --workspace @buspass/backend",
+      );
+    }
   }
   if (options.schema !== undefined && !SCHEMA_NAME.test(options.schema))
     throw new Error("Invalid schema name");
-  return new Pool({
+  const pool = new Pool({
     connectionString: url,
     max: options.maxConnections ?? 10,
+    connectionTimeoutMillis: CONNECT_TIMEOUT_MS,
+    idleTimeoutMillis: IDLE_TIMEOUT_MS,
+    // A statement that runs too long is stopped by the server.
+    statement_timeout: STATEMENT_TIMEOUT_MS,
     ...(options.schema ? { options: `-c search_path=${options.schema}` } : {}),
   });
+  // An idle connection that dies (the database restarted or failed over) is reported here. With
+  // no listener Node treats it as an uncaught exception and the process exits.
+  pool.on?.(
+    "error",
+    options.onError ??
+      ((error: Error) =>
+        logger.error("Postgres connection error", undefined, {
+          error: error.message,
+        })),
+  );
+  return pool;
 }
 
 /** Runs work in one transaction on one connection; rolls back if it throws. */
