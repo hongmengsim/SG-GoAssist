@@ -244,3 +244,57 @@ test("with no device secret (development) responses are not signed", async () =>
     await server.close();
   }
 });
+
+test("a bus cannot read another bus's commands, report for it, or send a heartbeat as another device", async () => {
+  await withSecrets(
+    { DEVICE_SHARED_SECRET: "shared-secret" },
+    async (baseUrl) => {
+      const get = (path: string) =>
+        fetch(`${baseUrl}${path}`, {
+          headers: sign("shared-secret", "AV-1", "GET", path, "{}"),
+        });
+      assert.equal(
+        (await get("/api/operations/actuators/pending?busId=AV-2")).status,
+        403,
+      );
+      assert.equal(
+        (await get("/api/operations/actuators/pending")).status,
+        200,
+      );
+      assert.equal(
+        (await get("/api/operations/actuators/pending?busId=AV-1")).status,
+        200,
+      );
+
+      const statusPath = "/api/operations/actuators/CMD-X/status";
+      const statusBody = JSON.stringify({
+        caseId: "C",
+        busId: "AV-2",
+        state: "COMPLETED",
+        updatedAt: stamp(),
+      });
+      const forged = await post(
+        baseUrl,
+        statusPath,
+        sign("shared-secret", "AV-1", "POST", statusPath, statusBody),
+        statusBody,
+      );
+      assert.equal(forged.status, 403);
+
+      const heartbeatPath = "/api/operations/devices/heartbeat";
+      const heartbeat = JSON.stringify({
+        deviceId: "AV-2",
+        busId: "AV-2",
+        networkOnline: true,
+        observedAt: stamp(),
+      });
+      const spoofed = await post(
+        baseUrl,
+        heartbeatPath,
+        sign("shared-secret", "AV-1", "POST", heartbeatPath, heartbeat),
+        heartbeat,
+      );
+      assert.equal(spoofed.status, 403);
+    },
+  );
+});

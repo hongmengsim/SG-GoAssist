@@ -365,12 +365,25 @@ router.post(
   }),
 );
 
+/** The device whose signature was verified for this request, or undefined (development, unsigned). */
+function signedDevice(res: Response): string | undefined {
+  const device = res.locals.deviceId;
+  return typeof device === "string" && device ? device : undefined;
+}
+
 router.get(
   "/actuators/pending",
   verifyDeviceRequest,
   route(async (req, res) => {
-    const busId =
+    const device = signedDevice(res);
+    let busId =
       typeof req.query.busId === "string" ? req.query.busId : undefined;
+    // A signed bus sees only its own commands, whatever it asks for.
+    if (device && busId !== undefined && busId !== device) {
+      res.status(403).json({ error: "A device may only act for its own bus" });
+      return;
+    }
+    if (device) busId = device;
     const commands = await listPendingActuatorCommands(busId);
     res.json({ count: commands.length, commands });
   }),
@@ -380,6 +393,11 @@ router.post(
   "/actuators/:commandId/status",
   verifyDeviceRequest,
   route(async (req, res) => {
+    const device = signedDevice(res);
+    if (device && req.body?.busId !== device) {
+      res.status(403).json({ error: "A device may only act for its own bus" });
+      return;
+    }
     const caseRecord = await updateActuatorStatus({
       ...req.body,
       commandId: req.params.commandId,
@@ -392,7 +410,16 @@ router.post(
   "/devices/heartbeat",
   verifyDeviceRequest,
   route(async (req, res) => {
-    res.status(202).json(await recordDeviceHeartbeat(req.body as DeviceHealth));
+    const device = signedDevice(res);
+    const body = req.body as DeviceHealth;
+    if (
+      device &&
+      (body?.deviceId !== device || (body.busId && body.busId !== device))
+    ) {
+      res.status(403).json({ error: "A device may only act for its own bus" });
+      return;
+    }
+    res.status(202).json(await recordDeviceHeartbeat(body));
   }),
 );
 

@@ -228,6 +228,8 @@ export function verifyDeviceRequest(
   if (check.signed) {
     const secret = deviceSecretFor(check.deviceId);
     if (secret) signResponses(res, secret, check.signature);
+    // The routes that carry the bus in the body or query, not the path, check it against this.
+    res.locals.deviceId = check.deviceId;
   }
   next();
 }
