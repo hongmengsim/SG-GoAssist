@@ -15,7 +15,7 @@ if TYPE_CHECKING:  # pragma: no cover
 
 HELP = (
     "commands: arrive <stop> | depart | travel [stop] | place <class> [confidence] | clear | "
-    "cover on|off | block on|off | dropout on|off | frames on|off | halt on|off | calibrate | status"
+    "cover on|off | block on|off | dropout on|off | frames on|off | halt on|off | link on|off | calibrate | status"
 )
 
 
@@ -50,6 +50,15 @@ def apply_command(rig: "SimulatedRig", line: str) -> str:
             return f"beam reference taken at {rig.beam.calibrate()} mm (path must be empty)"
         except ValueError as error:
             return str(error)
+    if name == "link" and len(args) == 1:
+        switch = getattr(rig, "link", None)
+        state = _switch(args[0].lower())
+        if switch is None:
+            return "link control is not available on this bus (simulated buses only)"
+        if state is None:
+            return "link needs on or off"
+        switch.cut = not state  # "link off" cuts it
+        return f"link {'on' if state else 'off'}"
     scene = {"place", "clear", "cover", "frames", "block", "dropout"}
     if name in scene and getattr(rig, "beam_source", None) is None:
         return "scene controls are not available with real sensors"

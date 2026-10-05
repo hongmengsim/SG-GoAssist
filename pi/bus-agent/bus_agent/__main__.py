@@ -16,6 +16,7 @@ import secrets
 import sys
 import threading
 
+from .agent import AgentConfig
 from .async_backend import AsyncBackend
 from pathlib import Path
 
@@ -23,6 +24,7 @@ from .config import ConfigError, choose_backend_url, load_config
 from .console import HELP
 from .event_listener import EventListener
 from .http_backend import HttpBackend
+from .link_switch import LinkSwitch
 from .live_view import LiveViewServer, rendering_available
 from .recording import ReplayError
 from .real_security import real_mode_findings, timeout_warnings
@@ -48,6 +50,24 @@ def _read_commands(commands: "queue.Queue[str]", stop: threading.Event) -> None:
     log.info("Console input closed; the agent keeps running")
 
 
+def control_level(args: argparse.Namespace) -> str:
+    """What the status page's control API may do: scene changes for a simulated bus, arrive, depart
+    and travel only for a real bus when the demo movement flag was given, nothing otherwise."""
+    if args.simulate:
+        return "scene"
+    if args.real and args.demo_movement:
+        return "movement"
+    return ""
+
+
+def simulate_agent_config(args: argparse.Namespace) -> AgentConfig:
+    """The agent settings for a simulated bus; only the two safety timeouts can be set."""
+    return AgentConfig(
+        deployment_timeout_seconds=args.deployment_timeout,
+        link_loss_halt_seconds=args.link_loss_halt,
+    )
+
+
 def main(argv: "list[str] | None" = None) -> int:
     parser = argparse.ArgumentParser(description="Bus agent: simulated sensors, or real sensors from a config file")
     parser.add_argument("--simulate", action="store_true", help="use simulated camera and ToF")
@@ -59,6 +79,9 @@ def main(argv: "list[str] | None" = None) -> int:
     parser.add_argument("--bus-service", default="95")
     parser.add_argument("--backend", help="backend address; with --real it wins over backendUrl in the config file, so the address can follow the network")
     parser.add_argument("--no-events", action="store_true", help="poll only; no WebSocket push")
+    parser.add_argument("--demo-movement", action="store_true", help="with --real: let the status page send arrive, depart and travel (movement only, never the sensors); needs --status-port")
+    parser.add_argument("--deployment-timeout", type=float, default=None, help="with --simulate: seconds before an unfinished deployment raises help-required")
+    parser.add_argument("--link-loss-halt", type=float, default=None, help="with --simulate: seconds without the backend before the ramp halts")
     parser.add_argument("--status-port", type=int, default=0, help="serve the local status page on this port (0 = off)")
     parser.add_argument("--status-listen", default="127.0.0.1", help="address for the status page; 0.0.0.0 exposes it on the LAN")
     parser.add_argument(
@@ -77,6 +100,10 @@ def main(argv: "list[str] | None" = None) -> int:
         parser.error("choose exactly one of --simulate, --real or --replay DIR")
     if args.record and not args.real:
         parser.error("--record is only for --real")
+    if args.demo_movement and not (args.real and args.status_port):
+        parser.error("--demo-movement needs --real and --status-port")
+    if (args.deployment_timeout is not None or args.link_loss_halt is not None) and not args.simulate:
+        parser.error("--deployment-timeout and --link-loss-halt are for --simulate (a real bus takes them from its config file)")
     if args.live_view_port and not args.real:
         parser.error("--live-view-port is only for --real")
     if args.live_view_port and not rendering_available():
@@ -121,14 +148,16 @@ def main(argv: "list[str] | None" = None) -> int:
             return 2
     token = os.environ.get("OPERATOR_API_TOKEN") or None
     # Every network call runs on a worker thread so a stuck connection cannot delay the safety loop.
-    backend = AsyncBackend(HttpBackend(args.backend, args.bus_id, secret=secret))
+    link_switch = LinkSwitch(HttpBackend(args.backend, args.bus_id, secret=secret)) if args.simulate else None
+    backend = AsyncBackend(link_switch or HttpBackend(args.backend, args.bus_id, secret=secret))
     try:
         if args.real:
             rig = build_real_rig(settings, sensors, backend, record_dir=args.record)
         elif args.replay:
             rig = build_replay_rig(args.bus_id, args.bus_service, backend, Path(args.replay))
         else:
-            rig = build_simulated_rig(args.bus_id, args.bus_service, backend)
+            rig = build_simulated_rig(args.bus_id, args.bus_service, backend, agent_config=simulate_agent_config(args))
+            rig.link = link_switch
     except ReplayError as error:
         print(f"Recording error: {error}", file=sys.stderr)
         backend.stop()
@@ -136,12 +165,13 @@ def main(argv: "list[str] | None" = None) -> int:
     events: "queue.Queue[dict]" = queue.Queue()
     commands: "queue.Queue[str]" = queue.Queue()
     board = StatusBoard()
-    runner = Runner(rig, events, commands, board=board, controls=args.simulate, auto_calibrate=not args.real)
+    level = control_level(args)
+    runner = Runner(rig, events, commands, board=board, controls=args.simulate, auto_calibrate=not args.real, control_level=level)
     status_server = None
     live_view = None
     code = secrets.token_hex(16) if (args.status_port or args.live_view_port) else None
     if args.status_port:
-        status_server = StatusServer(board, commands, code, args.status_listen, args.status_port, controls=args.simulate)
+        status_server = StatusServer(board, commands, code, args.status_listen, args.status_port, controls=level)
         status_server.start()
         # The code is printed once and never logged elsewhere; keep the #code in the link.
         print(f"Status page: http://localhost:{status_server.port}/#{code}", flush=True)

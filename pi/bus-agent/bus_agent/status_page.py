@@ -60,7 +60,7 @@ REASON_WORDS = {
 }
 
 
-def snapshot(agent: object, beam_reading: object, controls: bool) -> dict:
+def snapshot(agent: object, beam_reading: object, controls: bool, control_level: Optional[str] = None) -> dict:
     """A plain-data picture of the agent, safe to serve. Built on the agent's own thread."""
     decision = agent.last_decision  # type: ignore[attr-defined]
     decision_data = None
@@ -115,7 +115,10 @@ def snapshot(agent: object, beam_reading: object, controls: bool) -> dict:
         "acceptedRequests": len(agent._accepted),  # type: ignore[attr-defined]
         "operatorHalt": bool(agent._operator_halt),  # type: ignore[attr-defined]
         "link": dict(agent.link),  # type: ignore[attr-defined]
-        "controls": bool(controls),
+        # Which controls the page offers: "scene" (a simulated bus), "movement" (a real bus with the
+        # demo movement flag: arrive, depart, travel only) or none. The scene card is only for "scene".
+        "controlLevel": control_level if control_level is not None else ("scene" if controls else ""),
+        "controls": bool(controls) and control_level in (None, "scene"),
     }
 
 
@@ -144,7 +147,11 @@ class StatusBoard:
 
 _STOP = re.compile(r"^[A-Za-z0-9-]{1,40}$")
 _CLASS = re.compile(r"^[a-z_]{1,40}$")
-_SWITCHES = ("cover", "block", "dropout", "frames", "halt")
+_SWITCHES = ("cover", "block", "dropout", "frames", "halt", "link")
+# What each control level may do. A real bus is never given scene controls: those change what its
+# sensors appear to see, and a real bus's sensors are only ever real.
+MOVEMENT_COMMANDS = frozenset({"arrive", "depart", "travel"})
+CONTROL_LEVELS = ("", "movement", "scene")
 _DEFAULT_CONFIDENCE = "0.9"
 
 
@@ -165,7 +172,16 @@ def parse_control(body: object) -> str:
     if command == "place":
         if not isinstance(value, str) or not _CLASS.match(value):
             raise ValueError("an object class is required")
-        return f"place {value} {_DEFAULT_CONFIDENCE}"
+        confidence = body.get("confidence")
+        if confidence is None:
+            return f"place {value} {_DEFAULT_CONFIDENCE}"
+        if (
+            isinstance(confidence, bool)
+            or not isinstance(confidence, (int, float))
+            or not 0.0 <= confidence <= 1.0
+        ):
+            raise ValueError("confidence must be a number from 0 to 1")
+        return f"place {value} {confidence:g}"
     if command in _SWITCHES:
         if value not in ("on", "off"):
             raise ValueError("value must be on or off")
@@ -181,13 +197,17 @@ class StatusServer:
         token: str,
         host: str = "127.0.0.1",
         port: int = 8770,
-        controls: bool = False,
+        controls: "bool | str" = False,
     ) -> None:
         self.host = host
         self._board = board
         self._commands = commands
         self._token = token
-        self._controls = controls
+        # False or "" = none, True or "scene" = everything, "movement" = arrive, depart, travel only.
+        self._level = "scene" if controls is True else (controls or "")
+        if self._level not in CONTROL_LEVELS:
+            raise ValueError(f"unknown control level {controls!r}")
+        self._controls = bool(self._level)
         self._httpd = ThreadingHTTPServer((host, port), self._handler())
         self.port = self._httpd.server_address[1]
         self._thread: Optional[threading.Thread] = None
@@ -284,12 +304,16 @@ class StatusServer:
                     return
                 raw = self.rfile.read(length) if length > 0 else b""
                 try:
-                    line = parse_control(json.loads(raw or b"null"))
+                    body = json.loads(raw or b"null")
+                    line = parse_control(body)
                 except RecursionError:
                     self.reply(400, {"error": "Invalid control request"})
                     return
                 except ValueError as error:
                     self.reply(400, {"error": str(error)})
+                    return
+                if server._level == "movement" and body.get("command") not in MOVEMENT_COMMANDS:
+                    self.reply(403, {"error": "This bus takes movement commands only (arrive, depart, travel)."})
                     return
                 server._commands.put(line)
                 self.reply(202, {"queued": line})

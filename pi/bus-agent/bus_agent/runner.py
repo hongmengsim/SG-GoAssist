@@ -47,6 +47,8 @@ class SimulatedRig:
     camera: SimulatedCamera
     beam_source: SimulatedBeamSource
     beam: BeamReader
+    # A switch that cuts the backend link, for demonstrating link loss (simulated buses only).
+    link: Optional[object] = None
 
 
 def capability_for(bus_service: str) -> dict:
@@ -182,7 +184,9 @@ class Runner:
         board: Optional[StatusBoard] = None,
         controls: bool = True,
         auto_calibrate: bool = True,
+        control_level: Optional[str] = None,
     ) -> None:
+        self._control_level = control_level
         self._auto_calibrate = auto_calibrate
         self._board = board
         self._controls = controls
@@ -203,7 +207,7 @@ class Runner:
             self._try_calibrate()
         if self._board is not None:
             agent = self._rig.agent
-            self._board.publish(snapshot(agent, agent.last_beam, self._controls))
+            self._board.publish(snapshot(agent, agent.last_beam, self._controls, self._control_level))
 
     def _try_calibrate(self) -> None:
         """Simulated sensors only: the path is empty by construction, so a reference that was refused (a
