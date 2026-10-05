@@ -272,3 +272,26 @@ class RequestShapeTests(unittest.TestCase):
         schema = json.loads((SCHEMAS / "AssistRequestForBus.schema.json").read_text(encoding="utf-8"))
         errors = [e.message for e in Draft7Validator(schema).iter_errors(REQUEST_EVENT["request"])]
         self.assertEqual([], errors)
+
+
+class UnknownEntryTests(unittest.TestCase):
+    """A bay entry whose answer was lost may have succeeded: the bus must not post 'waiting' over it."""
+
+    def test_a_lost_answer_never_makes_the_bus_demote_itself_at_the_backend(self) -> None:
+        class AnswerLost(FakeBackend):
+            lost_once = False
+
+            def post(self, kind, body):
+                outcome = super().post(kind, body)  # the backend accepted it...
+                if kind == "bus-status" and body["movement"] == "POSITIONED_AT_STOP" and not self.lost_once:
+                    self.lost_once = True
+                    raise BackendError("answer lost")  # ...but the answer never arrived
+                return outcome
+
+        world = World(backend=AnswerLost())
+        world.agent.arrive(STOP)
+        self.assertEqual("WAITING_FOR_BAY", world.agent.movement, "the gate holds the ramp meanwhile")
+        world.tick(30)
+        movements = [body["movement"] for body in world.backend.posted("bus-status")]
+        self.assertNotIn("WAITING_FOR_BAY", movements, "it must not post waiting over its own entry")
+        self.assertEqual("POSITIONED_AT_STOP", world.agent.movement)

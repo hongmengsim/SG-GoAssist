@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hmac
 import json
+import socket
 import queue
 import re
 import threading
@@ -22,6 +23,8 @@ from pathlib import Path
 from typing import Optional
 
 MAX_BODY_BYTES = 2048
+# After answering a POST the connection lingers this long to read away what the client still sends.
+LINGER_SECONDS = 0.3
 # An authorised oversized request is read and thrown away only up to this much.
 MAX_DISCARD_BYTES = 262_144
 # A client that connects and then says nothing is dropped after this long.
@@ -236,10 +239,34 @@ class StatusServer:
                 else:
                     self.reply(404, {"error": "Not found"})
 
+            def _linger(self) -> None:
+                """After the answer is sent, stop sending and read away what the client is still
+                sending, for a moment. Closing a socket that still has unread bytes can reset the
+                connection, and the client would then never see the answer. Bounded in time and size,
+                so a client that never stops cannot hold this thread."""
+                try:
+                    self.wfile.flush()
+                    self.connection.shutdown(socket.SHUT_WR)
+                    self.connection.settimeout(LINGER_SECONDS)
+                    taken = 0
+                    while taken < MAX_DISCARD_BYTES:
+                        chunk = self.connection.recv(65536)
+                        if not chunk:
+                            break
+                        taken += len(chunk)
+                except (OSError, ValueError):
+                    pass
+
             def do_POST(self) -> None:
                 # Nothing is read from an unauthorised or oversized request: the answer goes out
                 # and the connection is closed, so a client cannot make this thread wait for a body.
                 self.close_connection = True
+                try:
+                    self._handle_post()
+                finally:
+                    self._linger()
+
+            def _handle_post(self) -> None:
                 if self.path != "/api/control":
                     self.reply(404, {"error": "Not found"})
                     return
@@ -253,8 +280,6 @@ class StatusServer:
                 if not 0 <= length <= MAX_BODY_BYTES:
                     # Only a client that holds the code gets this far. Take a bounded amount of
                     # what it is sending so it can read the answer instead of a reset connection.
-                    if length > 0:
-                        self.rfile.read(min(length, MAX_DISCARD_BYTES))
                     self.reply(413, {"error": "Request too large"})
                     return
                 raw = self.rfile.read(length) if length > 0 else b""

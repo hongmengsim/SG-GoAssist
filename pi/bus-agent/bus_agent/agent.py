@@ -41,6 +41,8 @@ MAX_TICK_SECONDS = 1.0
 MAX_REMEMBERED_COMMANDS = 200
 # A bus that is waiting for the bay asks again this often, so a lost "granted" push cannot wedge it.
 ENTRY_RETRY_SECONDS = 5.0
+# Asked again sooner while the answer to an entry is unknown, since the bus may already be in.
+ENTRY_UNKNOWN_RETRY_SECONDS = 1.0
 # A retry waits only briefly for the answer, because the loop runs while it waits.
 ENTRY_RETRY_WAIT_SECONDS = 0.5
 
@@ -140,6 +142,8 @@ class BusAgent:
         self._next_entry_try = 0.0
         self._entry_pending = False
         self._entry_answer: Optional[tuple] = None
+        # True while the answer to a bay entry is unknown (lost, late or stale).
+        self._entry_unresolved = False
         # Set when the backend has expired the deployment command while the ramp was still out.
         self._command_expired = False
         # Since when each direction (sending, polling) has been failing; None while it works.
@@ -168,14 +172,16 @@ class BusAgent:
             log.info("Bay entry refused (%s); waiting for the bay", refusal)
             self._wait_for_bay()
         except BackendError as error:
-            log.warning("No verdict on bay entry (%s); waiting for the bay", error)
-            self._wait_for_bay()
+            log.warning("No verdict on bay entry (%s); holding the ramp and asking again", error)
+            self._entry_unknown()
         else:
             if outcome == "STALE":
                 # The backend ignored the report as older than one it holds, so it said nothing
                 # about the bay (for example a Pi clock that is behind).
-                log.warning("The bay entry report was treated as stale; waiting for the bay")
-                self._wait_for_bay()
+                log.warning("The bay entry report was treated as stale; holding the ramp and asking again")
+                self._entry_unknown()
+            else:
+                self._entry_unresolved = False
 
     def _retry_entry(self, now: float) -> None:
         """While waiting, asks for the bay again from time to time. With the non-blocking backend
@@ -186,8 +192,13 @@ class BusAgent:
             outcome, error = answer
             if error is None and outcome != "STALE":
                 self.movement = POSITIONED
+                self._entry_unresolved = False
                 self._gate.sent("bus-status", self._bus_status_body())
                 return
+            if isinstance(error, BackendRefused):
+                self._wait_for_bay()  # a real "no": join the queue and say so
+            else:
+                self._entry_unresolved = True
         if self.movement != WAITING or self.stop_code is None or now < self._next_entry_try:
             return
         submit = getattr(self._backend, "submit", None)
@@ -197,7 +208,9 @@ class BusAgent:
         if self._entry_pending:
             return
         self._entry_pending = True
-        self._next_entry_try = now + ENTRY_RETRY_SECONDS
+        self._next_entry_try = now + (
+            ENTRY_UNKNOWN_RETRY_SECONDS if self._entry_unresolved else ENTRY_RETRY_SECONDS
+        )
 
         def remember(outcome: str, error: Optional[Exception]) -> None:
             self._entry_answer = (outcome, error)
@@ -206,9 +219,20 @@ class BusAgent:
         submit("bus-status", {**self._bus_status_body(), "movement": POSITIONED}, remember)
 
     def _wait_for_bay(self) -> None:
+        """The backend said no: the bus waits in the queue, and says so."""
         self.movement = WAITING
+        self._entry_unresolved = False
         self._next_entry_try = self._clock() + ENTRY_RETRY_SECONDS
         self._post_safely("bus-status", self._bus_status_body())
+
+    def _entry_unknown(self) -> None:
+        """The answer to the entry report was lost, late or stale, so the backend may have accepted
+        it. The ramp is held (waiting), but no "waiting" report is posted: it would demote a bus
+        that is in fact already in the bay. The same entry report is repeated shortly; repeating a
+        report that was accepted is harmless."""
+        self.movement = WAITING
+        self._entry_unresolved = True
+        self._next_entry_try = self._clock() + ENTRY_UNKNOWN_RETRY_SECONDS
 
     def depart(self) -> None:
         if self.ramp.state != ramp_sim.STOWED:
@@ -584,7 +608,8 @@ class BusAgent:
 
     def _post_reports(self, decision: Decision) -> None:
         now_iso = self._iso()
-        self._post_safely("bus-status", self._bus_status_body())
+        if not self._entry_unresolved:
+            self._post_safely("bus-status", self._bus_status_body())
         self._post_safely("device-heartbeat", self._device_body(decision))
         self._post_safely("safety-decision", decision.to_report(now_iso))
         self._post_safely("ramp-simulation", self._ramp_body())
