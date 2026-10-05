@@ -13,7 +13,7 @@ What is still missing and in what order: [`roadmap.md`](roadmap.md).
 
 The message contract itself is code: [`contracts/src/index.ts`](../contracts/src/index.ts).
 
-Current status and checklist: [status.md](status.md). Each module documents how to run and test itself in its own README. Reviews and their fixes: [reviews/2026-10-01-reviews.md](reviews/2026-10-01-reviews.md). Walkthrough for the backend owner: [review-guide-for-teammate.md](review-guide-for-teammate.md).
+Current status and checklist: [status.md](status.md). Each module documents how to run and test itself in its own README. Reviews and their fixes: [reviews/2026-10-01-reviews.md](reviews/2026-10-01-reviews.md). Walkthrough for the backend owner: [review-guide-for-teammate.md](review-guide-for-teammate.md). Demonstration day: [runbooks/demo-day.md](runbooks/demo-day.md), [interfaces/demo-control.md](interfaces/demo-control.md).
 
 Runbooks (`docs/runbooks/`):
 

@@ -1,0 +1,201 @@
+# Demo day runbook
+
+**Status (6 Oct 2026): written, not run.** Nothing in this runbook has been run on hardware as written. Every check in section 4 starts as **not verified**. A check becomes **verified on hardware** only when the person running it pastes the output back and it shows what the check says to look for; section 7 is where that is recorded.
+
+**Ground rules (from CE2, unchanged):** the ramp is simulated only and is never described as physically verified. Camera frames are never recorded, saved or sent (the live view shows frames on screen only while someone watches). No secret goes into a file, a commit, a document or a chat message: secrets are the environment variables `DEVICE_SHARED_SECRET` and `OPERATOR_API_TOKEN`, and the agents' start-up codes. Meaning is never carried by colour alone.
+
+**What the demonstration is:** two buses at one stop with one boarding bay. **Bus 1 (`AV-095-01`) is real hardware** (Pi #1, ESP32 beam, camera, marker lasers; the ramp is simulated). **Bus 2 (`AV-095-02`) is simulated** (a Pi #2 or a laptop process, with live signed traffic to the backend). Bus movement is represented, not driven. Every step below says REAL or SIMULATED.
+
+## 1. What runs where
+
+| Machine           | Runs                                                                           | Port or note                             |
+| ----------------- | ------------------------------------------------------------------------------ | ---------------------------------------- |
+| This PC           | the backend                                                                    | 3000; auto-acknowledge OFF               |
+| This PC           | the **demo director** (presenters' control page)                               | 5190, loopback                           |
+| This PC           | the operator console (optional, for the audience view of what staff would see) | 5173                                     |
+| This PC           | an SSH tunnel to Pi #1                                                         | status page 8770, live view 8780         |
+| Pi #1             | the real agent for Bus 1 (`--real`), with `--demo-movement`                    | status page on its own loopback          |
+| Pi #2 or a PC tab | the simulated agent for Bus 2 (`--simulate`)                                   | status page 8771 (tunnelled, or this PC) |
+
+**Who runs what.** One person (the **presenter**) uses only the demo director page and the physical bus. One person (the **technician**) runs the commands in sections 3 and 4 and watches the terminal tabs. The presenter never needs a terminal.
+
+The existing launcher (`docs/runbooks/hardware-bringup-tools/bringup.ps1`, with its `window-map.html`) opens the backend, console server, tunnel, scratch and Pi tabs and generates both secrets in memory. The steps below use its tabs.
+
+## 2. Before the day
+
+Do these once, a day ahead if possible. The bus in the photo of 6 Oct 2026 shows three laser modules on the roof frame, a camera on a bracket held with tape above the door opening, a ToF breakout board at the sill, an exposed breadboard and a loose USB-C cable. These are observations from a photo, not checks.
+
+1. **Physical check (technician, by eye).** The camera bracket has not moved since the last calibration. The ToF board at the sill is fixed and its beam crosses the doorway. The USB-C cable to the ESP32 is strain-relieved: pulling it is the "unplug" test, so it must not come out by accident. No wire touches a moving part. The laser modules point at the doorway floor and nothing at head height. **Eye safety:** the lasers are line lasers; keep them off eyes and cameras, and keep the master switch OFF until section 4, check 4.
+2. **Put the current code on Pi #1 and Pi #2.** The agent has new options (`--demo-movement`, `--deployment-timeout`, `--link-loss-halt`, `link on|off`) and fixes from the 5 Oct integration audit (halt handling, link loss, signed answers, bay entry). The Pi's copy must be the same version as the backend, because the signature scheme must match. The repository on the Pi is a copy without `.git`. On this PC, from the repository root, in the SCRATCH tab:
+
+   ```
+   git archive --format=tar.gz -o ..\goassist-pi.tar.gz HEAD pi contracts docs/runbooks/hardware-bringup-tools
+   ```
+
+   Then copy it and unpack it (you will be asked for the Pi's password):
+
+   ```
+   scp ..\goassist-pi.tar.gz pi@goassist-pi1.local:/home/pi/
+   ```
+
+   On Pi #1 (through the PI CHECKS tab or `ssh pi@goassist-pi1.local`):
+
+   ```
+   cd ~/SG-GoAssist && tar xzf ~/goassist-pi.tar.gz && python3 -c "import bus_agent" && echo UNPACKED
+   ```
+
+   Note: the commits that add the demonstration controls are on branch `integration` and **have not been pushed**. Make the archive from the checkout that contains them.
+
+3. **Agent configuration on Pi #1** (`pi/bus-agent/agent.json`, no secrets in it): `deploymentTimeoutSeconds` 30 and `linkLossHaltSeconds` 10 (the values CE2 chose; both are off in code unless the file sets them). The start-up output warns if either is missing.
+4. **Network.** The PC and both Pis must be on one network and their clocks within a few seconds (signatures allow 60 seconds). The PC's address changes on a hotspot; the launcher passes the current one to the agent with `--backend`.
+
+## 3. Start-up order
+
+Always in this order. Each step says which machine and what a good result looks like.
+
+**Step 1. Backend (this PC).** Use the BACKEND tab of the launcher (it sets `GOASSIST_AUTO_ACK=off` and generates the secrets). A good result: the SCRATCH tab prints MATCH for the secret check. If it does not, close every terminal window and run the launcher again.
+
+**Step 2. Tunnel to Pi #1 (this PC).** The TUNNEL tab. A good result: it prints `TUNNEL IS UP`.
+
+**Step 3. Real agent for Bus 1 (Pi #1).** In the PI AGENT tab, paste the device secret when asked (from the SCRATCH tab: `Set-Clipboard $env:DEVICE_SHARED_SECRET`, then clear the clipboard). The launcher starts the agent without the demonstration flag, so for the demonstration start it by hand on Pi #1 with the flag added:
+
+```
+cd ~/SG-GoAssist/pi/bus-agent && read -rs DEVICE_SHARED_SECRET && export DEVICE_SHARED_SECRET && python3 -m bus_agent --real --config agent.json --backend http://<PC address>:3000 --status-port 8770 --live-view-port 8780 --demo-movement
+```
+
+A good result: the line `Status page: http://localhost:8770/#<code>` (write down the part after `#`: it is Bus 1's code), and the agent's warning about the beam: **it is not calibrated until you run `calibrate` with the path empty** (section 4, check 2). With the beam uncalibrated the gate halts with `TOF_NOT_CALIBRATED`; that is correct.
+
+**Step 4. Simulated agent for Bus 2.** Either on Pi #2 (same copy of the code, started with `--simulate`) or in a PC tab (simpler, and the fallback). On the machine that runs it, from `pi/bus-agent`, with `DEVICE_SHARED_SECRET` set:
+
+```
+python -m bus_agent --simulate --bus-id AV-095-02 --backend http://localhost:3000 --status-port 8771 --deployment-timeout 30 --link-loss-halt 10
+```
+
+(on Pi #2 use `python3` and the PC's address in `--backend`). A good result: its own `Status page: http://localhost:8771/#<code>` line (Bus 2's code). If it runs on Pi #2, forward its port to this PC with a second tunnel tab: `ssh -L 8771:127.0.0.1:8771 pi@<pi2 host>`.
+
+**Step 5. Demo director (this PC).** In a new PowerShell tab, with the two codes from steps 3 and 4 (replace the placeholders; the token comes from `$env:OPERATOR_API_TOKEN` in the SCRATCH session):
+
+```
+cd demo-director; $env:DEMO_DIRECTOR='on'; $env:DEMO_AGENTS='[{"busId":"AV-095-01","url":"http://127.0.0.1:8770","code":"<Bus 1 code>"},{"busId":"AV-095-02","url":"http://127.0.0.1:8771","code":"<Bus 2 code>"}]'; $env:DEMO_STOP='18331'; node serve.mjs
+```
+
+A good result: it prints `DEMO CONTROL (not the operator console): http://127.0.0.1:5190/`. Open that page. Bus 1 must show **■ REAL** and Bus 2 **◇ SIMULATED**. If a bus shows "not reachable", the tunnel or the code is wrong; the page says which.
+
+**Step 6 (optional). Operator console (this PC).** `npm run console`, then the live page. It is for showing what interchange staff would see; it is a different program and never controlled from the director.
+
+**Shutting down:** stop the director, then the agents (Ctrl+C), then the backend. Close the terminal windows (the secrets exist only in them), and clear the clipboard.
+
+## 4. Hardware checks (Pi #1 end to end)
+
+Run these in order before the day, with the technician. Each says what to run, what a pass looks like in words, and **what to paste back**. All are **not verified** until pasted output proves them. If a check fails twice in the same way, stop and write down what was tried; do not loop.
+
+### Check 1. Unplug the ESP32: UNKNOWN, a halt, no crash
+
+Precondition: the agent from step 3 is running and the beam is calibrated (check 2 first if not). On Pi #1, watch the PI AGENT tab. Physically pull the ESP32's USB cable.
+
+Pass: within about a second the beam reads **UNKNOWN**, the gate shows **HALT** with `TOF_UNAVAILABLE`, and the agent **keeps running** (no traceback, no exit). On the demo page Bus 1's beam reads UNKNOWN. Plug the cable back: the port is a new device, so the beam **stays UNKNOWN until the agent is restarted**; this is known and safe (it halts), not a failure of the check.
+
+Paste back: the PI AGENT tab's last 30 lines, and the text of Bus 1's card on the demo page.
+
+### Check 2. Calibration
+
+With the path empty, nothing in the doorway and the ramp stowed, type in the PI AGENT tab:
+
+```
+calibrate
+```
+
+Pass: it prints `beam reference taken at <number> mm (path must be empty)`. The number must be between 150 and 1000 mm. With the ramp out it refuses (`refused: the ramp must be stowed ...`). After calibration, with the path empty and the camera healthy, the gate shows CONTINUE (once a request is accepted and the bus is positioned; before that `NO_ACCEPTED_REQUEST` or `BUS_NOT_AT_BOARDING_POSITION` is correct).
+
+Paste back: the `calibrate` reply and Bus 1's card.
+
+### Check 3. A real obstruction halts the gate
+
+Press ARRIVE for Bus 1 on the demo page (its state moves into the bay), then create a request for it (check 5 does the full path). Put a hand or an object in the beam.
+
+Pass: the beam reads **BLOCKED** and the gate shows **HALT** (`TOF_BLOCKED`; `SENSORS_DISAGREE` as well if the camera sees an empty zone). Remove it: after a few readings the beam reads clear again. This is **REAL** input on the real bus.
+
+Paste back: this PC, in a PowerShell tab, while the object is in the beam:
+
+```
+Invoke-RestMethod http://localhost:3000/api/operations/safety-decisions -Headers @{Authorization="Bearer $env:OPERATOR_API_TOKEN"} | ConvertTo-Json -Depth 6
+```
+
+### Check 4. The marker lasers follow the ramp (master switch OFF first)
+
+**Eye safety first.** Keep the laser master switch **OFF**. With it off, the agent still sends the commands; you can see them in the log without any light. Start a deployment for Bus 1 (check 5). Pass (switch OFF): the PI AGENT tab logs `Marker lasers ON (ramp ...)` when the deployment starts and `Marker lasers OFF (ramp ..., hold over)` after the ramp is stowed. The lasers have **no maximum on-time** by decision (they mark where people must stay out): they stay on while the ramp is out, moving or halted.
+
+Only if CE2 chooses, then switch the master ON with nobody's eyes or any camera in the beam path, and repeat. Not verified on hardware until pasted. Never claim the lasers were seen working from the log alone.
+
+Paste back: the log lines above (and, if the switch was turned on, say what was seen).
+
+### Check 5. A request through to the bus's own confirmation
+
+On the demo page press CREATE A REQUEST for Bus 1. This is a **simulated passenger** (no phone); the confirmation must come from the **real agent**. Pass: the page's timeline shows the request moving to ACKNOWLEDGED, and the backend's audit shows who confirmed it. Paste back, this PC:
+
+```
+(Invoke-RestMethod "http://localhost:3000/api/operations/audit?limit=60" -Headers @{Authorization="Bearer $env:OPERATOR_API_TOKEN"}).events | Where-Object { $_.eventType -in 'REQUEST_ACKNOWLEDGED','BUS_STATUS_CHANGED' } | Select-Object eventType, actor, busId, timestamp | Format-Table
+```
+
+Pass: a `REQUEST_ACKNOWLEDGED` row with actor `VEHICLE` for `AV-095-01`. An actor of `AUTO_ACK` or `SIMULATOR` means the backend was not started with `GOASSIST_AUTO_ACK=off`: stop and fix it.
+
+### Check 6. Bus 2: simulated agent with live signed traffic
+
+Press ARRIVE for Bus 2 while Bus 1 is in the bay. Pass: Bus 2 reports waiting; the page shows it in the waiting lane; the audit shows its signed reports (`BUS_STATUS_CHANGED` for `AV-095-02`); its readings on the page are tagged **SIMULATED**. Paste back: the audit command from check 5 filtered to `AV-095-02`, and Bus 2's card.
+
+### Check 7. Link loss halts the real bus after the configured time
+
+With Bus 1 deploying or positioned, cut the link by **unplugging the Pi's network** (or turning off the hotspot). Pass: within about 10 seconds (`linkLossHaltSeconds`) the gate shows **HALT** with `BACKEND_LINK_LOST`; plugging the network back clears it after the next successful exchange. For the **simulated** Bus 2, press CUT THE BACKEND LINK on the demo page instead (that is a simulated outage); it behaves the same way. Paste back: the PI AGENT tab's lines around the halt (the agent keeps deciding locally while the backend is gone).
+
+## 5. The demonstration script
+
+Every step is labelled. "Presenter" is the person at the demo page.
+
+| #   | Say / do                                                                                                                                  | REAL or SIMULATED                                                   |
+| --- | ----------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| 1   | "Bus 1 occupies the only boarding bay." Press ARRIVE for Bus 1.                                                                           | Bus 1 is REAL hardware; its movement is represented (state only)    |
+| 2   | Point at the beam and camera readings on the Bus 1 card: "These are Bus 1's own sensors."                                                 | REAL readings                                                       |
+| 3   | "Bus 2 arrives and finds the bay taken." Press ARRIVE for Bus 2. It waits.                                                                | SIMULATED bus, real signed traffic                                  |
+| 4   | "A passenger asks for the ramp on Bus 2." Press CREATE A REQUEST for Bus 2. Show that Bus 2 confirms it itself and its ramp stays stowed. | SIMULATED passenger; the bus's own confirmation; simulated ramp     |
+| 5   | "Bus 1 leaves." Press DEPART for Bus 1. Show that Bus 2's ramp does **not** move.                                                         | movement represented                                                |
+| 6   | "The controller sends Bus 2 in." Press GRANT THE BAY.                                                                                     | REAL operator route                                                 |
+| 7   | Bus 2 enters, confirms it is stopped, and its simulated ramp deploys.                                                                     | SIMULATED bus and ramp (a simulated completion, not a physical one) |
+| 8   | "Now something goes wrong." On Bus 1, put a hand in the beam: the gate halts. Take it away: it continues.                                 | REAL sensor, REAL gate                                              |
+| 9   | On Bus 2 press PERSON IN THE RAMP ZONE: it halts. Press LEAF IN THE ZONE: a leaf is a safe object, so it does not halt.                   | SIMULATED input                                                     |
+| 10  | On Bus 2 press CUT THE BACKEND LINK: after about ten seconds it halts on its own. Restore it.                                             | SIMULATED outage; the bus's own decision                            |
+| 11  | Press OPERATOR HALT on a bus: it stops; RELEASE HALT: it can continue.                                                                    | REAL operator route, the bus's own gate                             |
+
+Always say aloud when an input is simulated. Do not describe the ramp as having moved physically. Do not say a camera or model detected anything unless it was Bus 1's own camera and the readings are on screen.
+
+## 6. If hardware fails: fallbacks
+
+Say which part is now simulated. Never present a simulated reading as real.
+
+| What fails                               | Do this                                                                                                                                                                                                                                                                                |
+| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Bus 1's ESP32 or beam (UNKNOWN)          | Restart the agent (a replugged ESP32 needs it), run `calibrate`. If it still fails, run **Bus 1 as a simulated agent** on this PC (`--simulate --bus-id AV-095-01`) and update `DEMO_AGENTS`; the page then labels it SIMULATED and offers the scene buttons. Narrate it as simulated. |
+| Bus 1's camera                           | The gate halts on a degraded camera, which is correct. Cover and uncover the lens is itself a demonstration. If the camera cannot be recovered, use the simulated Bus 1 above.                                                                                                         |
+| The lasers (any doubt about safety)      | Keep the master switch OFF. They are a marker only; nothing depends on them for the gate. The log line still shows the command.                                                                                                                                                        |
+| The network or hotspot                   | Move the PC and both Pis to another network, or tether the PC. If a Pi cannot reach the backend, its link-loss halt will fire (that is itself demonstrable). Restart each agent with the new `--backend` address.                                                                      |
+| Pi #2                                    | Run Bus 2 as a PC tab (step 4); nothing else changes.                                                                                                                                                                                                                                  |
+| A signature error (401) after a relaunch | The secrets differ between the backend and an agent. Close every terminal window, run the launcher again, and restart both agents. (An earlier 401 had no determined cause; a full restart cleared it.)                                                                                |
+| The demo director                        | Use each agent's own console (type `arrive 18331`, `depart`, and so on) and `Invoke-RestMethod` for the operator actions; the backend and agents do not depend on the director.                                                                                                        |
+| The backend                              | Restart it from the launcher tab; agents keep deciding locally and reconnect.                                                                                                                                                                                                          |
+
+## 7. Record of what has been verified on hardware
+
+Filled in only from pasted output. Date every entry.
+
+| Check                                                  | Status           | Evidence (paste reference) | Date |
+| ------------------------------------------------------ | ---------------- | -------------------------- | ---- |
+| 1 ESP32 unplug: UNKNOWN, halt, no crash                | **not verified** |                            |      |
+| 2 Calibration                                          | **not verified** |                            |      |
+| 3 Real obstruction halts the gate                      | **not verified** |                            |      |
+| 4 Marker lasers follow the ramp (switch OFF; log only) | **not verified** |                            |      |
+| 5 Request through to the bus's own confirmation        | **not verified** |                            |      |
+| 6 Bus 2 simulated, signed live traffic                 | **not verified** |                            |      |
+| 7 Link loss halts after about 10 s                     | **not verified** |                            |      |
+
+## 8. What this runbook does not cover
+
+The model: Bus 1 uses the stock 80-class YOLO11n as a stand-in. It cannot be shown to detect any object that is not one of those classes; the beam is the only guard against anything else. That is a limit to state if asked, not a claim to hide. Final ToF sensor choice, where the backend is hosted long term, and the physical ramp are open and out of scope.
