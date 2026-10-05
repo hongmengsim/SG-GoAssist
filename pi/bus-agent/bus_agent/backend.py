@@ -20,6 +20,11 @@ class BackendRefused(BackendError):
     """The backend understood the report and refused it (HTTP 409), for example a bay entry."""
 
 
+class BackendRejected(BackendRefused):
+    """The backend says the report is invalid or no longer applies (HTTP 400, 404 or 422). It is a
+    kind of refusal, so it is dropped like one and never retried."""
+
+
 class Backend(Protocol):
     def post(self, kind: str, body: dict) -> str:
         """Send one report; returns the backend's outcome (CHANGED, HEARTBEAT or STALE)."""

@@ -17,7 +17,7 @@ DEFAULT_HEARTBEAT_SECONDS = 5.0
 
 # Readings that move on every sensor sample. A change in what they mean is already carried by the
 # beam state, the safety class and the halt reasons, so they only go out with the heartbeat.
-_MEASUREMENTS = frozenset({"observedAt", "distanceMm", "confidence"})
+_MEASUREMENTS = frozenset({"observedAt", "updatedAt", "distanceMm", "confidence"})
 
 
 def _without_measurements(value: object) -> object:

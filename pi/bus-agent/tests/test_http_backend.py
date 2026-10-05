@@ -84,7 +84,6 @@ class PostTests(unittest.TestCase):
     def test_other_failures_are_backend_errors(self) -> None:
         cases = [
             FakeTransport(500, {"error": "boom"}),
-            FakeTransport(400, {"error": "bad"}),
             FakeTransport(401, {"error": "auth"}),
             FakeTransport(202, b"not json"),
             FakeTransport(error=OSError("connection refused")),

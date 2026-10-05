@@ -357,6 +357,12 @@ class BusAgent:
         for request_id, request in list(self._unacked.items()):
             try:
                 self._backend.ack_request(request_id)
+            except BackendRefused as error:
+                # The backend will never accept this one (cancelled, unknown): drop it, so it does
+                # not hold up every acknowledgement behind it.
+                log.warning("The backend refused to confirm %s, dropping it: %s", request_id, error)
+                del self._unacked[request_id]
+                continue
             except BackendError as error:
                 log.warning("Could not acknowledge %s yet: %s", request_id, error)
                 return

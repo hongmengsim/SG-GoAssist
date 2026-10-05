@@ -14,7 +14,7 @@ import urllib.request
 from typing import Callable, Optional
 from urllib.parse import quote, urlencode
 
-from .backend import KINDS, BackendError, BackendRefused
+from .backend import KINDS, BackendError, BackendRefused, BackendRejected
 from .signing import response_is_genuine, signed_headers
 
 Transport = Callable[[str, str, dict, Optional[bytes], float], tuple]
@@ -27,6 +27,7 @@ _PATHS = {
     "telemetry": "telemetry",
 }
 _EMPTY_OBJECT = b"{}"
+_REJECTED_FOR_GOOD = frozenset({400, 404, 422})
 
 
 def urllib_transport(
@@ -158,4 +159,7 @@ class HttpBackend:
         text = f"{method} {path} returned {status}: {message or 'no detail'}"
         if status == 409:
             raise BackendRefused(message or text)
+        if status in _REJECTED_FOR_GOOD:
+            # The report itself is wrong or no longer applies; sending it again cannot help.
+            raise BackendRejected(message or text)
         raise BackendError(text)
