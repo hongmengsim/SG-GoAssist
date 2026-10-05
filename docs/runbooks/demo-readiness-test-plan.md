@@ -8,7 +8,7 @@
 
 ## How to read each step
 
-Every step has the same fields: **Runs on** (which machine), the **command** (one per fenced block), **Expected** (words and shapes), **Paste back** (exactly what), **Pass if** (a binary rule; anything else is a fail), **On fail**, **Fallback on the day** (what to do if the hardware fails during the real demonstration), and **Depends on / Blocks**. "This PC" is the Windows laptop that runs the backend. "Pi #1" is the real Bus 1. Run PowerShell commands in PowerShell, from the repository root (`D:\D\Claude\SG-GoAssist`), and use `npm.cmd`, not `npm`.
+Every step has the same fields: **Runs on** (which machine), the **command** (one per fenced block), **Expected** (words and shapes), **Paste back** (exactly what), **Pass if** (a binary rule; anything else is a fail), **On fail**, **Fallback on the day** (what to do if the hardware fails during the real demonstration), and **Depends on / Blocks**. "This PC" is the Windows laptop that runs the backend. "Pi #1" is the real Bus 1. Run PowerShell commands in PowerShell, from the repository root (`cd D:\D\Claude\SG-GoAssist` first: npm finds no `package.json` anywhere else), and use `npm.cmd`, not `npm`. Paste each command **once** (pasting it twice onto one line is the most common failure). Commands marked for the Pi are for a **bash** shell on the Pi (an SSH window); pasting them into this PC's PowerShell fails (`&&` is not valid there). A one-shot Pi command can be run from this PC by wrapping it as `ssh pi@goassist-pi1.local "..."` with only single quotes inside; that is how the commands in the setup phase were run.
 
 **Names and addresses used throughout**
 
@@ -44,7 +44,7 @@ node --version; python --version; git --version
 **On fail:** install the missing tool, then repeat. Stop and paste if you are unsure which version to install.
 **Fallback on the day:** none (this is preparation).
 **Depends on:** nothing. **Blocks:** everything on this PC.
-**Status:** not verified.
+**Status:** verified (6 Oct 2026, from the output pasted; see section 9).
 
 ### S2. Dependencies are installed and the project type-checks
 
@@ -60,7 +60,7 @@ npm.cmd run typecheck
 **On fail:** if packages are missing, run `npm.cmd install` from PowerShell (never Git Bash), then `git checkout -- package-lock.json`, then repeat. Stop and paste if it still fails.
 **Fallback on the day:** none.
 **Depends on:** S1. **Blocks:** S3, L1 to L14.
-**Status:** not verified.
+**Status:** verified (6 Oct 2026, from the output pasted; see section 9).
 
 The Python packages the agent and the scenario need:
 
@@ -92,7 +92,7 @@ Test-Path backend\dist\server.js
 **On fail:** stop and paste the build errors.
 **Fallback on the day:** none (the built backend stays on disk).
 **Depends on:** S2. **Blocks:** L2 to L14, P1.
-**Status:** not verified.
+**Status:** verified (6 Oct 2026, from the output pasted; see section 9).
 
 ### S4. The code state you are testing
 
@@ -108,7 +108,7 @@ git status -sb; git rev-parse --short HEAD; git rev-list --count origin/main..HE
 **On fail:** commit or stash your changes, then repeat, so what you test is what you copy to the Pi in S8.
 **Fallback on the day:** none.
 **Depends on:** nothing. **Blocks:** S8 (the Pi must get this exact commit).
-**Status:** not verified.
+**Status:** verified (6 Oct 2026, from the output pasted; see section 9).
 
 ### S5. Secrets exist in this PowerShell session (names only)
 
@@ -134,7 +134,7 @@ $fp = ([BitConverter]::ToString([Security.Cryptography.SHA256]::Create().Compute
 **On fail:** repeat the first block.
 **Fallback on the day:** if a PowerShell window is closed, its secrets are gone: generate new ones here and restart the backend and every agent together (a mismatch gives `401`).
 **Depends on:** nothing. **Blocks:** L4 onward, P1 onward.
-**Status:** not verified.
+**Status:** verified (6 Oct 2026, from the output pasted; see section 9).
 
 ### S6. This PC's network address, and the ports are free
 
@@ -154,18 +154,20 @@ Get-NetTCPConnection -LocalPort 3000,5173,5190,8770,8771,8780 -State Listen -Err
 **On fail:** if a port is taken, stop the program that holds it (the `OwningProcess` id) and repeat. If no address is printed, join the network the Pi uses and repeat.
 **Fallback on the day:** the address can change if the network changes. Re-run this block and restart each agent with the new `--backend` address.
 **Depends on:** nothing. **Blocks:** S7, P2, P6.
-**Status:** not verified.
+**Status:** verified (6 Oct 2026, from the output pasted; see section 9).
 
 ### S7. Pi #1 is reachable, and the clocks agree within 60 seconds
 
-**Runs on:** this PC, then Pi #1 (the second block is typed in the SSH session). Do the two clock commands within a few seconds of each other.
+**Runs on:** this PC (the second command compares the clocks).
 
 ```
 ssh pi@goassist-pi1.local "hostname; uname -m; python3 --version; date -u +%Y-%m-%dT%H:%M:%S.%3NZ; timedatectl | grep -i synchronized"
 ```
 
+Compare the clocks in **one** command, so typing time cannot distort the difference (this PC's time is taken the moment the SSH call returns; type the password quickly):
+
 ```
-[DateTime]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffZ")
+ssh pi@goassist-pi1.local "date -u +%Y-%m-%dT%H:%M:%S.%3NZ"; [DateTime]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffZ")
 ```
 
 **Expected:** the Pi prints its host name, architecture (`aarch64`), Python version (3.11 or higher), its UTC time and whether the system clock is synchronized. This PC prints its UTC time.
@@ -174,7 +176,7 @@ ssh pi@goassist-pi1.local "hostname; uname -m; python3 --version; date -u +%Y-%m
 **On fail:** if the Pi cannot be reached, check it is powered and on the same network, then repeat. If the clock is off, set it on the Pi (`sudo timedatectl set-ntp true`, or `sudo date -s ...`; this is a system setting on the Pi, so confirm you want to change it) and repeat.
 **Fallback on the day:** the Pi's clock is wrong after a power cut with no network. Reconnect it to the network and wait for synchronisation, or set the time by hand.
 **Depends on:** S6 (network). **Blocks:** S8, every Pi step.
-**Status:** not verified.
+**Status:** verified (6 Oct 2026, from the output pasted; see section 9).
 
 ### S8. Copy the 22 local commits to Pi #1
 
@@ -192,10 +194,10 @@ scp $env:TEMP\goassist-pi.tar.gz pi@goassist-pi1.local:/home/pi/
 git rev-parse --short HEAD
 ```
 
-On Pi #1 (replace `<commit>` with the short id printed just above), unpack over the existing copy; this keeps `pi/bus-agent/agent.json`, which is not in the archive:
+Then unpack on the Pi over SSH (replace `<commit>` with the short id printed just above). This unpacks over the existing copy and keeps `pi/bus-agent/agent.json`, which is not in the archive:
 
 ```
-cd ~/SG-GoAssist && tar xzf ~/goassist-pi.tar.gz && echo <commit> > ~/SG-GoAssist/DEPLOYED_COMMIT.txt && echo UNPACKED
+ssh pi@goassist-pi1.local "cd ~/SG-GoAssist && tar xzf ~/goassist-pi.tar.gz && echo <commit> > ~/SG-GoAssist/DEPLOYED_COMMIT.txt && echo UNPACKED"
 ```
 
 **Expected:** `UNPACKED`.
@@ -204,23 +206,23 @@ cd ~/SG-GoAssist && tar xzf ~/goassist-pi.tar.gz && echo <commit> > ~/SG-GoAssis
 **On fail:** stop and paste the error (a full disk or a permission error is the usual cause).
 **Fallback on the day:** if the Pi's code is ever in doubt, redo this step; `DEPLOYED_COMMIT.txt` says which commit it holds.
 **Depends on:** S4, S7. **Blocks:** S9, P6.
-**Status:** not verified.
+**Status:** verified (6 Oct 2026, from the output pasted; see section 9).
 
 ### S9. The new code is on the Pi
 
-**Runs on:** Pi #1.
+**Runs on:** this PC, over SSH to Pi #1 (only single quotes inside the outer double quotes).
 
 ```
-cd ~/SG-GoAssist/pi/bus-agent && python3 -m bus_agent --help | grep -cE "demo-movement|deployment-timeout|link-loss-halt" && python3 -c "from bus_agent.link_switch import LinkSwitch; print('NEW CODE PRESENT')" && cat ~/SG-GoAssist/DEPLOYED_COMMIT.txt
+ssh pi@goassist-pi1.local "cd ~/SG-GoAssist/pi/bus-agent && python3 -m bus_agent --help | grep -oE -- '--(demo-movement|deployment-timeout|link-loss-halt)' | sort -u && python3 -c 'from bus_agent.link_switch import LinkSwitch; print(1)' && cat ~/SG-GoAssist/DEPLOYED_COMMIT.txt"
 ```
 
-**Expected:** `3`, then `NEW CODE PRESENT`, then the commit id.
-**Paste back:** the three lines.
-**Pass if:** the count is `3` and `NEW CODE PRESENT` is printed.
+**Expected:** the three flags `--demo-movement`, `--deployment-timeout` and `--link-loss-halt` (one each), then `1` (the new code imports), then the commit id.
+**Paste back:** the five lines.
+**Pass if:** all three flags are listed, the `1` is printed, and the commit id equals the one from S4. (A plain count of matching help lines gives 6, because each flag appears in the usage line and in its description: count distinct flags instead.)
 **On fail:** repeat S8; if it fails again, stop and paste.
 **Fallback on the day:** none.
 **Depends on:** S8. **Blocks:** P6 and everything after it on the Pi.
-**Status:** not verified.
+**Status:** verified (6 Oct 2026, from the output pasted; see section 9).
 
 ### S10. The agent's configuration on Pi #1
 
@@ -236,7 +238,7 @@ grep -E "busId|backendUrl|deploymentTimeoutSeconds|linkLossHaltSeconds|serialPor
 **On fail:** edit the file on the Pi to add the missing lines (they are CE2's chosen values), then repeat.
 **Fallback on the day:** without the two timeouts the agent will not time out or halt on link loss; do not start the demonstration without them.
 **Depends on:** S8. **Blocks:** P6, P12.
-**Status:** not verified.
+**Status:** verified (6 Oct 2026, from the output pasted; see section 9).
 
 ---
 
@@ -1122,14 +1124,23 @@ Always say aloud which part is now simulated. Never present a simulated reading 
 
 ## 9. Record of what has been verified
 
-Filled in only from pasted output. Date every entry.
+Filled in only from pasted output. Dates are the machines' own UTC dates (the run began 5 Oct 2026 UTC). "Verified" means the step's pass rule was met by the pasted output; "verified on hardware" is used only for steps that exercise the real bus's hardware.
 
-| Step      | Status           | Evidence (what was pasted) | Date |
-| --------- | ---------------- | -------------------------- | ---- |
-| S1 to S10 | **not verified** |                            |      |
-| L1 to L14 | **not verified** |                            |      |
-| P1 to P17 | **not verified** |                            |      |
-| B1 to B9  | **not verified** |                            |      |
-| R1 to R3  | **not verified** |                            |      |
+| Step                 | Status       | Evidence (what was pasted)                                                                                                                                                                                                                                                                                        | Date       |
+| -------------------- | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- |
+| S1                   | verified     | Node v22.15.1, Python 3.13.3, Git 2.49.0                                                                                                                                                                                                                                                                          | 5 Oct 2026 |
+| S2                   | verified     | `npm run typecheck` ran shared, backend and app with no `error TS`; `PYTHON PACKAGES OK`. First attempt failed only because the window was in the wrong folder                                                                                                                                                    | 5 Oct 2026 |
+| S3                   | verified     | backend build ended without error; `Test-Path backend\dist\server.js` printed True (a first attempt failed because the command was pasted three times onto one line)                                                                                                                                              | 5 Oct 2026 |
+| S4                   | verified     | branch `integration`, no modified or deleted tracked files, commit `6f29638`, 24 ahead of `origin/main`                                                                                                                                                                                                           | 5 Oct 2026 |
+| S5                   | verified     | both secrets set in this session without printing them; device secret fingerprint `87a1e9c2`                                                                                                                                                                                                                      | 5 Oct 2026 |
+| S6                   | verified     | this PC's address on the shared hotspot network is `172.20.10.2` (re-measured after the network changed; `172.31.98.151` was the previous network); ports 3000, 5173, 5190, 8770, 8771, 8780 all free                                                                                                             | 5 Oct 2026 |
+| S7                   | verified     | Pi `goassist-pi1`, `aarch64`, Python 3.13.5, system clock synchronized; one-command clock comparison: Pi 18:06:48.680Z, this PC 18:06:48.408Z (about 0.3 s apart)                                                                                                                                                 | 5 Oct 2026 |
+| S8                   | verified     | archive copied (129 KB); unpacked on the Pi, printed `UNPACKED`; commit `6f29638` written to `DEPLOYED_COMMIT.txt`                                                                                                                                                                                                | 5 Oct 2026 |
+| S9                   | verified     | the three flags `--demo-movement`, `--deployment-timeout`, `--link-loss-halt` are on the Pi, `LinkSwitch` imports, deployed commit `6f29638` equals S4                                                                                                                                                            | 5 Oct 2026 |
+| S10                  | verified     | `agent.json` on the Pi: `busId` AV-095-01, `deploymentTimeoutSeconds` 30, `linkLossHaltSeconds` 10, `serialPort` /dev/ttyACM0, `modelPath` /home/pi/yolo11n_ncnn_model. Its `backendUrl` is `http://172.20.10.4:3000`, which is out of date: the agent is started with `--backend` (P6), which wins over the file | 5 Oct 2026 |
+| L1 to L14            | not verified |                                                                                                                                                                                                                                                                                                                   |            |
+| P1 to P17 (and P14b) | not verified |                                                                                                                                                                                                                                                                                                                   |            |
+| B1 to B9             | not verified |                                                                                                                                                                                                                                                                                                                   |            |
+| R1 to R3             | not verified |                                                                                                                                                                                                                                                                                                                   |            |
 
-(In use, split this table to one row per step.)
+(In use, split the remaining rows to one row per step.)
