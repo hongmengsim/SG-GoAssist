@@ -15,6 +15,9 @@ import {
 
 const AUDIT_LIMIT = 200;
 const RECONNECT_MS = 2000;
+// A bus that is quiet but healthy only refreshes its stored report time (its heartbeat), and the
+// backend does not push that, so the reports are re-read this often.
+const REPORT_REFRESH_MS = 5000;
 const MAX_HELD_MESSAGES = 1000;
 const REFRESH_DELAY_MS = 500;
 const DEVICE_FRESH_MS = 15000;
@@ -33,6 +36,7 @@ const HALT_REASON = "Halted by operator from the console";
 
 const defaultSchedule = (fn, ms) => {
   const id = setTimeout(fn, ms);
+  id.unref?.(); // a refresh timer alone must not keep a test process alive
   return () => clearTimeout(id);
 };
 
@@ -58,6 +62,9 @@ export function createLiveSource({
   let socket;
   let cancelReconnect = () => {};
   let cancelRefresh = null;
+  let cancelReportTimer = () => {};
+  let lastMetrics;
+  let lastPerception;
   let currentToken = token;
   let snapshotRun = 0;
   // Reads of the backend's current state that are in flight. A message pushed meanwhile is newer
@@ -250,6 +257,8 @@ export function createLiveSource({
       if (item)
         next = reduce(next, { type: "AUTONOMY_SNAPSHOT", autonomy: item });
     if (data.metrics) {
+      lastMetrics = data.metrics;
+      lastPerception = data.perception?.microPrecision ?? undefined;
       const online = (data.devices?.devices ?? []).filter(
         (device) =>
           device.networkOnline &&
@@ -285,6 +294,56 @@ export function createLiveSource({
     } finally {
       endReading();
     }
+  }
+
+  function countOnline(devices) {
+    return (devices?.devices ?? []).filter(
+      (device) =>
+        device.networkOnline &&
+        Date.now() - Date.parse(device.observedAt) < DEVICE_FRESH_MS,
+    ).length;
+  }
+
+  /** Re-reads the latest report of each kind and the device list, so a quiet bus does not age out. */
+  async function refreshReports() {
+    try {
+      const [statuses, ramps, decisions, devices] = await Promise.all([
+        get("/api/operations/bus-status?limit=500"),
+        get("/api/operations/ramp-simulations?limit=500"),
+        get("/api/operations/safety-decisions?limit=500"),
+        optional("/api/operations/devices"),
+      ]);
+      const wrap = (type, key) => (item) => ({
+        type,
+        [key]: item,
+        timestamp: item.observedAt,
+      });
+      let next = state;
+      for (const message of [
+        ...statuses.statuses.map(wrap("BUS_STATUS", "status")),
+        ...ramps.records.map(wrap("RAMP_SIMULATION", "ramp")),
+        ...decisions.records.map(wrap("RAMP_SAFETY", "decision")),
+      ])
+        next = reduce(next, message);
+      if (devices && lastMetrics)
+        next = reduce(next, {
+          type: "METRICS_SNAPSHOT",
+          metrics: lastMetrics,
+          devicesOnline: countOnline(devices),
+          perceptionPrecision: lastPerception,
+        });
+      apply(next);
+    } catch {
+      // The next timer, push or reconnect tries again; the connection tag shows real failures.
+    } finally {
+      scheduleReportRefresh();
+    }
+  }
+
+  function scheduleReportRefresh() {
+    if (!started) return;
+    cancelReportTimer();
+    cancelReportTimer = schedule(refreshReports, REPORT_REFRESH_MS);
   }
 
   function scheduleRefresh() {
@@ -519,11 +578,13 @@ export function createLiveSource({
       started = true;
       loadSnapshot();
       connect();
+      scheduleReportRefresh();
     },
     stop() {
       started = false;
       cancelReconnect();
       cancelRefresh?.();
+      cancelReportTimer();
       socket?.close();
     },
     setToken(next) {
