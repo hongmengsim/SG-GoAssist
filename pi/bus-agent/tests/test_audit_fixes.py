@@ -115,3 +115,57 @@ class CommandExpiryTests(unittest.TestCase):
         world.tick(80)
         self.assertEqual("DEPLOYED", world.agent.ramp.state)
         self.assertEqual([], world.backend.posted("help-required"))
+
+
+class BayEntryTests(unittest.TestCase):
+    """The bus must not depend on a single pushed message to learn that it was granted the bay."""
+
+    def test_a_waiting_bus_keeps_asking_so_a_lost_grant_cannot_wedge_the_bay(self) -> None:
+        world = World()
+        world.backend.refuse_positioned = True
+        world.agent.arrive(STOP)
+        self.assertEqual("WAITING_FOR_BAY", world.agent.movement)
+        world.backend.refuse_positioned = False  # the controller granted it, but the push was lost
+        world.tick(40)
+        self.assertEqual("POSITIONED_AT_STOP", world.agent.movement)
+
+    def test_a_stale_answer_to_the_entry_report_is_no_verdict(self) -> None:
+        class Stale(FakeBackend):
+            def post(self, kind, body):
+                super().post(kind, body)
+                return "STALE" if body.get("movement") == "POSITIONED_AT_STOP" else "CHANGED"
+
+        world = World(backend=Stale())
+        world.agent.arrive(STOP)
+        self.assertEqual("WAITING_FOR_BAY", world.agent.movement)
+
+    def test_an_unreachable_backend_on_arrival_leaves_the_bus_waiting_until_it_answers(self) -> None:
+        world = World()
+        world.backend.fail_all = True
+        world.agent.arrive(STOP)
+        self.assertEqual("WAITING_FOR_BAY", world.agent.movement)
+        world.backend.fail_all = False
+        world.tick(40)
+        self.assertEqual("POSITIONED_AT_STOP", world.agent.movement)
+
+    def test_the_retry_works_through_the_non_blocking_backend_without_waiting(self) -> None:
+        import time
+
+        from bus_agent.async_backend import AsyncBackend
+
+        inner = FakeBackend()
+        inner.refuse_positioned = True
+        backend = AsyncBackend(inner, retry_seconds=0.02, poll_seconds=0.0)
+        try:
+            world = World(backend=backend)
+            world.agent.arrive(STOP)
+            self.assertEqual("WAITING_FOR_BAY", world.agent.movement)
+            inner.refuse_positioned = False
+            started = time.monotonic()
+            for _ in range(60):
+                world.tick()
+                time.sleep(0.01)
+            self.assertEqual("POSITIONED_AT_STOP", world.agent.movement)
+            self.assertLess(time.monotonic() - started, 3.0)
+        finally:
+            backend.stop()

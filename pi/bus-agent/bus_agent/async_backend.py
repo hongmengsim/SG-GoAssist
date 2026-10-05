@@ -23,7 +23,7 @@ import threading
 import time
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Callable, Optional
 
 from .backend import Backend, BackendError, BackendRefused, BackendTimeout
 
@@ -41,6 +41,8 @@ class _Now:
     outcome: str = ""
     error: Optional[Exception] = None
     abandoned: bool = False
+    # When set, nobody waits: it is called on the worker thread with (outcome, error) when done.
+    callback: Optional[Callable[[str, Optional[Exception]], None]] = None
 
 
 class _Guarded:
@@ -152,6 +154,14 @@ class AsyncBackend:
         if job.error is not None:
             raise job.error
         return job.outcome
+
+    def submit(self, kind: str, body: dict, callback: Callable[[str, Optional[Exception]], None]) -> None:
+        """Sends one report and reports the answer through ``callback`` (on the worker thread),
+        without making anyone wait. For a verdict the agent needs but must not block on."""
+        job = _Now(kind, body, callback=callback)
+        with self._cond:
+            self._now.append(job)
+            self._cond.notify_all()
 
     def ack_request(self, request_id: str) -> None:
         with self._cond:
@@ -290,6 +300,11 @@ class AsyncBackend:
                 job.error = error
                 self._failed(error)
                 failed = True
+            if job.callback is not None:
+                try:
+                    job.callback(job.outcome, job.error)
+                except Exception:  # noqa: BLE001 - a bad callback must not kill the worker
+                    log.exception("An answer callback failed")
             job.done.set()
 
     def _send_capability(self) -> bool:

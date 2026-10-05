@@ -438,7 +438,7 @@ class PostingTests(unittest.TestCase):
         moves = [b["movement"] for b in world.backend.posted("bus-status")]
         self.assertNotIn("POSITIONED_AT_STOP", moves)
         world.backend.fail_all = False
-        world.tick(1)
+        world.tick(30)  # a waiting bus asks for the bay again every few seconds
         moves = [b["movement"] for b in world.backend.posted("bus-status")]
         self.assertIn("POSITIONED_AT_STOP", moves)
 

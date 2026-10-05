@@ -39,6 +39,10 @@ MAX_UNACKED_REQUESTS = 50
 # A stalled loop must not let the ramp jump ahead: one tick never counts as more than this.
 MAX_TICK_SECONDS = 1.0
 MAX_REMEMBERED_COMMANDS = 200
+# A bus that is waiting for the bay asks again this often, so a lost "granted" push cannot wedge it.
+ENTRY_RETRY_SECONDS = 5.0
+# A retry waits only briefly for the answer, because the loop runs while it waits.
+ENTRY_RETRY_WAIT_SECONDS = 0.5
 
 _RAMP_POSITION = {
     ramp_sim.STOWED: "STOWED",
@@ -133,6 +137,9 @@ class BusAgent:
         self.last_beam = None  # the latest BeamReading, for the status page
         self._deploy_started: Optional[float] = None
         self._help_raised = False
+        self._next_entry_try = 0.0
+        self._entry_pending = False
+        self._entry_answer: Optional[tuple] = None
         # Set when the backend has expired the deployment command while the ramp was still out.
         self._command_expired = False
         # Since when each direction (sending, polling) has been failing; None while it works.
@@ -143,25 +150,65 @@ class BusAgent:
     def arrive(self, stop_code: str) -> None:
         """Reach the stop: take the bay if the backend allows it, otherwise wait for it."""
         self.stop_code = stop_code
-        self.movement = POSITIONED
         self._readopt_pending = True
         forget = getattr(self._backend, "forget_accepted_requests", None)
         if forget is not None:
             forget()
+        self._try_enter(self._config.entry_timeout_seconds)
+
+    def _try_enter(self, timeout: float) -> None:
+        """Asks the backend for the bay. The bus counts as positioned only on a real verdict: a
+        refusal, no answer, a stale answer or an unreachable backend all leave it waiting, and
+        the loop asks again, so one lost message cannot leave the bay granted to a bus that
+        never moves in."""
+        self.movement = POSITIONED
         try:
-            self._post_now("bus-status", self._bus_status_body())
+            outcome = self._post_now("bus-status", self._bus_status_body(), timeout)
         except BackendRefused as refusal:
             log.info("Bay entry refused (%s); waiting for the bay", refusal)
-            self.movement = WAITING
-            self._post_safely("bus-status", self._bus_status_body())
-        except BackendTimeout:
-            # No verdict yet: wait for the bay until it is granted (the push moves us on), rather
-            # than acting as if it were ours.
-            log.warning("No answer on bay entry; waiting for the bay")
-            self.movement = WAITING
-            self._post_safely("bus-status", self._bus_status_body())
-        except BackendError:
-            log.warning("Backend unreachable on arrival; will report on the next tick")
+            self._wait_for_bay()
+        except BackendError as error:
+            log.warning("No verdict on bay entry (%s); waiting for the bay", error)
+            self._wait_for_bay()
+        else:
+            if outcome == "STALE":
+                # The backend ignored the report as older than one it holds, so it said nothing
+                # about the bay (for example a Pi clock that is behind).
+                log.warning("The bay entry report was treated as stale; waiting for the bay")
+                self._wait_for_bay()
+
+    def _retry_entry(self, now: float) -> None:
+        """While waiting, asks for the bay again from time to time. With the non-blocking backend
+        the answer comes back later and is applied here, on the loop's own thread, so a slow
+        backend never delays the loop."""
+        answer, self._entry_answer = self._entry_answer, None
+        if answer is not None and self.movement == WAITING:
+            outcome, error = answer
+            if error is None and outcome != "STALE":
+                self.movement = POSITIONED
+                self._gate.sent("bus-status", self._bus_status_body())
+                return
+        if self.movement != WAITING or self.stop_code is None or now < self._next_entry_try:
+            return
+        submit = getattr(self._backend, "submit", None)
+        if submit is None:
+            self._try_enter(ENTRY_RETRY_WAIT_SECONDS)
+            return
+        if self._entry_pending:
+            return
+        self._entry_pending = True
+        self._next_entry_try = now + ENTRY_RETRY_SECONDS
+
+        def remember(outcome: str, error: Optional[Exception]) -> None:
+            self._entry_answer = (outcome, error)
+            self._entry_pending = False
+
+        submit("bus-status", {**self._bus_status_body(), "movement": POSITIONED}, remember)
+
+    def _wait_for_bay(self) -> None:
+        self.movement = WAITING
+        self._next_entry_try = self._clock() + ENTRY_RETRY_SECONDS
+        self._post_safely("bus-status", self._bus_status_body())
 
     def depart(self) -> None:
         if self.ramp.state != ramp_sim.STOWED:
@@ -230,6 +277,7 @@ class BusAgent:
         dt = 0.0 if self._last_tick is None else min(MAX_TICK_SECONDS, max(0.0, now - self._last_tick))
         self._last_tick = now
 
+        self._retry_entry(now)
         self._check_command_expiry()
         decision = self._add_time_and_link_reasons(self._decide(now), now)
         self.last_decision = decision
@@ -530,12 +578,7 @@ class BusAgent:
             and bay.get("stopCode") == self.stop_code
             and bay.get("grantedBusId") == self.bus_id
         ):
-            self.movement = POSITIONED
-            try:
-                self._post_now("bus-status", self._bus_status_body())
-            except BackendError as error:
-                log.warning("Granted the bay but could not enter it yet: %s", error)
-                self.movement = WAITING
+            self._try_enter(self._config.entry_timeout_seconds)
 
     # ---- reports ----------------------------------------------------------------------------
 
@@ -580,13 +623,14 @@ class BusAgent:
             body["stopCode"] = self.stop_code
         return body
 
-    def _post(self, kind: str, body: dict) -> None:
-        self._backend.post(kind, body)
+    def _post(self, kind: str, body: dict) -> str:
+        outcome = self._backend.post(kind, body)
         self._gate.sent(kind, body)
         self._note_ok("post")
         self.link = {"ok": True, "error": None}
+        return str(outcome)
 
-    def _post_now(self, kind: str, body: dict) -> None:
+    def _post_now(self, kind: str, body: dict, timeout: Optional[float] = None) -> str:
         """A post whose answer decides what the bus does next (entering the bay).
 
         With a non-blocking backend this waits only up to ``entry_timeout_seconds``; otherwise it
@@ -594,11 +638,12 @@ class BusAgent:
         """
         wait_for_answer = getattr(self._backend, "post_now", None)
         if wait_for_answer is None:
-            self._post(kind, body)
-            return
-        wait_for_answer(kind, body, timeout=self._config.entry_timeout_seconds)
+            return self._post(kind, body)
+        wait = self._config.entry_timeout_seconds if timeout is None else timeout
+        outcome = wait_for_answer(kind, body, timeout=wait)
         self._gate.sent(kind, body)
         self.link = {"ok": True, "error": None}
+        return str(outcome)
 
     def _post_safely(self, kind: str, body: dict) -> None:
         """Post when due; a failure is logged and retried on a later tick, never raised."""
