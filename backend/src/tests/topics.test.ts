@@ -29,20 +29,16 @@ test("passenger topics follow the ids the existing message carries", () => {
     busId: "B1",
     status: "ACKNOWLEDGED",
   });
-  assert.deepEqual(passengerTopicsFor(request).sort(), [
-    "bus:B1",
-    "request:R1",
-  ]);
+  // A request update names the passenger's own request. It is not also sent to the bus topic,
+  // or every passenger watching that bus would learn other passengers' request ids.
+  assert.deepEqual(passengerTopicsFor(request).sort(), ["request:R1"]);
   const caseUpdate = event({
     type: "CASE_STATUS",
     caseId: "C1",
     busId: "B1",
     stopCode: "S1",
   });
-  assert.deepEqual(passengerTopicsFor(caseUpdate).sort(), [
-    "bus:B1",
-    "case:C1",
-  ]);
+  assert.deepEqual(passengerTopicsFor(caseUpdate).sort(), ["case:C1"]);
 });
 
 test("a stop topic is used only for stop vehicle presence", () => {
@@ -164,4 +160,18 @@ test("operator topics are derived from the scope keys", () => {
     "op:stop:S1",
   ]);
   assert.deepEqual(operatorTopicsFor(event({ type: "DEVICE_HEALTH" })), []);
+});
+
+test("a second passenger on the same bus receives nothing about another passenger's request", () => {
+  const first = event({
+    type: "REQUEST_STATUS",
+    requestId: "R-A",
+    busId: "B1",
+  });
+  // The second passenger subscribed to the bus and to their own request, R-B.
+  const theirTopics = new Set(["bus:B1", "request:R-B"]);
+  assert.equal(
+    passengerTopicsFor(first).some((name) => theirTopics.has(name)),
+    false,
+  );
 });

@@ -81,7 +81,11 @@ export function passengerTopicsFor(message: BusEvent): string[] {
   const topics: string[] = [];
   if (isId(record.caseId)) topics.push(topic.case(record.caseId));
   if (isId(record.requestId)) topics.push(topic.request(record.requestId));
-  if (isId(record.busId)) topics.push(topic.bus(record.busId));
+  // Per-passenger updates are never put on the bus topic: every passenger watching a bus would
+  // receive them, learn other passengers' request ids, and (cancel being open) could cancel them.
+  const perPassenger =
+    message.type === "REQUEST_STATUS" || message.type === "CASE_STATUS";
+  if (isId(record.busId) && !perPassenger) topics.push(topic.bus(record.busId));
   if (message.type === "STOP_VEHICLE_PRESENCE" && isId(record.stopCode)) {
     topics.push(topic.stop(record.stopCode));
   }
