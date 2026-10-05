@@ -261,3 +261,66 @@ test("the timeline names its source in words: bus with REAL or SIMULATED, backen
   assert.ok(sources.includes("DEMO ACTION · SIMULATED"));
   await close();
 });
+
+const stepDone = (director) =>
+  director.snapshot().steps.map((step) => [step.id, step.done]);
+
+test("a step stays done once it has been seen done, even after the system moves on", async () => {
+  const { director, backend, close } = await setup();
+  backend.state.bay = {
+    stopCode: "18331",
+    occupantBusId: "AV-1",
+    grantedBusId: null,
+    waitingBusIds: [],
+  };
+  await director.refresh();
+  assert.deepEqual(stepDone(director).slice(0, 2), [
+    [1, true],
+    [2, false],
+  ]);
+  // Bus 1 leaves: "Bus 1 occupies the bay" is no longer true now, but it did happen.
+  backend.state.bay = {
+    stopCode: "18331",
+    occupantBusId: null,
+    grantedBusId: null,
+    waitingBusIds: [],
+  };
+  await director.refresh();
+  assert.equal(director.snapshot().steps[0].done, true);
+  await close();
+});
+
+test("a later step is not marked done before the steps before it, even if its condition is true", async () => {
+  const { director, close } = await setup();
+  // With nothing happening, "the bay is free and not granted, and Bus 2 is stowed" is true, but step 1 has not happened.
+  assert.deepEqual(
+    stepDone(director).filter(([, done]) => done),
+    [],
+  );
+  await close();
+});
+
+test("the sequence can be started again", async () => {
+  const { director, backend, close } = await setup();
+  backend.state.bay = {
+    stopCode: "18331",
+    occupantBusId: "AV-1",
+    grantedBusId: null,
+    waitingBusIds: [],
+  };
+  await director.refresh();
+  assert.equal(director.snapshot().steps[0].done, true);
+  director.resetSequence();
+  backend.state.bay = {
+    stopCode: "18331",
+    occupantBusId: null,
+    grantedBusId: null,
+    waitingBusIds: [],
+  };
+  await director.refresh();
+  assert.deepEqual(
+    stepDone(director).filter(([, done]) => done),
+    [],
+  );
+  await close();
+});

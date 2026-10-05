@@ -96,6 +96,8 @@ document.addEventListener("click", (event) => {
     );
   if (action === "cancel")
     return act(target.textContent, () => post("/api/cancel", { busId: bus }));
+  if (action === "reset-sequence")
+    return act("Start the sequence again", () => post("/api/sequence/reset"));
   if (action === "step")
     return act(`Step ${step}`, () => post(`/api/sequence/${step}/act`));
 });

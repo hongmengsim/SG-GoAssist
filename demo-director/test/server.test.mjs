@@ -193,3 +193,9 @@ test("the page buttons work: a request, the bay grant and a halt reach the backe
   );
   await close();
 });
+
+test("the sequence can be started again from the page", async () => {
+  const { post, close } = await setup();
+  assert.equal((await post("/api/sequence/reset")).status, 200);
+  await close();
+});

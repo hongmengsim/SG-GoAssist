@@ -100,6 +100,10 @@ export function createDirectorServer({ director }) {
       );
     if (path === "/api/cancel")
       return send(response, 200, await director.cancel(String(body.busId)));
+    if (path === "/api/sequence/reset") {
+      director.resetSequence();
+      return send(response, 200, { reset: true });
+    }
     if ((match = path.match(/^\/api\/sequence\/(\d+)\/act$/)))
       return send(response, 200, await director.runStep(Number(match[1])));
     return send(response, 404, { error: "Not found" });

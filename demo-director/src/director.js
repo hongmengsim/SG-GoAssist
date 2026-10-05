@@ -9,7 +9,7 @@
 // real bus's sensors read. There is no code path for any of those, and there are tests that say so.
 
 import { createAgentClient, createBackendClient } from "./clients.js";
-import { describeSteps, stepById } from "./sequence.js";
+import { advanceSteps, describeSteps, stepById } from "./sequence.js";
 
 const MOVEMENT_COMMANDS = new Set(["arrive", "depart", "travel"]);
 const SCENE_COMMANDS = new Set([
@@ -57,6 +57,7 @@ export function createDirector({
   let state = emptyState(order, labels);
   let previous = null;
   let seenAudit = null;
+  const latched = new Set();
   const timeline = [];
   let timer;
 
@@ -119,6 +120,7 @@ export function createDirector({
       },
       buses,
     };
+    advanceSteps(state, latched);
     diff(previous, state, audit.body?.events ?? []);
     previous = state;
     return state;
@@ -343,6 +345,10 @@ export function createDirector({
     halt,
     cancel,
     runStep,
+    resetSequence() {
+      latched.clear();
+      record("DIRECTOR", "the sequence was started again");
+    },
     start(intervalMs = config.pollMs) {
       const tick = async () => {
         try {
@@ -365,7 +371,7 @@ export function createDirector({
       return {
         ...state,
         timeline: [...timeline],
-        steps: describeSteps(state, config),
+        steps: describeSteps(state, config, latched),
       };
     },
   };

@@ -114,7 +114,7 @@ test("the operator actions say which are real routes and which are a simulated p
 });
 
 test("the sequence shows done, next and not yet in words, and an action button only where there is one", () => {
-  const steps = describeSteps(state, { stopCode: "18331" });
+  const steps = describeSteps(state, { stopCode: "18331" }, new Set([1, 2]));
   const html = renderSteps(steps);
   assert.match(html, /● DONE/);
   assert.match(html, /◆ NEXT/);
@@ -153,4 +153,12 @@ test("text from the system is escaped", () => {
     },
   ]);
   assert.doesNotMatch(html, /<img/);
+});
+
+test("the sequence panel offers to start again", () => {
+  const html = renderSteps(
+    describeSteps(state, { stopCode: "18331" }, new Set()),
+  );
+  assert.match(html, /data-action="reset-sequence"/);
+  assert.match(html, /Start the sequence again/);
 });

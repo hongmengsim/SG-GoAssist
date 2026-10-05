@@ -154,7 +154,7 @@ export const STEPS = [
 ];
 
 /** What a step looks like to the page: its text, and whether the system shows it has happened. */
-export function describeSteps(state, config) {
+export function describeSteps(state, config, latched = new Set()) {
   return STEPS.map((step) => {
     const result =
       state?.order?.length >= 2
@@ -166,10 +166,25 @@ export function describeSteps(state, config) {
       label: step.label(state),
       presenter: step.presenter,
       hasAction: step.act !== null,
-      done: Boolean(result.done),
+      // Done means seen done, in order: it stays done after the system moves on.
+      done: latched.has(step.id),
       detail: result.detail,
     };
   });
+}
+
+/**
+ * Marks steps done, in order. A step is latched the first time its check is true and every step before it
+ * is already latched, so a condition that happens to be true at the start (an empty bay) cannot mark a
+ * later step done early, and a step stays done after the system has moved on.
+ */
+export function advanceSteps(state, latched) {
+  if (!(state?.order?.length >= 2)) return;
+  for (const step of STEPS) {
+    if (latched.has(step.id)) continue;
+    if (!step.check(state).done) return;
+    latched.add(step.id);
+  }
 }
 
 export function stepById(id) {

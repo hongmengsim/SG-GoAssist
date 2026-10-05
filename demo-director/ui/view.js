@@ -178,7 +178,8 @@ export function renderActions(state) {
 
 export function renderSteps(steps) {
   const next = steps.find((step) => !step.done)?.id;
-  return `<ol class="steps">${steps
+  const again = button("reset-sequence", "Start the sequence again");
+  return `<p>${again}</p><ol class="steps">${steps
     .map(
       (
         step,
