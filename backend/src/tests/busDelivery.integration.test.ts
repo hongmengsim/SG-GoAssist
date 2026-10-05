@@ -165,3 +165,56 @@ test("the pull is bounded by limit and signed when a device secret is set", asyn
     }
   });
 });
+
+test("a bus can pull its acknowledged requests whose case is still open, to take them back after a restart", async () => {
+  await withAutoAckOff(async () => {
+    const server = await startTestServer();
+    try {
+      const mine = await create(server.baseUrl, "AV-095-01");
+      const cancelled = await create(server.baseUrl, "AV-095-02");
+      for (const [bus, created] of [
+        ["AV-095-01", mine],
+        ["AV-095-02", cancelled],
+      ] as const) {
+        await requestJson(
+          server.baseUrl,
+          `/api/operations/vehicles/${bus}/assist-ack`,
+          {
+            method: "POST",
+            body: JSON.stringify({ requestId: created.body.requestId }),
+          },
+        );
+      }
+      const list = (bus: string) =>
+        requestJson(
+          server.baseUrl,
+          `/api/operations/vehicles/${bus}/requests?status=ACKNOWLEDGED`,
+        );
+      const open = await list("AV-095-01");
+      assert.equal(open.status, 200);
+      assert.deepEqual(
+        open.body.requests.map((item: { requestId: string }) => item.requestId),
+        [mine.body.requestId],
+      );
+      // Once its case is cancelled the request is no longer something the bus should hold.
+      await requestJson(
+        server.baseUrl,
+        `/api/operations/cases/${cancelled.body.caseId}/operator`,
+        { method: "POST", body: JSON.stringify({ action: "CANCEL" }) },
+      );
+      assert.equal((await list("AV-095-02")).body.count, 0);
+      // The default listing is unchanged: only requests still waiting.
+      assert.equal(
+        (
+          await requestJson(
+            server.baseUrl,
+            "/api/operations/vehicles/AV-095-01/requests",
+          )
+        ).body.count,
+        0,
+      );
+    } finally {
+      await server.close();
+    }
+  });
+});

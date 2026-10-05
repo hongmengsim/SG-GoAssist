@@ -19,6 +19,7 @@ import {
   getOperatorHalts,
 } from "../busOperations/composition";
 import {
+  caseIsOver,
   getRequestsForBusWithStatus,
   getRequest,
   processSimulatorCommand,
@@ -101,12 +102,22 @@ router.get(
       Number.isFinite(requested) && requested >= 1
         ? Math.min(Math.trunc(requested), MAX_WAITING_REQUESTS)
         : MAX_WAITING_REQUESTS;
-    const requests = (
-      await getRequestsForBusWithStatus(
-        req.params.busId,
-        AssistanceRequestStatus.SENDING,
-      )
-    )
+    // By default the requests still waiting for the bus. `?status=ACKNOWLEDGED` lists the ones it
+    // already confirmed whose case is still open, so a bus that restarted can take them back.
+    const wantAcknowledged =
+      queryText(req.query.status) === AssistanceRequestStatus.ACKNOWLEDGED;
+    const found = await getRequestsForBusWithStatus(
+      req.params.busId,
+      wantAcknowledged
+        ? AssistanceRequestStatus.ACKNOWLEDGED
+        : AssistanceRequestStatus.SENDING,
+    );
+    const live: typeof found = [];
+    for (const request of found) {
+      if (!wantAcknowledged || !(await caseIsOver(request.caseId)))
+        live.push(request);
+    }
+    const requests = live
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
       .slice(0, limit)
       .map(toBusRequest);

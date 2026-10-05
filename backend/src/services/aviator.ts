@@ -16,6 +16,7 @@ import { getEventHub } from "../events/eventHub";
 import { topic } from "../events/topics";
 import { logger } from "./logger";
 import { synchronizeLegacyCaseStatus } from "./assistanceCaseService";
+import { TERMINAL_CASE_STATES } from "../cases/ports";
 import { getOperationsData } from "./operationsData";
 
 /** How often a waiter re-reads the request, in case the push came from another process or was lost. */
@@ -197,14 +198,26 @@ export async function findDuplicateActiveRequest(
     AssistanceRequestStatus.SENDING,
     AssistanceRequestStatus.ACKNOWLEDGED,
   ]) {
-    const match = (await getRequestsForBusWithStatus(busId, status)).find(
-      (request) =>
-        (!phase || request.boardingOrAlighting === phase) &&
-        assistanceTypes.every((type) => request.assistanceTypes.includes(type)),
-    );
-    if (match) return match;
+    for (const request of await getRequestsForBusWithStatus(busId, status)) {
+      if (phase && request.boardingOrAlighting !== phase) continue;
+      if (
+        !assistanceTypes.every((type) => request.assistanceTypes.includes(type))
+      )
+        continue;
+      // A request whose case is over (an operator cancelled it, or it finished) no longer stands
+      // for anyone. Merging a new request into it would publish nothing, and the bus would never
+      // hear about the passenger.
+      if (await caseIsOver(request.caseId)) continue;
+      return request;
+    }
   }
   return undefined;
+}
+
+export async function caseIsOver(caseId: string | undefined): Promise<boolean> {
+  if (!caseId) return false;
+  const item = await (await getOperationsData()).cases.get(caseId);
+  return item !== undefined && TERMINAL_CASE_STATES.includes(item.state);
 }
 
 export async function getRequest(
