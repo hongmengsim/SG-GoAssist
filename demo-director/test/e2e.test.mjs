@@ -276,6 +276,19 @@ test(
         "the gate to halt on the person in the zone",
       );
 
+      // Cutting a simulated bus's backend link makes its own link-loss halt fire; restoring it clears it.
+      await press(`/api/agents/${BUS2}/control`, { command: "clear" });
+      assert.equal((await press(`/api/agents/${BUS2}/control`, { command: "link", value: "off" })).status, 200);
+      await waitFor(async () => {
+        const reasons = (await state()).buses[BUS2].agent?.decision?.reasons ?? [];
+        return reasons.some((reason) => reason.code === "BACKEND_LINK_LOST");
+      }, 45, "the link-loss halt after the link was cut");
+      assert.equal((await press(`/api/agents/${BUS2}/control`, { command: "link", value: "on" })).status, 200);
+      await waitFor(async () => {
+        const reasons = (await state()).buses[BUS2].agent?.decision?.reasons ?? [];
+        return !reasons.some((reason) => reason.code === "BACKEND_LINK_LOST");
+      }, 45, "the link-loss halt to clear once the link is back");
+
       // The timeline recorded the presenter's actions and the system's reactions, with their sources.
       const timeline = (await state()).timeline;
       assert.ok(
