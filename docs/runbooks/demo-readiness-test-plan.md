@@ -258,7 +258,7 @@ npm.cmd run verify
 **On fail:** stop and paste the whole failing check's output. A single failure of a passenger-app test that passes when rerun is a known intermittent; paste it anyway.
 **Fallback on the day:** none (this is a pre-demo check).
 **Depends on:** S2, S3. **Blocks:** nothing directly, but a failure means the code is not ready.
-**Status:** not verified.
+**Status:** verified (5 Oct 2026, clean window with no secrets set; see section 9). A first attempt hung because the two secrets were set in the environment: see the findings under section 9.
 
 ### L2. The end-to-end scenario on its own
 
@@ -274,7 +274,7 @@ python scripts/e2e_scenario.py
 **On fail:** stop and paste the whole output.
 **Fallback on the day:** none.
 **Depends on:** S3. **Blocks:** nothing directly.
-**Status:** not verified.
+**Status:** verified (5 Oct 2026; see section 9).
 
 ### L3. The demo director's own tests
 
@@ -290,7 +290,7 @@ cd demo-director; npm.cmd test; cd ..
 **On fail:** stop and paste the failing test's output.
 **Fallback on the day:** none.
 **Depends on:** S3. **Blocks:** L4.
-**Status:** not verified.
+**Status:** verified (5 Oct 2026; see section 9).
 
 ### L4. Start the rehearsal stack: a backend and two simulated agents
 
@@ -326,7 +326,7 @@ Start-Process powershell -ArgumentList '-NoExit','-Command','python -m bus_agent
 **On fail:** stop and paste the window that failed. A `401` or "signature" message means the windows did not inherit the secrets: close all three windows, repeat S5 in this session, and start again.
 **Fallback on the day:** none (this is the rehearsal stack).
 **Depends on:** S3, S5, L3. **Blocks:** L5 to L14.
-**Status:** not verified.
+**Status:** verified (5 Oct 2026; see section 9).
 
 ### L5. Start the demo director
 
@@ -350,7 +350,7 @@ Start-Process http://127.0.0.1:5190/
 **On fail:** if it says `DEMO_AGENTS` is invalid, redo the second block (quotes). Stop and paste if it still fails.
 **Fallback on the day:** if the director will not start, use each agent's own console commands (`arrive 18331`, `depart`, ...) in the agent windows, and `Invoke-RestMethod` for the operator actions (see the runbook).
 **Depends on:** L4. **Blocks:** L6 to L14.
-**Status:** not verified.
+**Status:** verified (5 Oct 2026; see section 9).
 
 ### L6. The page labels every bus and input
 
@@ -366,7 +366,7 @@ Start-Process http://127.0.0.1:5190/
 **On fail:** a bus showing `agentOk` `False` means the director cannot reach its agent: check the port and code in L5.
 **Fallback on the day:** not applicable.
 **Depends on:** L5. **Blocks:** L7.
-**Status:** not verified.
+**Status:** verified (5 Oct 2026; see section 9).
 
 ### L7. Sequence steps 1 to 3
 
@@ -382,7 +382,7 @@ Start-Process http://127.0.0.1:5190/
 **On fail:** stop and paste the table and the timeline text (the page's bottom panel).
 **Fallback on the day:** if a step does not complete, narrate it as simulated and use the agent's own console command for that step.
 **Depends on:** L6. **Blocks:** L8.
-**Status:** not verified.
+**Status:** verified (5 Oct 2026; see section 9).
 
 ### L8. Cancel, then ask again: the request is not swallowed
 
@@ -398,7 +398,7 @@ This is the check for the bug found on hardware (a new request merged into a dea
 **On fail:** stop and paste (a request that stays `SENDING` for 30 seconds is the bug).
 **Fallback on the day:** if a new request is ever not confirmed, complete or cancel the case from the operator console, then create a new request.
 **Depends on:** L7. **Blocks:** L9.
-**Status:** not verified.
+**Status:** verified (5 Oct 2026; see section 9).
 
 ### L9. Sequence steps 4 to 7
 
@@ -414,7 +414,7 @@ This is the check for the bug found on hardware (a new request merged into a dea
 **On fail:** stop and paste. If Bus 2 does not enter after the grant, wait 10 seconds first (it asks for the bay again every 5 seconds).
 **Fallback on the day:** if Bus 2 does not enter, press **GRANT THE BAY** again only if the bay is shown free; otherwise restart Bus 2's agent and arrive again.
 **Depends on:** L8. **Blocks:** L10.
-**Status:** not verified.
+**Status:** **failed** on the first run (5 Oct 2026): the behaviour was correct (shown by the timeline) but the director's sequence panel did not show all seven steps `True`, a defect in the director's display. Fixed test first in commits `42d4807`, `7d793a5` and `8fac0fb`. **Not re-run on the fixed director yet**: re-verify in B5 (see section 9).
 
 ### L10. Scene injections on the simulated Bus 2
 
@@ -440,7 +440,7 @@ This is the check for the bug found on hardware (a new request merged into a dea
 **On fail:** stop and paste the failing row's decision.
 **Fallback on the day:** if an injection does nothing, press **Empty the zone** and skip that demonstration step; do not claim the state was shown.
 **Depends on:** L9. **Blocks:** L11.
-**Status:** not verified.
+**Status:** verified (5 to 6 Oct 2026; see section 9). Row 6 (cut the link) was not timed.
 
 ### L11. Operator halt and release
 
@@ -456,23 +456,25 @@ This is the check for the bug found on hardware (a new request merged into a dea
 **On fail:** stop and paste.
 **Fallback on the day:** if a release does not clear, press **Release halt** once more and wait 10 seconds; the bus must read the backend, not just a pushed message.
 **Depends on:** L9. **Blocks:** L12.
-**Status:** not verified.
+**Status:** verified (6 Oct 2026; see section 9).
 
 ### L12. Only a bus confirmed anything (audit proof)
 
 **Runs on:** this PC.
 
+The audit read returns the newest events first and has no event-type filter. Telemetry heartbeats (one per bus every 5 seconds) fill the newest 500 events within a few minutes, so a plain read can miss every acknowledgement (it did on the first run: 182 of 200 rows were telemetry). Read the audit **one case at a time**: the director knows the case ids, and the route accepts `caseId`. This needs the operator token, so use the window where the secrets are set.
+
 ```
-(Invoke-RestMethod "http://localhost:3000/api/operations/audit?limit=200" -Headers @{Authorization="Bearer $env:OPERATOR_API_TOKEN"}).events | Where-Object { $_.eventType -in 'REQUEST_ACKNOWLEDGED','REQUEST_MERGED' } | Select-Object eventType, actor, busId | Format-Table
+$ids = @((Invoke-RestMethod http://127.0.0.1:5190/api/state).backend.requests | ForEach-Object { $_.caseId } | Where-Object { $_ } | Sort-Object -Unique); "cases: $($ids.Count)"; $ids | ForEach-Object { (Invoke-RestMethod "http://localhost:3000/api/operations/audit?limit=500&caseId=$_" -Headers @{Authorization="Bearer $env:OPERATOR_API_TOKEN"}).events } | Where-Object { $_.eventType -in 'REQUEST_ACKNOWLEDGED','REQUEST_MERGED' } | Select-Object eventType, actor, busId | Format-Table
 ```
 
 **Expected:** `REQUEST_ACKNOWLEDGED` rows (one per request you made) all with actor `VEHICLE`.
-**Paste back:** the table.
+**Paste back:** the `cases:` line and the table.
 **Pass if:** there is at least one `REQUEST_ACKNOWLEDGED` row and **every** one has actor `VEHICLE` (an `AUTO_ACK` or `SIMULATOR` row is a fail).
 **On fail:** stop. This means something other than a bus confirmed a request (the backend was not started with auto-acknowledge off).
 **Fallback on the day:** restart the backend with `GOASSIST_AUTO_ACK` set to `off`.
 **Depends on:** L9. **Blocks:** L13.
-**Status:** not verified.
+**Status:** verified (6 Oct 2026; see section 9). The first command failed to show the rows: see the corrected command above.
 
 ### L13. The operator console open in a separate window
 
@@ -498,15 +500,17 @@ Set-Clipboard $null
 **On fail:** stop and paste. "Operator token needed" means the paste did not work: paste it again.
 **Fallback on the day:** the console is optional for the demonstration. If it fails, say so and continue with the director.
 **Depends on:** L9. **Blocks:** B4.
-**Status:** not verified.
+**Status:** verified (6 Oct 2026; see section 9). The Safety clearance panel wording was not seen.
 
 ### L14. Tear down the rehearsal
 
 **Runs on:** this PC. Close the director, agent, console and backend windows (Ctrl+C in each), then:
 
 ```
-Get-NetTCPConnection -LocalPort 3000,5173,5190,8780,8781 -State Listen -ErrorAction SilentlyContinue | Select-Object LocalPort
+Get-NetTCPConnection -LocalPort 3000,5173,5190,8770,8771,8780,8781 -State Listen -ErrorAction SilentlyContinue | Select-Object LocalPort
 ```
+
+8770 and 8771 are included because the real Bus 1 tunnel needs 8770 free. If port 3000 is still listening, find the owner with `$p = (Get-NetTCPConnection -LocalPort 3000 -State Listen).OwningProcess; Get-Process -Id $p | Select-Object Id, ProcessName, StartTime`, then stop exactly that process id with `Stop-Process -Id <id>` and run the check again.
 
 **Expected:** nothing listening.
 **Paste back:** the (empty) output.
@@ -514,7 +518,7 @@ Get-NetTCPConnection -LocalPort 3000,5173,5190,8780,8781 -State Listen -ErrorAct
 **On fail:** stop the process that is still listening.
 **Fallback on the day:** not applicable.
 **Depends on:** L13. **Blocks:** P1 (the real backend needs port 3000).
-**Status:** not verified.
+**Status:** verified (6 Oct 2026; the backend process had to be stopped by id; the user reported the final check empty).
 
 ---
 
@@ -1126,21 +1130,43 @@ Always say aloud which part is now simulated. Never present a simulated reading 
 
 Filled in only from pasted output. Dates are the machines' own UTC dates (the run began 5 Oct 2026 UTC). "Verified" means the step's pass rule was met by the pasted output; "verified on hardware" is used only for steps that exercise the real bus's hardware.
 
-| Step                 | Status       | Evidence (what was pasted)                                                                                                                                                                                                                                                                                        | Date       |
-| -------------------- | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- |
-| S1                   | verified     | Node v22.15.1, Python 3.13.3, Git 2.49.0                                                                                                                                                                                                                                                                          | 5 Oct 2026 |
-| S2                   | verified     | `npm run typecheck` ran shared, backend and app with no `error TS`; `PYTHON PACKAGES OK`. First attempt failed only because the window was in the wrong folder                                                                                                                                                    | 5 Oct 2026 |
-| S3                   | verified     | backend build ended without error; `Test-Path backend\dist\server.js` printed True (a first attempt failed because the command was pasted three times onto one line)                                                                                                                                              | 5 Oct 2026 |
-| S4                   | verified     | branch `integration`, no modified or deleted tracked files, commit `6f29638`, 24 ahead of `origin/main`                                                                                                                                                                                                           | 5 Oct 2026 |
-| S5                   | verified     | both secrets set in this session without printing them; device secret fingerprint `87a1e9c2`                                                                                                                                                                                                                      | 5 Oct 2026 |
-| S6                   | verified     | this PC's address on the shared hotspot network is `172.20.10.2` (re-measured after the network changed; `172.31.98.151` was the previous network); ports 3000, 5173, 5190, 8770, 8771, 8780 all free                                                                                                             | 5 Oct 2026 |
-| S7                   | verified     | Pi `goassist-pi1`, `aarch64`, Python 3.13.5, system clock synchronized; one-command clock comparison: Pi 18:06:48.680Z, this PC 18:06:48.408Z (about 0.3 s apart)                                                                                                                                                 | 5 Oct 2026 |
-| S8                   | verified     | archive copied (129 KB); unpacked on the Pi, printed `UNPACKED`; commit `6f29638` written to `DEPLOYED_COMMIT.txt`                                                                                                                                                                                                | 5 Oct 2026 |
-| S9                   | verified     | the three flags `--demo-movement`, `--deployment-timeout`, `--link-loss-halt` are on the Pi, `LinkSwitch` imports, deployed commit `6f29638` equals S4                                                                                                                                                            | 5 Oct 2026 |
-| S10                  | verified     | `agent.json` on the Pi: `busId` AV-095-01, `deploymentTimeoutSeconds` 30, `linkLossHaltSeconds` 10, `serialPort` /dev/ttyACM0, `modelPath` /home/pi/yolo11n_ncnn_model. Its `backendUrl` is `http://172.20.10.4:3000`, which is out of date: the agent is started with `--backend` (P6), which wins over the file | 5 Oct 2026 |
-| L1 to L14            | not verified |                                                                                                                                                                                                                                                                                                                   |            |
-| P1 to P17 (and P14b) | not verified |                                                                                                                                                                                                                                                                                                                   |            |
-| B1 to B9             | not verified |                                                                                                                                                                                                                                                                                                                   |            |
-| R1 to R3             | not verified |                                                                                                                                                                                                                                                                                                                   |            |
+| Step                 | Status                 | Evidence (what was pasted)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | Date            |
+| -------------------- | ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------- |
+| S1                   | verified               | Node v22.15.1, Python 3.13.3, Git 2.49.0                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | 5 Oct 2026      |
+| S2                   | verified               | `npm run typecheck` ran shared, backend and app with no `error TS`; `PYTHON PACKAGES OK`. First attempt failed only because the window was in the wrong folder                                                                                                                                                                                                                                                                                                                                                                                       | 5 Oct 2026      |
+| S3                   | verified               | backend build ended without error; `Test-Path backend\dist\server.js` printed True (a first attempt failed because the command was pasted three times onto one line)                                                                                                                                                                                                                                                                                                                                                                                 | 5 Oct 2026      |
+| S4                   | verified               | branch `integration`, no modified or deleted tracked files, commit `6f29638`, 24 ahead of `origin/main`                                                                                                                                                                                                                                                                                                                                                                                                                                              | 5 Oct 2026      |
+| S5                   | verified               | both secrets set in this session without printing them; device secret fingerprint `87a1e9c2`                                                                                                                                                                                                                                                                                                                                                                                                                                                         | 5 Oct 2026      |
+| S6                   | verified               | this PC's address on the shared hotspot network is `172.20.10.2` (re-measured after the network changed; `172.31.98.151` was the previous network); ports 3000, 5173, 5190, 8770, 8771, 8780 all free                                                                                                                                                                                                                                                                                                                                                | 5 Oct 2026      |
+| S7                   | verified               | Pi `goassist-pi1`, `aarch64`, Python 3.13.5, system clock synchronized; one-command clock comparison: Pi 18:06:48.680Z, this PC 18:06:48.408Z (about 0.3 s apart)                                                                                                                                                                                                                                                                                                                                                                                    | 5 Oct 2026      |
+| S8                   | verified               | archive copied (129 KB); unpacked on the Pi, printed `UNPACKED`; commit `6f29638` written to `DEPLOYED_COMMIT.txt`                                                                                                                                                                                                                                                                                                                                                                                                                                   | 5 Oct 2026      |
+| S9                   | verified               | the three flags `--demo-movement`, `--deployment-timeout`, `--link-loss-halt` are on the Pi, `LinkSwitch` imports, deployed commit `6f29638` equals S4                                                                                                                                                                                                                                                                                                                                                                                               | 5 Oct 2026      |
+| S10                  | verified               | `agent.json` on the Pi: `busId` AV-095-01, `deploymentTimeoutSeconds` 30, `linkLossHaltSeconds` 10, `serialPort` /dev/ttyACM0, `modelPath` /home/pi/yolo11n_ncnn_model. Its `backendUrl` is `http://172.20.10.4:3000`, which is out of date: the agent is started with `--backend` (P6), which wins over the file                                                                                                                                                                                                                                    | 5 Oct 2026      |
+| L1                   | verified               | `14 of 14 checks passed` in a window with no secrets set                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | 5 Oct 2026      |
+| L2                   | verified               | 19 `PASS` lines and the `RESULT: every step held (all sensors and the ramp simulated)` line                                                                                                                                                                                                                                                                                                                                                                                                                                                          | 5 Oct 2026      |
+| L3                   | verified               | demo-director tests: 35 passed, 0 failed                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | 5 Oct 2026      |
+| L4                   | verified               | backend `/ready` answered; two simulated agents running; Bus 1 beam calibrated at 500 mm                                                                                                                                                                                                                                                                                                                                                                                                                                                             | 5 Oct 2026      |
+| L5                   | verified               | director on port 5190; page showed the hatched banner and the heavy dashed frame                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | 5 Oct 2026      |
+| L6                   | verified               | both buses `SIMULATED`, control level `scene`, `agentOk` True                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | 5 Oct 2026      |
+| L7                   | verified               | steps 1 to 3 all True                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | 5 Oct 2026      |
+| L8                   | verified               | after cancelling, a second, different request id for Bus 2 reached `ACKNOWLEDGED`. Known limit: the first request stays `ACKNOWLEDGED` after its case ends (there is no "case over" request status)                                                                                                                                                                                                                                                                                                                                                  | 5 Oct 2026      |
+| L9                   | **failed**, then fixed | the timeline showed the right order (leaving did not deploy; only the grant moved Bus 2; all acknowledgements by the bus) but the sequence panel did not show seven `True` steps. Director display defects fixed (`42d4807`, `7d793a5`, `8fac0fb`); **re-verify in B5**                                                                                                                                                                                                                                                                              | 5 Oct 2026      |
+| L10                  | verified               | person: `HALT` with `OBJECT_IN_ZONE` (person, `UNSAFE`, 0.9); leaf at 0.95: `CONTINUE`, no `OBJECT_IN_ZONE` (leaf `SAFE`; new behaviour, matched); beam blocked: `HALT` with `TOF_BLOCKED` and `SENSORS_DISAGREE`; sensor drops out: `HALT` with `TOF_UNAVAILABLE`; camera covered: `HALT` with `CAMERA_DEGRADED`; cut link: `HALT` with `BACKEND_LINK_LOST` (a reading about 15 seconds after the press still showed `CONTINUE`, so the time to halt is **not measured**; measure it in P14); link restored: `CONTINUE`. All on the simulated Bus 2 | 5 to 6 Oct 2026 |
+| L11                  | verified               | after Operator halt: `operatorHalt` True, reason `OPERATOR_HALT`; after Release halt: `operatorHalt` False, no reasons                                                                                                                                                                                                                                                                                                                                                                                                                               | 6 Oct 2026      |
+| L12                  | verified               | 2 cases, 2 `REQUEST_ACKNOWLEDGED` rows, both actor `VEHICLE`, none `AUTO_ACK` or `SIMULATOR`. The first command (newest 200, then 500 events) showed no rows because telemetry filled the window                                                                                                                                                                                                                                                                                                                                                     | 6 Oct 2026      |
+| L13                  | verified               | console showed Live and Connected, both buses, Bus 2 in the bay with its request "Confirmed by bus", Devices online 2, decision times in local time beside the clock, no director banner. The Safety clearance panel wording was **not seen**                                                                                                                                                                                                                                                                                                        | 6 Oct 2026      |
+| L14                  | verified               | port 3000 was still held by the backend (node process, started 2:28 am); stopped by id; the user reported the final check empty (no output pasted)                                                                                                                                                                                                                                                                                                                                                                                                   | 6 Oct 2026      |
+| P1 to P17 (and P14b) | not verified           |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |                 |
+| B1 to B9             | not verified           |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |                 |
+| R1 to R3             | not verified           |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |                 |
 
 (In use, split the remaining rows to one row per step.)
+
+### Findings from the laptop phase (not fixed; none blocks the demonstration)
+
+1. **Backend tests hang when `DEVICE_SHARED_SECRET` and `OPERATOR_API_TOKEN` are set in the environment** (L1). Run the suite in a window without them. To fix test first: make the suite ignore those variables.
+2. **The audit log is flooded by telemetry.** The audit read has no event-type filter and the newest 500 events are mostly `SAFETY_TELEMETRY_RECEIVED` (L12), and the operator console's audit table shows one telemetry row every 5 seconds per bus (L13). The director already hides them. A fix needs a filter on the audit route and the console; ask before changing the route.
+3. **Operator-console Bus 1 showed local gate `HALT` while departing the stop** with no reason on the overview (L13). Not investigated.
+4. **A cut link was not timed** (L10 row 6). Measure it in P14.
+5. **The first request stays `ACKNOWLEDGED` after its case ends** (L8).
+6. **L9's seven-step display must be re-checked on a fresh stack with the fixed director** (B5).
