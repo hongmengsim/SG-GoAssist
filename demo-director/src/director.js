@@ -24,6 +24,8 @@ const SCENE_COMMANDS = new Set([
 const STOP = /^[A-Za-z0-9-]{1,40}$/;
 const CLASS = /^[a-z_]{1,40}$/;
 const MAX_TIMELINE = 300;
+// Audit events that arrive every few seconds from every bus. They would bury what the presenter needs.
+const NOISY_AUDIT_EVENTS = new Set(["SAFETY_TELEMETRY_RECEIVED"]);
 
 export class DirectorError extends Error {
   constructor(status, message) {
@@ -173,7 +175,10 @@ export function createDirector({
     const ids = new Set(auditEvents.map((event) => event.eventId));
     if (seenAudit) {
       for (const event of [...auditEvents].reverse())
-        if (!seenAudit.has(event.eventId))
+        if (
+          !seenAudit.has(event.eventId) &&
+          !NOISY_AUDIT_EVENTS.has(event.eventType)
+        )
           record(
             "AUDIT",
             `${event.eventType} (${event.actor}${event.busId ? `, ${labels[event.busId] ?? event.busId}` : ""})`,

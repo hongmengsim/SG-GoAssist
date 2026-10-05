@@ -324,3 +324,44 @@ test("the sequence can be started again", async () => {
   );
   await close();
 });
+
+test("the timeline leaves out the telemetry heartbeats, which would bury what matters", async () => {
+  const { director, backend, close } = await setup();
+  backend.state.audit = [
+    {
+      eventId: "T1",
+      eventType: "SAFETY_TELEMETRY_RECEIVED",
+      actor: "VEHICLE",
+      busId: "AV-2",
+    },
+  ];
+  await director.refresh();
+  backend.state.audit = [
+    {
+      eventId: "T2",
+      eventType: "SAFETY_TELEMETRY_RECEIVED",
+      actor: "VEHICLE",
+      busId: "AV-2",
+    },
+    {
+      eventId: "B1",
+      eventType: "BAY_CHANGED",
+      actor: "VEHICLE",
+      busId: "AV-2",
+    },
+    {
+      eventId: "T1",
+      eventType: "SAFETY_TELEMETRY_RECEIVED",
+      actor: "VEHICLE",
+      busId: "AV-2",
+    },
+  ];
+  await director.refresh();
+  const lines = director.snapshot().timeline.map((entry) => entry.text);
+  assert.ok(lines.some((text) => /BAY_CHANGED/.test(text)));
+  assert.equal(
+    lines.some((text) => /SAFETY_TELEMETRY/.test(text)),
+    false,
+  );
+  await close();
+});
