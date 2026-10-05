@@ -24,7 +24,7 @@ Every step has the same fields: **Runs on** (which machine), the **command** (on
 | Bus ids                 | `AV-095-01` (Bus 1, real), `AV-095-02` (Bus 2, simulated); stop code `18331`                                  |
 | Pi #1                   | `pi@goassist-pi1.local`; the repository copy is `~/SG-GoAssist` (no `.git`)                                   |
 
-**Number of steps: 53** (setup 10, laptop-only 14, Pi #1 17, both buses 9, rehearsal 3).
+**Number of steps: 53 required, plus 1 optional** (setup 10, laptop-only 14, Pi #1 17 plus the optional P14b, both buses 9, rehearsal 3).
 
 ---
 
@@ -756,24 +756,56 @@ On the page press **Cancel its request** for Bus 1.
 **Depends on:** P6. **Blocks:** nothing.
 **Status:** not verified.
 
-### P14. Link loss halts after about 10 seconds (runbook check 7)
+### P14. Link loss, method A: the backend stops (runbook check 7, method A)
 
-The SSH session and the tunnel share the network, so cutting the network would also cut your view. Instead stop the **backend** for about 25 seconds: from the agent's point of view that is a lost link. **Runs on:** this PC.
+Two kinds of lost link matter, and the safety loop must survive both. **Method A** (this step) is a stopped backend: the Pi's connection is refused at once. **Method B** (P14b, optional) is a silently dropped link: connections hang until they time out, which is the case that once stalled the safety loop. Unplugging the Pi's network is **not** used, because it also cuts your SSH view and the tunnel; both documents now describe the same two methods.
 
-In the BACKEND tab press Ctrl+C. Wait about 15 seconds, then:
+**Runs on:** this PC. In the BACKEND tab press Ctrl+C. Wait about 15 seconds, then run the command below twice, about 3 seconds apart:
 
 ```
-$c1 = '<Bus 1 code>'; Invoke-RestMethod http://127.0.0.1:8770/api/state -Headers @{'X-Status-Token'=$c1} | Select-Object @{n='gate';e={$_.decision.permission}}, @{n='reasons';e={($_.decision.reasons | ForEach-Object code) -join ', '}}, @{n='link';e={$_.link.ok}}; $c1 = $null
+$c1 = '<Bus 1 code>'; Invoke-RestMethod http://127.0.0.1:8770/api/state -Headers @{'X-Status-Token'=$c1} | Select-Object @{n='gate';e={$_.decision.permission}}, @{n='reasons';e={($_.decision.reasons | ForEach-Object code) -join ', '}}, @{n='link';e={$_.link.ok}}, ageSeconds; $c1 = $null
 ```
 
-Restart the backend in the same tab (`npm.cmd start --workspace '@buspass/backend'`), wait 20 seconds, and run the same command again.
+Restart the backend in the same tab (`npm.cmd start --workspace '@buspass/backend'`), wait 20 seconds, and run the same command once more.
 
-**Expected:** with the backend down: `link` `False`, gate `HALT` with `BACKEND_LINK_LOST` (within about 10 seconds of the stop); the agent keeps running and deciding locally. After the backend is back: `BACKEND_LINK_LOST` is gone and `link` is `True`.
-**Paste back:** both outputs and the Pi A last 15 lines.
-**Pass if:** `BACKEND_LINK_LOST` appears within 20 seconds of stopping the backend and is gone within 30 seconds of restarting it.
-**On fail:** stop and paste. Without `linkLossHaltSeconds` in `agent.json` (S10) it never fires.
-**Fallback on the day:** if a real outage is not practical, demonstrate it on the simulated bus with the **Cut the backend link** button and say it is simulated. Optional extra (only if you accept losing your SSH view for a minute): unplug the Pi's network instead.
+**Expected:** with the backend down: `link` `False`, gate `HALT` with `BACKEND_LINK_LOST` (within about 10 seconds of the stop); `ageSeconds` stays small (under 2) in both readings, which shows the safety loop keeps running and deciding locally. After the backend is back: `BACKEND_LINK_LOST` is gone and `link` is `True`.
+**Paste back:** the three outputs and the Pi A last 15 lines.
+**Pass if:** `BACKEND_LINK_LOST` appears within 20 seconds of stopping the backend, `ageSeconds` is under 2 in both readings during the outage, and `BACKEND_LINK_LOST` is gone within 30 seconds of restarting it.
+**On fail:** stop and paste. Without `linkLossHaltSeconds` in `agent.json` (S10) it never fires. An `ageSeconds` of 2 or more during the outage means the loop is being delayed by the network: that is a safety finding, not a tuning issue.
+**Fallback on the day:** if a real outage is not practical, demonstrate it on the simulated bus with the **Cut the backend link** button and say it is simulated.
 **Depends on:** P12. **Blocks:** P15.
+**Status:** not verified.
+
+### P14b. Link loss, method B (optional): traffic from the Pi to the backend is silently dropped
+
+**Optional.** Do this only if you accept a temporary change to this PC's Windows firewall. **I will not run or change any firewall setting; this step is yours to run, and it needs your explicit yes first.** The rule blocks **only** inbound connections to port 3000 **from the Pi's address**, so your SSH session (a connection from this PC to the Pi) and the tunnel are not affected. A blocked inbound connection is dropped without an answer, so the agent's requests hang until they time out instead of being refused: this is the realistic lost-link case.
+
+First find the Pi's address (**runs on:** this PC):
+
+```
+ssh pi@goassist-pi1.local hostname -I
+```
+
+Then, in an **administrator** PowerShell window on this PC (replace `<Pi address>` with the first address printed, the one on the network you share with this PC):
+
+```
+New-NetFirewallRule -DisplayName "demo-block-pi-to-backend" -Direction Inbound -Protocol TCP -LocalPort 3000 -RemoteAddress <Pi address> -Action Block
+```
+
+Wait about 20 seconds, then run the status command from P14 three times, a few seconds apart. Then **remove the rule**:
+
+```
+Remove-NetFirewallRule -DisplayName "demo-block-pi-to-backend"
+```
+
+and run the status command once more after 30 seconds.
+
+**Expected:** while the rule is on: `link` `False`, gate `HALT` with `BACKEND_LINK_LOST` within about 20 seconds (a little later than method A, because the first requests must time out), and `ageSeconds` stays under 2 in every reading: the loop is not stalled by hanging connections. After the rule is removed: `BACKEND_LINK_LOST` clears.
+**Paste back:** the four status outputs, the `Get-NetFirewallRule -DisplayName "demo-block-pi-to-backend"` result **after** the removal (it must report that no rule is found), and the Pi A last 15 lines.
+**Pass if:** `BACKEND_LINK_LOST` appears within 30 seconds of adding the rule, `ageSeconds` is under 2 in every reading, it clears within 40 seconds of removing the rule, and the rule no longer exists.
+**On fail:** **remove the rule first** (the command above), then stop and paste. If `ageSeconds` is 2 or more while the rule is on, the safety loop is waiting on the network: that is a code finding, to be fixed test first, not tuned away.
+**Fallback on the day:** do not use a firewall rule on the day; method A or the simulated **Cut the backend link** button covers the demonstration.
+**Depends on:** P14. **Blocks:** nothing (optional).
 **Status:** not verified.
 
 ### P15. The live view shows frames only while watched, and nothing is saved
@@ -1071,19 +1103,22 @@ pgrep -fa bus_agent || echo "NO AGENT RUNNING"
 
 Always say aloud which part is now simulated. Never present a simulated reading as real.
 
-| Part that fails                        | Do this                                                                                                                                                                                        | Steps affected      |
-| -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------- |
-| This PC or the backend                 | Restart the backend from its tab (agents keep deciding locally and reconnect). If the PC is lost, there is no demonstration of the backend: show the simulated end-to-end test output instead. | P1, B2              |
-| The network or hotspot                 | Move everything to one network or tether the PC; re-run S6; restart each agent with the new `--backend` address.                                                                               | S6, P2, P6          |
-| Clock drift or a `401`                 | Close every terminal window, regenerate the secrets (S5), restart the backend and both agents together; fix the Pi's clock (S7).                                                               | S5, S7, P6          |
-| Pi #1 will not boot or the agent fails | Run Bus 1 as a simulated agent on this PC (R2). Tell the audience Bus 1 is simulated.                                                                                                          | P6 to P17, B3 to B9 |
-| The ESP32 or the beam                  | Restart the agent and recalibrate. If it will not read, run Bus 1 simulated (R2).                                                                                                              | P3, P8, P10, P16    |
-| The camera                             | The gate halts on a degraded camera (correct). If it cannot be recovered, run Bus 1 simulated.                                                                                                 | P4                  |
-| The lasers                             | Keep the master switch OFF. They are a marker only; nothing in the gate depends on them.                                                                                                       | P11, P12            |
-| The demo director                      | Use the agents' own console commands and `Invoke-RestMethod` for operator actions (the backend and agents do not depend on the director).                                                      | L5, B2              |
-| The operator console                   | Skip it; it is optional. Say it is not shown.                                                                                                                                                  | L13, B4             |
-| Pi #2                                  | Run Bus 2 as a PC window (B1).                                                                                                                                                                 | B1                  |
-| The SSH tunnel                         | Reopen the tunnel tab; if the Pi is unreachable, run Bus 1 simulated.                                                                                                                          | P1, P7              |
+**Blocks the demonstration?** is a word, not a colour. **BLOCKS** means the demonstration cannot go on until it is fixed (there is no fallback that still shows the system working). **Does not block** means a fallback exists and the demonstration goes on, sometimes with less that is real (the column says what is lost).
+
+| Part that fails                        | Blocks the demonstration?                            | Do this                                                                                                                                                     | Steps affected      |
+| -------------------------------------- | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------- |
+| This PC or the backend                 | **BLOCKS** (nothing else works without the backend)  | Restart the backend from its tab (agents keep deciding locally and reconnect). If the PC itself is lost, show the simulated end-to-end test output instead. | P1, B2              |
+| The network or hotspot                 | **BLOCKS** until it is fixed                         | Move everything to one network or tether the PC; re-run S6; restart each agent with the new `--backend` address.                                            | S6, P2, P6          |
+| Clock drift or a `401`                 | **BLOCKS** until it is fixed                         | Close every terminal window, regenerate the secrets (S5), restart the backend and both agents together; fix the Pi's clock (S7).                            | S5, S7, P6          |
+| Pi #1 will not boot or the agent fails | Does not block; **loses the real-hardware part**     | Run Bus 1 as a simulated agent on this PC (R2). Tell the audience Bus 1 is simulated.                                                                       | P6 to P17, B3 to B9 |
+| The ESP32 or the beam                  | Does not block; loses the real beam                  | Restart the agent and recalibrate. If it will not read, run Bus 1 simulated (R2).                                                                           | P3, P8, P10, P16    |
+| The camera                             | Does not block; loses the real camera                | The gate halts on a degraded camera (correct). If it cannot be recovered, run Bus 1 simulated.                                                              | P4                  |
+| The lasers                             | Does not block                                       | Keep the master switch OFF. They are a marker only; nothing in the gate depends on them.                                                                    | P11, P12            |
+| The SSH tunnel                         | Does not block; the director loses its view of Bus 1 | Reopen the tunnel tab; if the Pi is unreachable, run Bus 1 simulated (R2) or type commands into the agent.                                                  | P1, P7              |
+| The demo director                      | Does not block                                       | Use the agents' own console commands and `Invoke-RestMethod` for operator actions (the backend and agents do not depend on the director).                   | L5, B2              |
+| The operator console                   | Does not block (optional)                            | Skip it. Say it is not shown.                                                                                                                               | L13, B4             |
+| Pi #2                                  | Does not block                                       | Run Bus 2 as a PC window (B1).                                                                                                                              | B1                  |
+| A real link-loss test (P14, P14b)      | Does not block                                       | Demonstrate link loss on the simulated bus with **Cut the backend link**, and say it is simulated.                                                          | P14, P14b           |
 
 ## 9. Record of what has been verified
 

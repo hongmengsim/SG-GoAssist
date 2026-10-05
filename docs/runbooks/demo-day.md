@@ -145,7 +145,13 @@ Press ARRIVE for Bus 2 while Bus 1 is in the bay. Pass: Bus 2 reports waiting; t
 
 ### Check 7. Link loss halts the real bus after the configured time
 
-With Bus 1 deploying or positioned, cut the link by **unplugging the Pi's network** (or turning off the hotspot). Pass: within about 10 seconds (`linkLossHaltSeconds`) the gate shows **HALT** with `BACKEND_LINK_LOST`; plugging the network back clears it after the next successful exchange. For the **simulated** Bus 2, press CUT THE BACKEND LINK on the demo page instead (that is a simulated outage); it behaves the same way. Paste back: the PI AGENT tab's lines around the halt (the agent keeps deciding locally while the backend is gone).
+There are two methods, and the safety loop must survive both. Do **not** unplug the Pi's network: that also cuts the SSH session and the tunnel, so you could not see the result.
+
+**Method A, a stopped backend (refused at once).** With Bus 1 positioned, stop the backend (Ctrl+C in the BACKEND tab) for about 25 seconds. Pass: within about 10 seconds (`linkLossHaltSeconds`) the gate shows **HALT** with `BACKEND_LINK_LOST`, and the status page's `ageSeconds` stays under 2 (the loop keeps deciding locally); after the backend is restarted the halt clears.
+
+**Method B (optional), a silently dropped link (timeouts).** A temporary Windows firewall rule blocks inbound port 3000 **from the Pi's address only**, so connections hang instead of being refused. This changes a system setting on the PC, so it needs the owner's explicit yes and is done by the owner, not by Claude. Pass: the same halt within about 30 seconds, `ageSeconds` under 2 throughout, the halt clears after the rule is removed, and the rule no longer exists. This is the case that once stalled the safety loop. The exact commands are in `docs/runbooks/demo-readiness-test-plan.md`, step P14b.
+
+For the **simulated** Bus 2, press CUT THE BACKEND LINK on the demo page instead (a simulated outage); it behaves the same way. Paste back: the status output and the PI AGENT tab's lines around the halt.
 
 ## 5. The demonstration script
 
