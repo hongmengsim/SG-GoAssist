@@ -20,6 +20,7 @@ import {
 } from "@buspass/shared";
 import { getBusById } from "../data/buses.mock";
 import { logger } from "./logger";
+import { ACTUATOR_COMMAND_TTL_MS, TELEMETRY_FRESHNESS_MS } from "./timing";
 import { CASE_SERVICE_LOCK } from "../concurrency/keys";
 import { withLock } from "../concurrency/locks";
 import {
@@ -57,9 +58,6 @@ const SENSOR_SOURCES: SignalSource[] = [
   "PRESSURE_SENSOR",
   "DISTANCE_SENSOR",
 ];
-const TELEMETRY_FRESHNESS_MS = Number(
-  process.env.GOASSIST_TELEMETRY_FRESHNESS_MS ?? 5_000,
-);
 const SENSOR_OBSERVATION_MAX_AGE_MS = Number(
   process.env.GOASSIST_SENSOR_MAX_AGE_MS ?? 30_000,
 );
@@ -1157,7 +1155,7 @@ async function issueCommand(
     payload,
     idempotencyKey: `${item.caseId}:${commandType}`,
     issuedAt,
-    expiresAt: new Date(Date.now() + 30_000).toISOString(),
+    expiresAt: new Date(Date.now() + ACTUATOR_COMMAND_TTL_MS).toISOString(),
   };
   await data.putCommand(command);
   const plan = item.actionPlan.find(
