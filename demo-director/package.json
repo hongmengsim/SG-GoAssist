@@ -1,0 +1,11 @@
+{
+  "name": "@buspass/demo-director",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "DEMO CONTROL for the presenters. Not the operator console.",
+  "scripts": {
+    "start": "node serve.mjs",
+    "test": "node --test \"test/*.test.mjs\""
+  }
+}

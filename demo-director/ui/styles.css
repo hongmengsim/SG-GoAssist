@@ -1,0 +1,242 @@
+/* DEMO CONTROL has its own look on purpose: a heavy dashed frame, a hazard-striped banner and boxed cards, so
+   it can never be mistaken for the operator console. Meaning is words plus shape marks; colour is only a hint. */
+:root {
+  --ink: #101418;
+  --paper: #fffdf5;
+  --hint: #5b3a00;
+  --line: #101418;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  padding: 10px;
+  font:
+    15px/1.45 system-ui,
+    sans-serif;
+  color: var(--ink);
+  background: var(--paper);
+  border: 8px dashed var(--line);
+  min-height: 100vh;
+}
+.banner {
+  border: 4px double var(--line);
+  padding: 8px 14px;
+  background: repeating-linear-gradient(
+    135deg,
+    #ffe08a 0 14px,
+    #fffdf5 14px 28px
+  );
+}
+.banner h1 {
+  margin: 0;
+  font-size: 22px;
+  letter-spacing: 0.04em;
+}
+.banner p {
+  margin: 4px 0 0;
+}
+.toast {
+  min-height: 1.4em;
+  margin: 8px 0;
+  font-weight: 700;
+}
+.grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .grid {
+    grid-template-columns: 1fr;
+  }
+}
+.card {
+  border: 3px solid var(--line);
+  padding: 8px 12px;
+  margin: 0 0 12px;
+  background: #fff;
+}
+.card-simulated {
+  border-style: dashed;
+}
+.card-operator {
+  border-style: double;
+  border-width: 5px;
+}
+.card-steps,
+.card-timeline {
+  border-width: 4px;
+}
+h3 {
+  margin: 0 0 6px;
+  font-size: 17px;
+}
+h4 {
+  margin: 12px 0 4px;
+  font-size: 15px;
+}
+button {
+  font: inherit;
+  font-weight: 700;
+  padding: 5px 10px;
+  margin: 2px 4px 2px 0;
+  border: 3px outset var(--line);
+  background: #f1f1f1;
+  color: var(--ink);
+  cursor: pointer;
+}
+button:hover {
+  background: #e2e2e2;
+}
+button:focus-visible {
+  outline: 4px solid var(--ink);
+  outline-offset: 2px;
+}
+.kind {
+  display: inline-block;
+  padding: 0 6px;
+  font-weight: 700;
+  font-size: 13px;
+  border: 2px solid var(--line);
+  background: #fff;
+}
+.kind-simulated {
+  border-style: dashed;
+}
+.kind-real {
+  border-style: solid;
+  border-width: 3px;
+}
+.note,
+.small,
+.hint {
+  font-size: 13px;
+  color: var(--hint);
+}
+.kv {
+  display: grid;
+  grid-template-columns: 11em 1fr;
+  gap: 2px 8px;
+  margin: 4px 0;
+}
+.kv dt {
+  font-weight: 700;
+}
+.kv dd {
+  margin: 0;
+}
+.row {
+  margin: 6px 0;
+}
+.prompts {
+  margin: 4px 0 0 18px;
+  padding: 0;
+}
+.stop {
+  border: 3px solid var(--line);
+  padding: 6px;
+  margin: 8px 0 0;
+  background: #fff;
+}
+.zones {
+  display: grid;
+  grid-template-columns: 16% 24% 34% 26%;
+  font-weight: 700;
+  font-size: 12px;
+  border-bottom: 2px solid var(--line);
+  margin-bottom: 4px;
+}
+.zones span {
+  border-left: 2px solid var(--line);
+  padding-left: 4px;
+}
+.zones .bay-zone {
+  border: 3px double var(--line);
+  background: #f4f0dc;
+}
+.lane {
+  position: relative;
+  height: 58px;
+  border-bottom: 1px dotted var(--line);
+}
+.token {
+  position: absolute;
+  top: 3px;
+  width: 190px;
+  padding: 3px 8px;
+  background: #fff;
+  border: 3px solid var(--line);
+  transition: left 1.4s ease-in-out;
+}
+.token-simulated {
+  border-style: dashed;
+}
+.pos-approach {
+  left: 0%;
+}
+.pos-queue {
+  left: 17%;
+}
+.pos-bay {
+  left: 41%;
+}
+.pos-leave {
+  left: calc(100% - 200px);
+}
+.bay-text {
+  margin: 4px 0 10px;
+  font-weight: 700;
+}
+.steps {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.step {
+  border: 2px solid var(--line);
+  padding: 4px 8px;
+  margin: 6px 0;
+}
+.step.done {
+  border-style: dotted;
+}
+.step.next {
+  border: 4px double var(--line);
+}
+.step .mark {
+  font-weight: 700;
+  margin-right: 6px;
+}
+.step p {
+  margin: 2px 0;
+}
+.step .detail {
+  font-size: 13px;
+  color: var(--hint);
+}
+.label {
+  font-size: 12px;
+  font-weight: 700;
+}
+.timeline {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 340px;
+  overflow: auto;
+}
+.timeline li {
+  border-bottom: 1px dotted var(--line);
+  padding: 2px 0;
+}
+.timeline .t {
+  font-variant-numeric: tabular-nums;
+  margin-right: 6px;
+}
+.timeline .src {
+  font-weight: 700;
+  margin-right: 6px;
+}

@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DEMO CONTROL (not the operator console)</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="banner" role="banner">
+      <h1>◆◆◆ DEMO CONTROL, NOT THE OPERATOR CONSOLE ◆◆◆</h1>
+      <p>
+        For our presenters only. It moves the demonstration buses and simulates
+        states we cannot make physically. Bus interchange staff use the
+        operator console, which this is not. Every input below says
+        <b>■ REAL</b> or <b>◇ SIMULATED</b>.
+      </p>
+    </header>
+    <p id="toast" class="toast" role="status" aria-live="polite"></p>
+    <main id="main">
+      <section id="stop" aria-label="The stop"></section>
+      <div class="grid">
+        <div id="buses"></div>
+        <div>
+          <div id="actions"></div>
+          <section class="card card-steps">
+            <h3>The two-bus sequence (agreed demonstration script)</h3>
+            <div id="steps"></div>
+          </section>
+        </div>
+      </div>
+      <section class="card card-timeline">
+        <h3>What the system did (newest first)</h3>
+        <div id="timeline"></div>
+      </section>
+    </main>
+    <script type="module" src="app.js"></script>
+  </body>
+</html>
