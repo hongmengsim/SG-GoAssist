@@ -218,3 +218,38 @@ test("a bus can pull its acknowledged requests whose case is still open, to take
     }
   });
 });
+
+test("a request whose case an operator cancelled is no longer offered to the bus, and cannot be confirmed", async () => {
+  await withAutoAckOff(async () => {
+    const server = await startTestServer();
+    try {
+      const created = await create(server.baseUrl, "AV-095-01");
+      await requestJson(
+        server.baseUrl,
+        `/api/operations/cases/${created.body.caseId}/operator`,
+        { method: "POST", body: JSON.stringify({ action: "CANCEL" }) },
+      );
+      const pulled = await requestJson(
+        server.baseUrl,
+        "/api/operations/vehicles/AV-095-01/requests",
+      );
+      assert.equal(pulled.body.count, 0, "not offered");
+      const ack = await requestJson(
+        server.baseUrl,
+        "/api/operations/vehicles/AV-095-01/assist-ack",
+        {
+          method: "POST",
+          body: JSON.stringify({ requestId: created.body.requestId }),
+        },
+      );
+      assert.equal(ack.status, 409, "and refused if the bus tries anyway");
+      const status = await requestJson(
+        server.baseUrl,
+        `/api/assistance/${created.body.requestId}`,
+      );
+      assert.notEqual(status.body.status, "ACKNOWLEDGED");
+    } finally {
+      await server.close();
+    }
+  });
+});

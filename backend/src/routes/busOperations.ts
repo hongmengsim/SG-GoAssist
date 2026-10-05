@@ -81,6 +81,10 @@ router.post(
       res.status(409).json({ error: "Request belongs to a different bus" });
       return;
     }
+    if (await caseIsOver(request.caseId)) {
+      res.status(409).json({ error: "The request's case is over" });
+      return;
+    }
     const result = await processSimulatorCommand(
       { requestId, command: "ACKNOWLEDGE" },
       "VEHICLE",
@@ -114,8 +118,8 @@ router.get(
     );
     const live: typeof found = [];
     for (const request of found) {
-      if (!wantAcknowledged || !(await caseIsOver(request.caseId)))
-        live.push(request);
+      // A request whose case is over is nothing the bus should act on, whichever list it is in.
+      if (!(await caseIsOver(request.caseId))) live.push(request);
     }
     const requests = live
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
