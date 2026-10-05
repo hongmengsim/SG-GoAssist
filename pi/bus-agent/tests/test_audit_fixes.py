@@ -169,3 +169,57 @@ class BayEntryTests(unittest.TestCase):
             self.assertLess(time.monotonic() - started, 3.0)
         finally:
             backend.stop()
+
+
+class SmallFixesTests(unittest.TestCase):
+    def test_the_hidden_attribute_wins_over_the_badge_styles(self) -> None:
+        from pathlib import Path
+
+        page = (Path(__file__).resolve().parents[1] / "bus_agent" / "status.html").read_text(encoding="utf-8")
+        self.assertIn("[hidden]", page)
+        self.assertRegex(page, r"\[hidden\]\s*\{\s*display:\s*none\s*!important")
+
+    def test_the_perception_thread_survives_a_detector_that_returns_a_malformed_box(self) -> None:
+        import time
+
+        from bus_agent.perception_worker import PerceptionWorker
+        from perception import RawDetection
+
+        from bus_agent.sim_sensors import SimulatedCamera
+
+        camera = SimulatedCamera(time.monotonic)
+
+        class BadBox:
+            def detect(self, frame):
+                return [RawDetection("person", 0.9, (1.0, 2.0, 3.0))]  # three numbers, not four
+
+        worker = PerceptionWorker(camera, BadBox(), ((0, 0), (1, 0), (1, 1), (0, 1)), period_seconds=0.01)
+        worker.start()
+        try:
+            deadline = time.monotonic() + 2
+            result = None
+            while time.monotonic() < deadline and result is None:
+                time.sleep(0.02)
+                result = worker.latest_perception()
+            self.assertIsNotNone(result)
+            self.assertTrue(worker.running, "the thread must not die")
+            self.assertFalse(result[0].image_ok)
+            self.assertEqual("inference_error", result[0].degraded_reason)
+        finally:
+            worker.stop()
+
+    def test_calibrate_is_refused_while_the_ramp_is_out(self) -> None:
+        from types import SimpleNamespace
+
+        from bus_agent.console import apply_command
+
+        world = World()
+        world.positioned_with_request()
+        world.deploy(6)
+        self.assertNotEqual("STOWED", world.agent.ramp.state)
+        reference_before = world.beam._reference if hasattr(world.beam, "_reference") else None
+        reply = apply_command(SimpleNamespace(agent=world.agent, beam=world.beam), "calibrate")
+        self.assertIn("ramp", reply.lower())
+        self.assertNotIn("reference taken", reply)
+        if reference_before is not None:
+            self.assertEqual(reference_before, world.beam._reference)

@@ -43,6 +43,9 @@ def apply_command(rig: "SimulatedRig", line: str) -> str:
         agent.start_travel(args[0] if args else None)
         return f"{agent.movement}"
     if name == "calibrate" and not args:
+        if agent.ramp.state != "STOWED":
+            # A reference taken with the ramp out, or an object on it, would make that the "clear" path.
+            return "refused: the ramp must be stowed and the path empty before calibrating"
         try:
             return f"beam reference taken at {rig.beam.calibrate()} mm (path must be empty)"
         except ValueError as error:

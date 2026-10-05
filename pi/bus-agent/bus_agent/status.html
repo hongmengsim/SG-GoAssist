@@ -59,6 +59,10 @@
         margin-top: 4px;
       }
       /* every state is a word plus a mark and its own border style; colour is only a hint */
+      /* The hidden attribute must win over the display rules below, or a hidden badge still shows. */
+      [hidden] {
+        display: none !important;
+      }
       .mark {
         display: inline-block;
         padding: 2px 8px;

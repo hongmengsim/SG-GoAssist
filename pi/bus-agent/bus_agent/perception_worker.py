@@ -89,9 +89,13 @@ class PerceptionWorker:
             except Exception:  # noqa: BLE001 - a capture failure is "no frame", never a crash
                 log.exception("Capture failed")
                 capture = Capture(None, self._clock())
-            result: PerceptionResult = analyse(
-                capture.frame, self._detector, self._polygon, self._policy, clock=_iso_now
-            )
+            try:
+                result: PerceptionResult = analyse(
+                    capture.frame, self._detector, self._polygon, self._policy, clock=_iso_now
+                )
+            except Exception:  # noqa: BLE001 - a bad detection must degrade the camera, not kill the thread
+                log.exception("Perception failed on a frame")
+                result = PerceptionResult(None, False, "inference_error", _iso_now())
             with self._lock:
                 self._latest = (result, capture.captured_at)
                 if self._watchers > 0 and capture.frame is not None:
