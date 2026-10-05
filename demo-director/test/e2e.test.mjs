@@ -34,10 +34,16 @@ function freePort() {
 /** Starts a process and resolves with it once `ready` matches a line of its output. */
 function start(command, args, options, ready, label) {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { ...options, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(command, args, {
+      ...options,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
     let output = "";
     const timer = setTimeout(
-      () => reject(new Error(`${label} did not become ready.\n${output.slice(-1500)}`)),
+      () =>
+        reject(
+          new Error(`${label} did not become ready.\n${output.slice(-1500)}`),
+        ),
       40000,
     );
     const onData = (chunk) => {
@@ -58,7 +64,9 @@ function start(command, args, options, ready, label) {
     child.on("exit", (code) => {
       if (!output.match(ready)) {
         clearTimeout(timer);
-        reject(new Error(`${label} exited early (${code}).\n${output.slice(-1500)}`));
+        reject(
+          new Error(`${label} exited early (${code}).\n${output.slice(-1500)}`),
+        );
       }
     });
   });
@@ -77,7 +85,12 @@ async function waitFor(check, seconds, what) {
 
 test(
   "the two-bus sequence runs end to end through the demo director",
-  { timeout: 240000, skip: existsSync(backendEntry) ? false : "build the backend first (npm run build --workspace @buspass/backend)" },
+  {
+    timeout: 240000,
+    skip: existsSync(backendEntry)
+      ? false
+      : "build the backend first (npm run build --workspace @buspass/backend)",
+  },
   async () => {
     const processes = [];
     const dataDirectory = mkdtempSync(join(tmpdir(), "demo-director-e2e-"));
@@ -106,7 +119,11 @@ test(
         "the backend",
       );
       processes.push(backend.child);
-      await waitFor(async () => (await fetch(`${backendUrl}/health`).catch(() => null))?.ok, 20, "backend health");
+      await waitFor(
+        async () => (await fetch(`${backendUrl}/health`).catch(() => null))?.ok,
+        20,
+        "backend health",
+      );
 
       const agents = [];
       for (const busId of [BUS1, BUS2]) {
@@ -114,19 +131,40 @@ test(
         const agent = await start(
           "python",
           [
-            "-m", "bus_agent", "--simulate", "--bus-id", busId, "--bus-service", "95",
-            "--backend", backendUrl, "--status-port", String(port),
-            "--deployment-timeout", "30", "--link-loss-halt", "10",
+            "-m",
+            "bus_agent",
+            "--simulate",
+            "--bus-id",
+            busId,
+            "--bus-service",
+            "95",
+            "--backend",
+            backendUrl,
+            "--status-port",
+            String(port),
+            "--deployment-timeout",
+            "30",
+            "--link-loss-halt",
+            "10",
           ],
           {
             cwd: join(root, "pi", "bus-agent"),
-            env: { ...process.env, DEVICE_SHARED_SECRET: SECRET, OPERATOR_API_TOKEN: TOKEN, PYTHONUNBUFFERED: "1" },
+            env: {
+              ...process.env,
+              DEVICE_SHARED_SECRET: SECRET,
+              OPERATOR_API_TOKEN: TOKEN,
+              PYTHONUNBUFFERED: "1",
+            },
           },
           /Status page: http:\/\/localhost:(\d+)\/#([0-9a-f]+)/,
           `the agent for ${busId}`,
         );
         processes.push(agent.child);
-        agents.push({ busId, url: `http://127.0.0.1:${agent.match[1]}`, code: agent.match[2] });
+        agents.push({
+          busId,
+          url: `http://127.0.0.1:${agent.match[1]}`,
+          code: agent.match[2],
+        });
       }
 
       const directorPort = await freePort();
@@ -155,32 +193,62 @@ test(
       const press = (path, body = {}) =>
         fetch(`${base}${path}`, {
           method: "POST",
-          headers: { "content-type": "application/json", "x-demo-director": "1" },
+          headers: {
+            "content-type": "application/json",
+            "x-demo-director": "1",
+          },
           body: JSON.stringify(body),
         });
 
       // Both simulated agents are reachable and labelled SIMULATED.
-      await waitFor(async () => {
-        const current = await state();
-        return current.order.length === 2 && current.order.every((id) => current.buses[id].agentOk && current.buses[id].kind === "SIMULATED");
-      }, 40, "both agents to be reachable and simulated");
+      await waitFor(
+        async () => {
+          const current = await state();
+          return (
+            current.order.length === 2 &&
+            current.order.every(
+              (id) =>
+                current.buses[id].agentOk &&
+                current.buses[id].kind === "SIMULATED",
+            )
+          );
+        },
+        40,
+        "both agents to be reachable and simulated",
+      );
 
       // The sequence, step by step, only through the director.
       for (let step = 1; step <= 7; step += 1) {
         const before = (await state()).steps[step - 1];
         if (before.hasAction) {
           const response = await press(`/api/sequence/${step}/act`);
-          assert.equal(response.status, 200, `step ${step} action: ${await response.text()}`);
+          assert.equal(
+            response.status,
+            200,
+            `step ${step} action: ${await response.text()}`,
+          );
         }
-        await waitFor(async () => (await state()).steps[step - 1].done, 60, `step ${step} (${before.title})`);
+        await waitFor(
+          async () => (await state()).steps[step - 1].done,
+          60,
+          `step ${step} (${before.title})`,
+        );
       }
 
       // The backend's own record agrees with the director's view.
       const operator = { headers: { Authorization: `Bearer ${TOKEN}` } };
-      const bay = await (await fetch(`${backendUrl}/api/operations/bays/${STOP}`, operator)).json();
+      const bay = await (
+        await fetch(`${backendUrl}/api/operations/bays/${STOP}`, operator)
+      ).json();
       assert.equal(bay.occupantBusId, BUS2);
-      const audit = (await (await fetch(`${backendUrl}/api/operations/audit?limit=200`, operator)).json()).events;
-      const acknowledgements = audit.filter((event) => event.eventType === "REQUEST_ACKNOWLEDGED");
+      const audit = (
+        await (
+          await fetch(`${backendUrl}/api/operations/audit?limit=200`, operator)
+        ).json()
+      ).events;
+      const acknowledgements = audit.filter(
+        (event) => event.eventType === "REQUEST_ACKNOWLEDGED",
+      );
       assert.ok(acknowledgements.length >= 1, "the request was acknowledged");
       assert.deepEqual(
         [...new Set(acknowledgements.map((event) => event.actor))],
@@ -189,16 +257,35 @@ test(
       );
 
       // A simulated state injected through the director shows up in the bus's own gate.
-      assert.equal((await press(`/api/agents/${BUS2}/control`, { command: "place", value: "person" })).status, 200);
-      await waitFor(async () => {
-        const reasons = (await state()).buses[BUS2].agent?.decision?.reasons ?? [];
-        return reasons.some((reason) => reason.code === "OBJECT_IN_ZONE");
-      }, 20, "the gate to halt on the person in the zone");
+      assert.equal(
+        (
+          await press(`/api/agents/${BUS2}/control`, {
+            command: "place",
+            value: "person",
+          })
+        ).status,
+        200,
+      );
+      await waitFor(
+        async () => {
+          const reasons =
+            (await state()).buses[BUS2].agent?.decision?.reasons ?? [];
+          return reasons.some((reason) => reason.code === "OBJECT_IN_ZONE");
+        },
+        20,
+        "the gate to halt on the person in the zone",
+      );
 
       // The timeline recorded the presenter's actions and the system's reactions, with their sources.
       const timeline = (await state()).timeline;
-      assert.ok(timeline.some((entry) => entry.source.startsWith("DEMO ACTION")), "the presenter's actions are on the timeline");
-      assert.ok(timeline.some((entry) => /^BUS 2 · SIMULATED/.test(entry.source)), "the bus's own changes are on the timeline");
+      assert.ok(
+        timeline.some((entry) => entry.source.startsWith("DEMO ACTION")),
+        "the presenter's actions are on the timeline",
+      );
+      assert.ok(
+        timeline.some((entry) => /^BUS 2 · SIMULATED/.test(entry.source)),
+        "the bus's own changes are on the timeline",
+      );
     } finally {
       for (const child of processes) child.kill();
       await sleep(500);

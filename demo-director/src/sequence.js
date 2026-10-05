@@ -21,12 +21,14 @@ const requestOf = (state, busId) =>
 /** The buses in the order they were configured: the first is Bus 1, the second Bus 2. */
 const [BUS1, BUS2] = [0, 1];
 const bus = (state, index) => state.order[index];
+const kindOf = (state, index) =>
+  `${state.buses[bus(state, index)]?.kind ?? "UNKNOWN"} bus`;
 
 export const STEPS = [
   {
     id: 1,
     title: "Bus 1 occupies the boarding bay",
-    label: "bus 1 as configured (REAL or SIMULATED)",
+    label: (state) => kindOf(state, BUS1),
     presenter:
       "Press ARRIVE for Bus 1. Its state moves into the bay; the readings shown for a real Bus 1 are real.",
     act: {
@@ -45,7 +47,7 @@ export const STEPS = [
   {
     id: 2,
     title: "Bus 2 arrives and reports that it is waiting for the bay",
-    label: "SIMULATED",
+    label: (state) => kindOf(state, BUS2),
     presenter: "Press ARRIVE for Bus 2. The bay is occupied, so it must wait.",
     act: {
       kind: "control",
@@ -65,7 +67,8 @@ export const STEPS = [
     id: 3,
     title:
       "Bus 2 keeps an acknowledged request but cannot deploy while waiting",
-    label: "SIMULATED passenger, bus confirms for itself",
+    label: (state) =>
+      `SIMULATED passenger; the ${kindOf(state, BUS2)} confirms for itself`,
     presenter:
       "Press CREATE REQUEST for Bus 2 (a simulated passenger, no phone). Bus 2 itself confirms it; its ramp must stay stowed.",
     act: { kind: "request", bus: BUS2 },
@@ -84,7 +87,7 @@ export const STEPS = [
   {
     id: 4,
     title: "Bus 1 leaves and releases the bay",
-    label: "bus 1 as configured",
+    label: (state) => kindOf(state, BUS1),
     presenter:
       "Press DEPART for Bus 1. The bay frees, but Bus 2's ramp must NOT move: leaving does not deploy for the next bus.",
     act: { kind: "control", bus: BUS1, body: () => ({ command: "depart" }) },
@@ -103,7 +106,7 @@ export const STEPS = [
   {
     id: 5,
     title: "The controller sends Bus 2 into the bay",
-    label: "REAL operator route",
+    label: () => "REAL operator route",
     presenter:
       "Press GRANT THE BAY. This is the operator's action; nothing grants it automatically.",
     act: { kind: "proceed" },
@@ -120,7 +123,7 @@ export const STEPS = [
     id: 6,
     title:
       "Bus 2 enters the bay and confirms it is stopped at the boarding position",
-    label: "SIMULATED",
+    label: (state) => kindOf(state, BUS2),
     presenter: "Nothing to press: Bus 2 enters by itself once granted.",
     act: null,
     check: (state) => {
@@ -136,7 +139,7 @@ export const STEPS = [
   {
     id: 7,
     title: "Bus 2 completes its simulated assistance sequence",
-    label: "SIMULATED ramp",
+    label: () => "SIMULATED ramp",
     presenter:
       "Nothing to press: with its request confirmed and the zone clear, the simulated ramp deploys. This is a simulated completion, not a physical one.",
     act: null,
@@ -160,7 +163,7 @@ export function describeSteps(state, config) {
     return {
       id: step.id,
       title: step.title,
-      label: step.label,
+      label: step.label(state),
       presenter: step.presenter,
       hasAction: step.act !== null,
       done: Boolean(result.done),

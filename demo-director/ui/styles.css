@@ -159,13 +159,13 @@ button:focus-visible {
 }
 .lane {
   position: relative;
-  height: 58px;
+  height: 92px;
   border-bottom: 1px dotted var(--line);
 }
 .token {
   position: absolute;
-  top: 3px;
-  width: 190px;
+  top: 4px;
+  width: 200px;
   padding: 3px 8px;
   background: #fff;
   border: 3px solid var(--line);
