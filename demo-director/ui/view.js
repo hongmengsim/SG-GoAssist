@@ -132,7 +132,10 @@ export function renderBus(bus, stopCode) {
     button("move", "DEPART", { bus: busId, command: "depart" }),
   ].join(" ");
   let injected;
-  if (bus.kind === "SIMULATED" && bus.controlLevel === "scene") {
+  if (bus.kind === "UNKNOWN") {
+    injected = `<h4>Not reachable ${kindTag("UNKNOWN")}</h4>
+      <p class="note">The demo cannot reach this bus's agent, so it does not know whether the bus is real or simulated and offers no inputs for it. Check the agent is running and that the code given to the director is the one it printed last.</p>`;
+  } else if (bus.kind === "SIMULATED" && bus.controlLevel === "scene") {
     injected = `<h4>Inject a state ${kindTag("SIMULATED")}</h4>
       <p class="note">These change only what this simulated bus appears to see. Its own gate still decides.</p>
       <div class="buttons">${SCENE.map(([command, id, label, extra]) =>

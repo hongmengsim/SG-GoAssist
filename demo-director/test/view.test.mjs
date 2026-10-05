@@ -162,3 +162,24 @@ test("the sequence panel offers to start again", () => {
   assert.match(html, /data-action="reset-sequence"/);
   assert.match(html, /Start the sequence again/);
 });
+
+test("a bus that cannot be reached is shown as unreachable, never with prompts that claim real sensors", () => {
+  const html = renderBus(
+    {
+      busId: "AV-1",
+      label: "BUS 1",
+      kind: "UNKNOWN",
+      controlLevel: "",
+      agentOk: false,
+      agentError: "wrong code",
+      agent: null,
+      operatorHalt: false,
+    },
+    "18331",
+  );
+  assert.match(html, /not reachable/i);
+  assert.match(html, /\? UNKNOWN/);
+  assert.doesNotMatch(html, /Do it physically/);
+  assert.doesNotMatch(html, /sensors are real/);
+  assert.doesNotMatch(html, /data-action="scene"/);
+});
