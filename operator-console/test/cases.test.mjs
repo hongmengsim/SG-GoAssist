@@ -380,3 +380,9 @@ test("mock case actions change the case and are audited as operator actions", ()
     "a finished case allows no actions",
   );
 });
+
+test("the safety clearance panel says in words that the vehicle interlocks are simulated, not read from a real vehicle", () => {
+  const html = casePage(withCase(), "CASE-1234ABCD", caseActions);
+  assert.match(html, /interlocks are simulated/i);
+  assert.doesNotMatch(html, /From the bus</);
+});

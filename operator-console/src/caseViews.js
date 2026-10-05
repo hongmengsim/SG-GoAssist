@@ -152,7 +152,7 @@ export function casePage(state, caseId, actions) {
   ${section(
     "c5",
     "Safety clearance",
-    tag("info", "From the bus"),
+    tag("info", "Reported by the bus agent; interlocks are simulated"),
     `${checklistHtml(view)}<h3 class="mini">Action plan</h3>${view.plan.length ? `<ul>${view.plan.map((item) => `<li>${esc(item)}</li>`).join("")}</ul>` : '<p class="note">No actions planned.</p>'}`,
   )}
   ${section(

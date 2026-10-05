@@ -1,4 +1,5 @@
 import test from "node:test";
+import { useTimeZone } from "../src/ui.js";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { MARKS, esc, tag } from "../src/html.js";
@@ -335,6 +336,7 @@ test("the bus page lists each halt reason as its own item, in words, whatever th
 });
 
 test("the decision panel says when the bus decided and that the bus, not the console, decides", () => {
+  useTimeZone("UTC");
   const html = busPage(state, B1, ui, enabled);
   assert.match(html, /Pi decision/);
   assert.match(html, /00:00:00/);
