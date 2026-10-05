@@ -71,6 +71,10 @@ class AgentConfig:
     ramp_polygon: tuple = DEFAULT_RAMP_POLYGON
 
 
+def _parse_iso(text: str) -> datetime:
+    return datetime.fromisoformat(text.replace("Z", "+00:00"))
+
+
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
@@ -129,6 +133,8 @@ class BusAgent:
         self.last_beam = None  # the latest BeamReading, for the status page
         self._deploy_started: Optional[float] = None
         self._help_raised = False
+        # Set when the backend has expired the deployment command while the ramp was still out.
+        self._command_expired = False
         # Since when each direction (sending, polling) has been failing; None while it works.
         self._failing_since: dict[str, Optional[float]] = {"post": None, "poll": None}
 
@@ -224,6 +230,7 @@ class BusAgent:
         dt = 0.0 if self._last_tick is None else min(MAX_TICK_SECONDS, max(0.0, now - self._last_tick))
         self._last_tick = now
 
+        self._check_command_expiry()
         decision = self._add_time_and_link_reasons(self._decide(now), now)
         self.last_decision = decision
         self._poll_backend(now)
@@ -290,7 +297,26 @@ class BusAgent:
         if self._failing_since[direction] is None:
             self._failing_since[direction] = self._clock()
 
+    def _is_past(self, expires_at: object) -> bool:
+        """True when an ISO time has passed by this agent's own clock (a bad value never has)."""
+        if not isinstance(expires_at, str):
+            return False
+        try:
+            return _parse_iso(expires_at) <= _parse_iso(self._iso())
+        except ValueError:
+            return False
+
+    def _check_command_expiry(self) -> None:
+        """The backend fails a command that outlives its time, and nothing retracts the ramp
+        afterwards, so a deployment must not carry on past it."""
+        if self._active_command is None or self._command_expired:
+            return
+        if self._is_past(self._commands[self._active_command].get("expiresAt")):
+            self._command_expired = True
+
     def _deployment_timed_out(self, now: float) -> bool:
+        if self._command_expired and self.ramp.state not in (ramp_sim.DEPLOYED, ramp_sim.STOWED):
+            return True
         limit = self._config.deployment_timeout_seconds
         return (
             limit is not None
@@ -328,7 +354,12 @@ class BusAgent:
         if DEPLOYMENT_TIMEOUT not in decision.reasons or self._help_raised:
             return
         self._help_raised = True
-        detail = f"Deployment not finished after {self._config.deployment_timeout_seconds:g} s"
+        limit = self._config.deployment_timeout_seconds
+        detail = (
+            "The deployment command expired before the deployment finished"
+            if self._command_expired or limit is None
+            else f"Deployment not finished after {limit:g} s"
+        )
         if self.ramp.halt_reasons:
             detail += f"; halted: {', '.join(self.ramp.halt_reasons)}"
         self._post_safely(
@@ -440,11 +471,15 @@ class BusAgent:
         if len(self._commands) >= MAX_REMEMBERED_COMMANDS:
             self._commands.pop(next(iter(self._commands)))
         self._commands[command_id] = command
+        if self._is_past(command.get("expiresAt")):
+            log.warning("Ignoring the command %s: it has already expired", command_id)
+            return
         kind = command.get("command")
         if kind == "DEPLOY_RAMP":
             self.ramp = ramp_sim.request_deployment(self.ramp)
             self._deploy_started = self._clock()
             self._help_raised = False
+            self._command_expired = False
             self._active_command = command_id
             self._send_actuator(command, "ACCEPTED", "Deployment requested (simulated ramp)")
         elif kind == "RETRACT_RAMP":

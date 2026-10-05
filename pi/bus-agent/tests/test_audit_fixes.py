@@ -78,3 +78,40 @@ class AckWedgeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CommandExpiryTests(unittest.TestCase):
+    """A command the backend has expired must not be run, or carried on with."""
+
+    def world(self, expires_at):
+        clock = {"now": "2026-10-05T00:00:00.000Z"}
+        world = World(config=AgentConfig(deploy_seconds=10.0))
+        world.agent._iso = lambda: clock["now"]
+        world.positioned_with_request()
+        world.clock_state = clock
+        world.backend.commands = [{**command(), "expiresAt": expires_at}]
+        return world
+
+    def test_a_command_that_has_already_expired_is_not_run(self) -> None:
+        world = self.world("2026-10-04T23:59:00.000Z")
+        world.tick(10)
+        self.assertEqual("STOWED", world.agent.ramp.state)
+        self.assertEqual([], world.backend.actuator_reports)
+
+    def test_a_deployment_still_going_when_its_command_expires_halts_and_asks_for_help(self) -> None:
+        world = self.world("2026-10-05T00:00:30.000Z")
+        world.tick(10)
+        self.assertEqual("DEPLOYING", world.agent.ramp.state)
+        world.clock_state["now"] = "2026-10-05T00:00:31.000Z"  # the backend has expired it by now
+        world.tick(5)
+        self.assertEqual("HALT", world.agent.last_decision.permission)
+        self.assertIn("DEPLOYMENT_TIMEOUT", world.agent.last_decision.reasons)
+        self.assertEqual(1, len(world.backend.posted("help-required")))
+        world.tick(100)  # it must not finish by itself afterwards
+        self.assertNotEqual("DEPLOYED", world.agent.ramp.state)
+
+    def test_a_command_that_finishes_before_it_expires_is_unaffected(self) -> None:
+        world = self.world("2026-10-05T00:10:00.000Z")
+        world.tick(80)
+        self.assertEqual("DEPLOYED", world.agent.ramp.state)
+        self.assertEqual([], world.backend.posted("help-required"))
