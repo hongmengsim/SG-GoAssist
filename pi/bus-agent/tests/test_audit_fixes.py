@@ -261,3 +261,14 @@ class DeviceHeartbeatTests(unittest.TestCase):
             "device-heartbeat", {"deviceId": BUS}
         )
         self.assertEqual([("POST", "http://backend.test/api/operations/devices/heartbeat")], calls)
+
+
+class RequestShapeTests(unittest.TestCase):
+    def test_the_request_the_agent_receives_matches_the_schema_the_backend_pushes_to(self) -> None:
+        from jsonschema import Draft7Validator
+
+        from tests.test_agent import SCHEMAS
+
+        schema = json.loads((SCHEMAS / "AssistRequestForBus.schema.json").read_text(encoding="utf-8"))
+        errors = [e.message for e in Draft7Validator(schema).iter_errors(REQUEST_EVENT["request"])]
+        self.assertEqual([], errors)
