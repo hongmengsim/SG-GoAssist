@@ -81,10 +81,10 @@ router.post(
       res.status(409).json({ error: "Request belongs to a different bus" });
       return;
     }
-    const result = await processSimulatorCommand({
-      requestId,
-      command: "ACKNOWLEDGE",
-    });
+    const result = await processSimulatorCommand(
+      { requestId, command: "ACKNOWLEDGE" },
+      "VEHICLE",
+    );
     res.status(result.success ? 200 : 409).json({
       success: result.success,
       status: result.request?.status,

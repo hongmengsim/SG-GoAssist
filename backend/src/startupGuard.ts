@@ -37,6 +37,10 @@ export function checkSecurity(env: GuardEnvironment): SecurityCheck {
     problems.push(
       "DEVICE_SHARED_SECRET or DEVICE_SECRETS is not set (bus endpoints would accept anyone)",
     );
+  if ((env.GOASSIST_AUTO_ACK ?? "").trim().toLowerCase() !== "off")
+    problems.push(
+      'GOASSIST_AUTO_ACK is not "off" (the backend would confirm requests itself, and only a bus may)',
+    );
   return { shared, problems, overridden: on(env.GOASSIST_ALLOW_INSECURE) };
 }
 

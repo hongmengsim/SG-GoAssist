@@ -15,6 +15,7 @@ import { logger } from "./logger";
 import { toBusRequest } from "./busRequest";
 import { publishEvent } from "../events/eventHub";
 import { isAutoAcknowledgeEnabled } from "./autoAcknowledge";
+import { getAuditLog } from "./operationsData";
 import { recordPassengerRequest } from "./assistanceCaseService";
 
 const defaultBoardingStop = "Changi Airport Terminal 1";
@@ -111,6 +112,21 @@ export async function createStandardizedAssistanceRequestBundle(
     },
   );
 
+  if (duplicateOfRequestId) {
+    getAuditLog().append({
+      eventId: `EVENT-${crypto.randomUUID()}`,
+      eventType: "REQUEST_MERGED",
+      caseId: savedRequest.caseId,
+      busId: savedRequest.busId,
+      actor: input.source,
+      timestamp: new Date().toISOString(),
+      detail: {
+        requestId: candidate.requestId,
+        mergedInto: duplicateOfRequestId,
+      },
+    });
+  }
+
   if (!duplicateOfRequestId) {
     publishEvent({
       type: "ASSIST_REQUESTED",
@@ -127,10 +143,10 @@ export async function createStandardizedAssistanceRequestBundle(
     setTimeout(() => {
       void (async () => {
         try {
-          await processSimulatorCommand({
-            requestId: savedRequest.requestId,
-            command: "ACKNOWLEDGE",
-          });
+          await processSimulatorCommand(
+            { requestId: savedRequest.requestId, command: "ACKNOWLEDGE" },
+            "AUTO_ACK",
+          );
         } catch (error) {
           logger.error(
             "Simulated acknowledgement failed",

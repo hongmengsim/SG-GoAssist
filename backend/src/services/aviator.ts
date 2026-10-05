@@ -11,13 +11,14 @@ import {
   canTransitionAssistanceRequestStatus,
   canTransitionVehicleStatus,
 } from "@buspass/shared";
+import crypto from "crypto";
 import { withLock } from "../concurrency/locks";
 import { getEventHub } from "../events/eventHub";
 import { topic } from "../events/topics";
 import { logger } from "./logger";
 import { synchronizeLegacyCaseStatus } from "./assistanceCaseService";
 import { TERMINAL_CASE_STATES } from "../cases/ports";
-import { getOperationsData } from "./operationsData";
+import { getAuditLog, getOperationsData } from "./operationsData";
 
 /** How often a waiter re-reads the request, in case the push came from another process or was lost. */
 const WAIT_POLL_MS = 250;
@@ -266,19 +267,28 @@ export async function getAnnouncementEvents(): Promise<
   ).announcements.list(ANNOUNCEMENT_LIST_LIMIT);
 }
 
+/**
+ * Who made a request status change. Only a signed bus may be recorded as "VEHICLE"; the
+ * auto-acknowledge timer and the simulator route are recorded under their own names, so the
+ * audit log can show whether a "Confirmed by bus" came from a bus.
+ */
+export type StatusActor = "VEHICLE" | "AUTO_ACK" | "SIMULATOR";
+
 async function updateRequestStatus(
   requestId: string,
   newStatus: AssistanceRequestStatus,
+  actor: StatusActor,
 ): Promise<PassengerAssistanceRequest | null> {
   return await withLock(
     `request:${requestId}`,
-    async () => await updateRequestStatusUnlocked(requestId, newStatus),
+    async () => await updateRequestStatusUnlocked(requestId, newStatus, actor),
   );
 }
 
 async function updateRequestStatusUnlocked(
   requestId: string,
   newStatus: AssistanceRequestStatus,
+  actor: StatusActor,
 ): Promise<PassengerAssistanceRequest | null> {
   const request = await getRequest(requestId);
   if (!request) {
@@ -305,6 +315,15 @@ async function updateRequestStatusUnlocked(
   if (newStatus === AssistanceRequestStatus.ACKNOWLEDGED) {
     request.acknowledgedAt = now;
     logger.info("Assistance request acknowledged", requestId);
+    getAuditLog().append({
+      eventId: `EVENT-${crypto.randomUUID()}`,
+      eventType: "REQUEST_ACKNOWLEDGED",
+      caseId: request.caseId,
+      busId: request.busId,
+      actor,
+      timestamp: now,
+      detail: { requestId },
+    });
   }
   if (newStatus === AssistanceRequestStatus.CANCELLED) {
     request.cancelledAt = now;
@@ -333,6 +352,7 @@ async function updateRequestStatusUnlocked(
 
 export async function processSimulatorCommand(
   command: SimulatorCommand,
+  actor: StatusActor = "SIMULATOR",
 ): Promise<{
   success: boolean;
   message: string;
@@ -378,7 +398,11 @@ export async function processSimulatorCommand(
     };
   }
 
-  const request = await updateRequestStatus(command.requestId, nextStatus);
+  const request = await updateRequestStatus(
+    command.requestId,
+    nextStatus,
+    actor,
+  );
 
   return {
     success: true,
