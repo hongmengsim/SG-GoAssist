@@ -33,7 +33,9 @@ function put(id, html) {
   last[id] = html;
   const focused = document.activeElement;
   const inside = focused && $(id).contains(focused);
-  const index = inside ? [...$(id).querySelectorAll("button")].indexOf(focused) : -1;
+  const index = inside
+    ? [...$(id).querySelectorAll("button")].indexOf(focused)
+    : -1;
   $(id).innerHTML = html;
   if (index >= 0) $(id).querySelectorAll("button")[index]?.focus();
 }

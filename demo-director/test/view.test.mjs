@@ -14,7 +14,10 @@ const agent = (overrides = {}) => ({
   simulated: true,
   movement: { code: "WAITING_FOR_BAY", text: "Waiting for bay" },
   ramp: { state: "STOWED" },
-  decision: { permission: "HALT", reasons: [{ code: "WAITING_FOR_BAY", text: "Waiting for the bay" }] },
+  decision: {
+    permission: "HALT",
+    reasons: [{ code: "WAITING_FOR_BAY", text: "Waiting for the bay" }],
+  },
   beam: { state: "BEAM_CLEAR", simulated: true },
   camera: { imageOk: true },
   link: { ok: true },
@@ -27,7 +30,11 @@ const real = {
   kind: "REAL",
   controlLevel: "movement",
   agentOk: true,
-  agent: agent({ simulated: false, beam: { state: "BLOCKED", simulated: false, distanceMm: 212 }, movement: { code: "POSITIONED_AT_STOP", text: "Positioned at stop" } }),
+  agent: agent({
+    simulated: false,
+    beam: { state: "BLOCKED", simulated: false, distanceMm: 212 },
+    movement: { code: "POSITIONED_AT_STOP", text: "Positioned at stop" },
+  }),
   operatorHalt: false,
 };
 const simulated = {
@@ -72,7 +79,14 @@ test("the stop display shows each bus in words with its REAL or SIMULATED tag an
 test("a simulated bus offers scene injections, each under a SIMULATED heading", () => {
   const html = renderBus(simulated, "18331");
   assert.match(html, /Inject a state/);
-  for (const label of ["Person in the ramp zone", "Leaf in the zone", "Beam blocked", "Sensor drops out", "Camera covered", "Cut the backend link"])
+  for (const label of [
+    "Person in the ramp zone",
+    "Leaf in the zone",
+    "Beam blocked",
+    "Sensor drops out",
+    "Camera covered",
+    "Cut the backend link",
+  ])
     assert.match(html, new RegExp(label), label);
   assert.match(html, /data-action="move"/);
 });
@@ -88,7 +102,8 @@ test("a real bus offers movement and physical prompts, and no scene button at al
 
 test("every state is a word with a mark, so colour is never the only signal", () => {
   const html = renderBus(simulated, "18331") + renderBus(real, "18331");
-  for (const word of ["● working", "■ ON", "○ off", "■ HALT", "● image ok"]) assert.match(html, new RegExp(word));
+  for (const word of ["● working", "■ ON", "○ off", "■ HALT", "● image ok"])
+    assert.match(html, new RegExp(word));
 });
 
 test("the operator actions say which are real routes and which are a simulated passenger", () => {
@@ -109,9 +124,17 @@ test("the sequence shows done, next and not yet in words, and an action button o
 
 test("the timeline marks each source with a shape as well as its name", () => {
   const html = renderTimeline([
-    { at: "2026-10-06T00:00:01.000Z", source: "BUS 2 · SIMULATED", text: "movement" },
+    {
+      at: "2026-10-06T00:00:01.000Z",
+      source: "BUS 2 · SIMULATED",
+      text: "movement",
+    },
     { at: "2026-10-06T00:00:02.000Z", source: "BUS 1 · REAL", text: "ramp" },
-    { at: "2026-10-06T00:00:03.000Z", source: "DEMO ACTION · SIMULATED", text: "pressed" },
+    {
+      at: "2026-10-06T00:00:03.000Z",
+      source: "DEMO ACTION · SIMULATED",
+      text: "pressed",
+    },
     { at: "2026-10-06T00:00:04.000Z", source: "BACKEND", text: "bay" },
   ]);
   assert.match(html, /◇ BUS 2 · SIMULATED/);
@@ -122,6 +145,12 @@ test("the timeline marks each source with a shape as well as its name", () => {
 });
 
 test("text from the system is escaped", () => {
-  const html = renderTimeline([{ at: "2026-10-06T00:00:01.000Z", source: "BACKEND", text: "<img src=x onerror=alert(1)>" }]);
+  const html = renderTimeline([
+    {
+      at: "2026-10-06T00:00:01.000Z",
+      source: "BACKEND",
+      text: "<img src=x onerror=alert(1)>",
+    },
+  ]);
   assert.doesNotMatch(html, /<img/);
 });

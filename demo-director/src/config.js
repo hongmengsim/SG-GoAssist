@@ -26,7 +26,12 @@ function parseAgents(text) {
         throw new Error(`DEMO_AGENTS[${index}].${name} is required`);
     if (!/^https?:\/\//.test(url))
       throw new Error(`DEMO_AGENTS[${index}].url must be http or https`);
-    return { busId, url: url.replace(/\/+$/, ""), code, label: `BUS ${index + 1}` };
+    return {
+      busId,
+      url: url.replace(/\/+$/, ""),
+      code,
+      label: `BUS ${index + 1}`,
+    };
   });
 }
 

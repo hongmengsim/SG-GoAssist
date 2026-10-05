@@ -18,7 +18,9 @@ let config;
 try {
   config = readConfig(process.env);
 } catch (error) {
-  console.error(`Configuration error: ${error instanceof Error ? error.message : error}`);
+  console.error(
+    `Configuration error: ${error instanceof Error ? error.message : error}`,
+  );
   process.exit(2);
 }
 

@@ -10,7 +10,10 @@ test("the director does not start unless it is asked to", () => {
 });
 
 test("it never starts in production, even when asked", () => {
-  const problems = startProblems({ DEMO_DIRECTOR: "on", NODE_ENV: "production" });
+  const problems = startProblems({
+    DEMO_DIRECTOR: "on",
+    NODE_ENV: "production",
+  });
   assert.equal(problems.length, 1);
   assert.match(problems[0], /production/);
 });
@@ -45,7 +48,9 @@ test("a missing or malformed agent list is refused with a clear reason", () => {
   assert.throws(
     () =>
       readConfig({
-        DEMO_AGENTS: JSON.stringify([{ busId: "B", url: "ftp://x", code: "c" }]),
+        DEMO_AGENTS: JSON.stringify([
+          { busId: "B", url: "ftp://x", code: "c" },
+        ]),
       }),
     /http or https/,
   );

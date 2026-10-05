@@ -90,7 +90,9 @@ export function createDirector({
         kind: agent ? (agent.simulated ? "SIMULATED" : "REAL") : "UNKNOWN",
         controlLevel: agent?.controlLevel ?? "",
         agentOk: result.ok,
-        agentError: result.ok ? null : (result.body?.error ?? `HTTP ${result.status}`),
+        agentError: result.ok
+          ? null
+          : (result.body?.error ?? `HTTP ${result.status}`),
         agent,
         status: status ?? null,
         operatorHalt: Boolean(
@@ -139,27 +141,41 @@ export function createDirector({
         if (decision && decision !== decisionText(was.agent))
           record(tag, `the bus's own gate: ${decision}`);
         if (was.agentOk !== is.agentOk)
-          record(tag, is.agentOk ? "agent reachable again" : "agent not reachable");
+          record(
+            tag,
+            is.agentOk ? "agent reachable again" : "agent not reachable",
+          );
         const link = is.agent?.link?.ok;
         if (link !== undefined && link !== was.agent?.link?.ok)
           record(tag, link ? "backend link working" : "backend link DOWN");
         if (was.operatorHalt !== is.operatorHalt)
-          record("BACKEND · REAL route", `${is.label}: operator halt ${is.operatorHalt ? "ON" : "released"}`);
+          record(
+            "BACKEND · REAL route",
+            `${is.label}: operator halt ${is.operatorHalt ? "ON" : "released"}`,
+          );
       }
       const bayWas = bayText(before.backend.bay);
       const bayIs = bayText(after.backend.bay);
       if (bayIs && bayIs !== bayWas) record("BACKEND", `bay: ${bayIs}`);
-      const was = new Map(before.backend.requests.map((item) => [item.requestId, item.status]));
+      const was = new Map(
+        before.backend.requests.map((item) => [item.requestId, item.status]),
+      );
       for (const request of after.backend.requests)
         if (was.get(request.requestId) !== request.status)
-          record("BACKEND", `request ${shortId(request.requestId)} (${labels[request.busId] ?? request.busId}): ${request.status}`);
+          record(
+            "BACKEND",
+            `request ${shortId(request.requestId)} (${labels[request.busId] ?? request.busId}): ${request.status}`,
+          );
     }
     // Audit events are the backend's own record; show each once.
     const ids = new Set(auditEvents.map((event) => event.eventId));
     if (seenAudit) {
       for (const event of [...auditEvents].reverse())
         if (!seenAudit.has(event.eventId))
-          record("AUDIT", `${event.eventType} (${event.actor}${event.busId ? `, ${labels[event.busId] ?? event.busId}` : ""})`);
+          record(
+            "AUDIT",
+            `${event.eventType} (${event.actor}${event.busId ? `, ${labels[event.busId] ?? event.busId}` : ""})`,
+          );
     }
     seenAudit = ids;
   }
@@ -178,17 +194,24 @@ export function createDirector({
     const isMovement = MOVEMENT_COMMANDS.has(command);
     if (!isMovement && !SCENE_COMMANDS.has(command))
       throw new DirectorError(400, `Unknown command: ${String(command)}`);
-    if (["arrive", "travel"].includes(command) && !STOP.test(String(value ?? "")))
+    if (
+      ["arrive", "travel"].includes(command) &&
+      !STOP.test(String(value ?? ""))
+    )
       if (!(command === "travel" && value === undefined))
         throw new DirectorError(400, "A stop code is required");
     if (command === "place" && !CLASS.test(String(value ?? "")))
       throw new DirectorError(400, "An object class is required");
-    if (["block", "dropout", "cover", "frames", "link"].includes(command) && !["on", "off"].includes(value))
+    if (
+      ["block", "dropout", "cover", "frames", "link"].includes(command) &&
+      !["on", "off"].includes(value)
+    )
       throw new DirectorError(400, "value must be on or off");
     const bus = state.buses[busId];
     if (!isMovement) {
       // A real bus's sensors are only ever real. This check does not depend on the agent refusing.
-      if (!bus?.agent) throw new DirectorError(502, `${labels[busId]} is not reachable`);
+      if (!bus?.agent)
+        throw new DirectorError(502, `${labels[busId]} is not reachable`);
       if (bus.kind !== "SIMULATED" || bus.controlLevel !== "scene")
         throw new DirectorError(
           403,
@@ -213,7 +236,8 @@ export function createDirector({
   function stopOf(busId) {
     const found = (state.backend.requests ?? []).find(
       (request) =>
-        request.busId === busId && ["SENDING", "ACKNOWLEDGED"].includes(request.status),
+        request.busId === busId &&
+        ["SENDING", "ACKNOWLEDGED"].includes(request.status),
     );
     return found;
   }
@@ -231,7 +255,10 @@ export function createDirector({
       boardingOrAlighting: "BOARDING",
     });
     if (!result.ok)
-      throw new DirectorError(result.status || 502, result.body?.error ?? "The backend refused");
+      throw new DirectorError(
+        result.status || 502,
+        result.body?.error ?? "The backend refused",
+      );
     record(
       "DEMO ACTION · SIMULATED passenger",
       `${labels[busId]}: request created${result.body?.duplicateOfRequestId ? " (merged into an active one)" : ""}`,
@@ -242,17 +269,33 @@ export function createDirector({
   async function proceed() {
     const result = await api.proceed(config.stopCode);
     if (!result.ok)
-      throw new DirectorError(result.status || 502, result.body?.error ?? "The backend refused");
-    record("DEMO ACTION · REAL operator route", "bay granted to the next waiting bus");
+      throw new DirectorError(
+        result.status || 502,
+        result.body?.error ?? "The backend refused",
+      );
+    record(
+      "DEMO ACTION · REAL operator route",
+      "bay granted to the next waiting bus",
+    );
     return result.body;
   }
 
   async function halt(busId, halted) {
     agentFor(busId);
-    const result = await api.setHalt(busId, Boolean(halted), "Demo: operator halt from the demo director");
+    const result = await api.setHalt(
+      busId,
+      Boolean(halted),
+      "Demo: operator halt from the demo director",
+    );
     if (!result.ok)
-      throw new DirectorError(result.status || 502, result.body?.error ?? "The backend refused");
-    record("DEMO ACTION · REAL operator route", `${labels[busId]}: operator halt ${halted ? "set" : "released"}`);
+      throw new DirectorError(
+        result.status || 502,
+        result.body?.error ?? "The backend refused",
+      );
+    record(
+      "DEMO ACTION · REAL operator route",
+      `${labels[busId]}: operator halt ${halted ? "set" : "released"}`,
+    );
     return result.body;
   }
 
@@ -260,11 +303,23 @@ export function createDirector({
     agentFor(busId);
     const request = stopOf(busId);
     if (!request?.caseId)
-      throw new DirectorError(409, `${labels[busId]} has no open request with a case`);
-    const result = await api.cancelCase(request.caseId, "Demo: cancelled from the demo director");
+      throw new DirectorError(
+        409,
+        `${labels[busId]} has no open request with a case`,
+      );
+    const result = await api.cancelCase(
+      request.caseId,
+      "Demo: cancelled from the demo director",
+    );
     if (!result.ok)
-      throw new DirectorError(result.status || 502, result.body?.error ?? "The backend refused");
-    record("DEMO ACTION · REAL operator route", `${labels[busId]}: request cancelled by the operator`);
+      throw new DirectorError(
+        result.status || 502,
+        result.body?.error ?? "The backend refused",
+      );
+    record(
+      "DEMO ACTION · REAL operator route",
+      `${labels[busId]}: request cancelled by the operator`,
+    );
     return result.body;
   }
 
@@ -293,7 +348,10 @@ export function createDirector({
         try {
           await refresh();
         } catch (error) {
-          record("DIRECTOR", `could not read the system: ${error instanceof Error ? error.message : error}`);
+          record(
+            "DIRECTOR",
+            `could not read the system: ${error instanceof Error ? error.message : error}`,
+          );
         }
         timer = setTimeout(tick, intervalMs);
         timer.unref?.();
@@ -343,7 +401,9 @@ const shortId = (id) => String(id).slice(-6);
 function decisionText(agent) {
   const decision = agent?.decision;
   if (!decision) return "";
-  const reasons = (decision.reasons ?? []).map((reason) => reason.code).join(", ");
+  const reasons = (decision.reasons ?? [])
+    .map((reason) => reason.code)
+    .join(", ");
   return `${decision.permission}${reasons ? ` (${reasons})` : ""}`;
 }
 
@@ -354,11 +414,13 @@ function bayText(bay) {
 }
 
 function describe(command, value, confidence) {
-  if (command === "place") return `object placed in the ramp zone: ${value}${confidence ? ` at ${confidence}` : ""}`;
+  if (command === "place")
+    return `object placed in the ramp zone: ${value}${confidence ? ` at ${confidence}` : ""}`;
   if (command === "clear") return "ramp zone emptied";
   if (command === "arrive") return `ARRIVE at ${value}`;
   if (command === "depart") return "DEPART";
   if (command === "travel") return `TRAVEL${value ? ` to ${value}` : ""}`;
-  if (command === "link") return `backend link ${value === "off" ? "CUT" : "restored"}`;
+  if (command === "link")
+    return `backend link ${value === "off" ? "CUT" : "restored"}`;
   return `${command} ${value}`;
 }

@@ -28,7 +28,11 @@ const SECURITY_HEADERS = {
 
 function send(response, status, body, type = "application/json") {
   response.writeHead(status, { ...SECURITY_HEADERS, "Content-Type": type });
-  response.end(typeof body === "string" || Buffer.isBuffer(body) ? body : JSON.stringify(body));
+  response.end(
+    typeof body === "string" || Buffer.isBuffer(body)
+      ? body
+      : JSON.stringify(body),
+  );
 }
 
 async function readJson(request) {
@@ -56,26 +60,46 @@ export function createDirectorServer({ director }) {
         const [name, type] = FILES[path];
         return send(response, 200, await readFile(join(UI, name)), type);
       }
-      if (path === "/api/state") return send(response, 200, director.snapshot());
+      if (path === "/api/state")
+        return send(response, 200, director.snapshot());
       return send(response, 404, { error: "Not found" });
     }
-    if (request.method !== "POST") return send(response, 405, { error: "Method not allowed" });
+    if (request.method !== "POST")
+      return send(response, 405, { error: "Method not allowed" });
 
     // A page on another website cannot send this header, nor claim this origin.
     if (request.headers["x-demo-director"] !== "1")
       return send(response, 403, { error: "Missing the demo director header" });
     const origin = request.headers.origin;
     if (origin && origin !== `http://${request.headers.host}`)
-      return send(response, 403, { error: "Cross-origin requests are refused" });
+      return send(response, 403, {
+        error: "Cross-origin requests are refused",
+      });
 
     const body = await readJson(request);
     let match;
     if ((match = path.match(/^\/api\/agents\/([^/]+)\/control$/)))
-      return send(response, 200, await director.control(decodeURIComponent(match[1]), body));
-    if (path === "/api/request") return send(response, 200, await director.createRequest(String(body.busId)));
-    if (path === "/api/bay/proceed") return send(response, 200, await director.proceed());
-    if (path === "/api/halt") return send(response, 200, await director.halt(String(body.busId), body.halted === true));
-    if (path === "/api/cancel") return send(response, 200, await director.cancel(String(body.busId)));
+      return send(
+        response,
+        200,
+        await director.control(decodeURIComponent(match[1]), body),
+      );
+    if (path === "/api/request")
+      return send(
+        response,
+        200,
+        await director.createRequest(String(body.busId)),
+      );
+    if (path === "/api/bay/proceed")
+      return send(response, 200, await director.proceed());
+    if (path === "/api/halt")
+      return send(
+        response,
+        200,
+        await director.halt(String(body.busId), body.halted === true),
+      );
+    if (path === "/api/cancel")
+      return send(response, 200, await director.cancel(String(body.busId)));
     if ((match = path.match(/^\/api\/sequence\/(\d+)\/act$/)))
       return send(response, 200, await director.runStep(Number(match[1])));
     return send(response, 404, { error: "Not found" });
@@ -85,8 +109,12 @@ export function createDirectorServer({ director }) {
     route(request, response).catch((error) => {
       if (error instanceof DirectorError)
         return send(response, error.status, { error: error.message });
-      if (error?.code === "ENOENT") return send(response, 404, { error: "Not found" });
-      console.error("demo director error:", error instanceof Error ? error.message : error);
+      if (error?.code === "ENOENT")
+        return send(response, 404, { error: "Not found" });
+      console.error(
+        "demo director error:",
+        error instanceof Error ? error.message : error,
+      );
       send(response, 500, { error: "Internal error" });
     });
   });

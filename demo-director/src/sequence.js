@@ -29,7 +29,11 @@ export const STEPS = [
     label: "bus 1 as configured (REAL or SIMULATED)",
     presenter:
       "Press ARRIVE for Bus 1. Its state moves into the bay; the readings shown for a real Bus 1 are real.",
-    act: { kind: "control", bus: BUS1, body: (config) => ({ command: "arrive", value: config.stopCode }) },
+    act: {
+      kind: "control",
+      bus: BUS1,
+      body: (config) => ({ command: "arrive", value: config.stopCode }),
+    },
     check: (state) => {
       const occupant = bayOf(state).occupantBusId;
       return {
@@ -43,7 +47,11 @@ export const STEPS = [
     title: "Bus 2 arrives and reports that it is waiting for the bay",
     label: "SIMULATED",
     presenter: "Press ARRIVE for Bus 2. The bay is occupied, so it must wait.",
-    act: { kind: "control", bus: BUS2, body: (config) => ({ command: "arrive", value: config.stopCode }) },
+    act: {
+      kind: "control",
+      bus: BUS2,
+      body: (config) => ({ command: "arrive", value: config.stopCode }),
+    },
     check: (state) => {
       const second = bus(state, BUS2);
       const queued = (bayOf(state).waitingBusIds ?? []).includes(second);
@@ -55,7 +63,8 @@ export const STEPS = [
   },
   {
     id: 3,
-    title: "Bus 2 keeps an acknowledged request but cannot deploy while waiting",
+    title:
+      "Bus 2 keeps an acknowledged request but cannot deploy while waiting",
     label: "SIMULATED passenger, bus confirms for itself",
     presenter:
       "Press CREATE REQUEST for Bus 2 (a simulated passenger, no phone). Bus 2 itself confirms it; its ramp must stay stowed.",
@@ -95,7 +104,8 @@ export const STEPS = [
     id: 5,
     title: "The controller sends Bus 2 into the bay",
     label: "REAL operator route",
-    presenter: "Press GRANT THE BAY. This is the operator's action; nothing grants it automatically.",
+    presenter:
+      "Press GRANT THE BAY. This is the operator's action; nothing grants it automatically.",
     act: { kind: "proceed" },
     check: (state) => {
       const bay = bayOf(state);
@@ -108,7 +118,8 @@ export const STEPS = [
   },
   {
     id: 6,
-    title: "Bus 2 enters the bay and confirms it is stopped at the boarding position",
+    title:
+      "Bus 2 enters the bay and confirms it is stopped at the boarding position",
     label: "SIMULATED",
     presenter: "Nothing to press: Bus 2 enters by itself once granted.",
     act: null,
@@ -142,7 +153,10 @@ export const STEPS = [
 /** What a step looks like to the page: its text, and whether the system shows it has happened. */
 export function describeSteps(state, config) {
   return STEPS.map((step) => {
-    const result = state?.order?.length >= 2 ? step.check(state) : { done: false, detail: "waiting for both buses" };
+    const result =
+      state?.order?.length >= 2
+        ? step.check(state)
+        : { done: false, detail: "waiting for both buses" };
     return {
       id: step.id,
       title: step.title,

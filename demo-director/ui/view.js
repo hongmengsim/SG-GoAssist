@@ -5,7 +5,10 @@
 const esc = (value) =>
   String(value ?? "").replace(
     /[&<>"']/g,
-    (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch],
+    (ch) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[
+        ch
+      ],
   );
 
 export const MARK = { REAL: "■", SIMULATED: "◇", UNKNOWN: "?" };
@@ -65,8 +68,18 @@ export function renderStop(state) {
 
 const SCENE = [
   ["place", "person", "Person in the ramp zone", { value: "person" }],
-  ["place", "leaf", "Leaf in the zone (safe object)", { value: "leaf", confidence: 0.95 }],
-  ["place", "plastic_bag", "Plastic bag in the zone (safe object)", { value: "plastic_bag", confidence: 0.95 }],
+  [
+    "place",
+    "leaf",
+    "Leaf in the zone (safe object)",
+    { value: "leaf", confidence: 0.95 },
+  ],
+  [
+    "place",
+    "plastic_bag",
+    "Plastic bag in the zone (safe object)",
+    { value: "plastic_bag", confidence: 0.95 },
+  ],
   ["clear", "clear", "Empty the zone", {}],
   ["block", "block-on", "Beam blocked", { value: "on" }],
   ["block", "block-off", "Beam clear again", { value: "off" }],
@@ -80,14 +93,22 @@ const SCENE = [
 
 const button = (action, label, data = {}, hint = "") =>
   `<button type="button" data-action="${esc(action)}" ${Object.entries(data)
-    .map(([key, value]) => `data-${esc(key)}="${esc(typeof value === "object" ? JSON.stringify(value) : value)}"`)
-    .join(" ")}>${esc(label)}</button>${hint ? `<span class="hint">${esc(hint)}</span>` : ""}`;
+    .map(
+      ([key, value]) =>
+        `data-${esc(key)}="${esc(typeof value === "object" ? JSON.stringify(value) : value)}"`,
+    )
+    .join(
+      " ",
+    )}>${esc(label)}</button>${hint ? `<span class="hint">${esc(hint)}</span>` : ""}`;
 
 function readings(bus) {
   const agent = bus.agent;
-  if (!agent) return `<p class="note">The agent is not reachable: ${esc(bus.agentError ?? "no answer")}</p>`;
+  if (!agent)
+    return `<p class="note">The agent is not reachable: ${esc(bus.agentError ?? "no answer")}</p>`;
   const decision = agent.decision;
-  const reasons = (decision?.reasons ?? []).map((reason) => reason.text ?? reason.code).join("; ");
+  const reasons = (decision?.reasons ?? [])
+    .map((reason) => reason.text ?? reason.code)
+    .join("; ");
   return `<dl class="kv">
     <dt>Movement</dt><dd>${esc(agent.movement?.text ?? "unknown")}</dd>
     <dt>Simulated ramp</dt><dd>${esc(RAMP_MARK[agent.ramp?.state] ?? agent.ramp?.state ?? "unknown")}</dd>
@@ -103,7 +124,11 @@ export function renderBus(bus, stopCode) {
   const busId = bus.busId;
   const movement = [
     button("move", "TRAVEL", { bus: busId, command: "travel" }),
-    button("move", "ARRIVE", { bus: busId, command: "arrive", value: stopCode }),
+    button("move", "ARRIVE", {
+      bus: busId,
+      command: "arrive",
+      value: stopCode,
+    }),
     button("move", "DEPART", { bus: busId, command: "depart" }),
   ].join(" ");
   let injected;
@@ -155,7 +180,9 @@ export function renderSteps(steps) {
   const next = steps.find((step) => !step.done)?.id;
   return `<ol class="steps">${steps
     .map(
-      (step) => `<li class="step ${step.done ? "done" : ""} ${step.id === next ? "next" : ""}">
+      (
+        step,
+      ) => `<li class="step ${step.done ? "done" : ""} ${step.id === next ? "next" : ""}">
       <div class="step-head"><span class="mark">${step.done ? "● DONE" : step.id === next ? "◆ NEXT" : "○ not yet"}</span>
         <b>${step.id}. ${esc(step.title)}</b> <span class="label">[${esc(step.label)}]</span></div>
       <p>${esc(step.presenter)}</p>
@@ -167,10 +194,17 @@ export function renderSteps(steps) {
 }
 
 const SOURCE_MARK = (source) =>
-  source.includes("SIMULATED") ? "◇" : source.includes("REAL") ? "■" : source.startsWith("DEMO") ? "◆" : "○";
+  source.includes("SIMULATED")
+    ? "◇"
+    : source.includes("REAL")
+      ? "■"
+      : source.startsWith("DEMO")
+        ? "◆"
+        : "○";
 
 export function renderTimeline(timeline) {
-  if (timeline.length === 0) return `<p class="note">Nothing has happened yet.</p>`;
+  if (timeline.length === 0)
+    return `<p class="note">Nothing has happened yet.</p>`;
   return `<ul class="timeline">${[...timeline]
     .reverse()
     .map(

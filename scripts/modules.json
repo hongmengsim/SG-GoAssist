@@ -115,6 +115,18 @@
       "manifest": "package.json",
       "verify": "npm test",
       "verifyCwd": "operator-console"
+    },
+    {
+      "name": "demo-director",
+      "path": "demo-director",
+      "kind": "js",
+      "status": "active",
+      "packageName": "@buspass/demo-director",
+      "readme": "strict",
+      "allowedDependencies": [],
+      "manifest": "package.json",
+      "verify": "npm test",
+      "verifyCwd": "demo-director"
     }
   ]
 }

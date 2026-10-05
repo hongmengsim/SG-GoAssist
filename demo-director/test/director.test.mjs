@@ -197,7 +197,10 @@ test("the operator actions use the backend operator routes, and a cancel needs a
       .map((item) => item.body.halted),
     [true, false],
   );
-  await assert.rejects(director.cancel("AV-1"), (error) => error.status === 409);
+  await assert.rejects(
+    director.cancel("AV-1"),
+    (error) => error.status === 409,
+  );
   backend.state.requests = [
     {
       requestId: "REQ-9",
