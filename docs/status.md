@@ -1,6 +1,6 @@
 # Status audit and checklist
 
-Audit of the `integration` branch, first written 30 Sep 2026 and updated 1 Oct 2026: 70 commits ahead of `main`, pushed to `origin/integration`, not merged. Everything below is simulated unless it says otherwise: **no camera, ESP32, Raspberry Pi or physical ramp has been used**, and no model has run.
+Audit of the project, first written 30 Sep 2026 and updated since (last 5 Oct 2026). Work happens on `integration` and is pushed to `main` after each step, so `main` holds everything; the hardware bring-up session also works on `main`. Everything below is simulated unless it says otherwise: **no camera, ESP32, Raspberry Pi or physical ramp has been used**, and no model has run.
 
 Legend: `[x]` built and verified by a test or a run (evidence given), `[ ]` not done, `[~]` partly done (the gap is stated).
 
