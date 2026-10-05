@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Optional, Protocol
 
 # Endpoint suffixes under /api/operations/vehicles/:busId/ for each kind of report.
-KINDS = ("bus-status", "ramp-simulation", "safety-decision", "help-required", "telemetry")
+KINDS = ("bus-status", "ramp-simulation", "safety-decision", "help-required", "telemetry", "device-heartbeat")
 
 
 class BackendError(Exception):

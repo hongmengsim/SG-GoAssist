@@ -25,7 +25,9 @@ _PATHS = {
     "safety-decision": "safety-decision",
     "help-required": "help-required",
     "telemetry": "telemetry",
+    "device-heartbeat": "",  # not under /vehicles/:busId; see _DEVICE_HEARTBEAT_PATH
 }
+_DEVICE_HEARTBEAT_PATH = "/api/operations/devices/heartbeat"
 _EMPTY_OBJECT = b"{}"
 _REJECTED_FOR_GOOD = frozenset({400, 404, 422})
 
@@ -65,7 +67,8 @@ class HttpBackend:
     def post(self, kind: str, body: dict) -> str:
         if kind not in KINDS:
             raise ValueError(f"unknown report kind {kind}")
-        result = self._call("POST", self._vehicle_path(_PATHS[kind]), body)
+        path = _DEVICE_HEARTBEAT_PATH if kind == "device-heartbeat" else self._vehicle_path(_PATHS[kind])
+        result = self._call("POST", path, body)
         return str(result.get("outcome", "CHANGED")) if isinstance(result, dict) else "CHANGED"
 
     def ack_request(self, request_id: str) -> None:

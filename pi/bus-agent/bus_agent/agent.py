@@ -585,6 +585,7 @@ class BusAgent:
     def _post_reports(self, decision: Decision) -> None:
         now_iso = self._iso()
         self._post_safely("bus-status", self._bus_status_body())
+        self._post_safely("device-heartbeat", self._device_body(decision))
         self._post_safely("safety-decision", decision.to_report(now_iso))
         self._post_safely("ramp-simulation", self._ramp_body())
         self._post_safely("telemetry", self._telemetry_body(decision))
@@ -599,6 +600,20 @@ class BusAgent:
         if self.stop_code is not None:
             body["stopCode"] = self.stop_code
         return body
+
+    def _device_body(self, decision: Decision) -> dict:
+        """The agent's own health, so the backend can tell a live bus agent from a silent one."""
+        beam_state = getattr(self.last_beam, "state", None)
+        tof = "OK" if beam_state in ("BEAM_CLEAR", "BLOCKED") else "FAILED" if beam_state == "UNKNOWN" else "DEGRADED"
+        camera = "OK" if decision.camera_image_ok else "DEGRADED"
+        return {
+            "deviceId": self.bus_id,
+            "deviceType": "MOCK_BUS",
+            "busId": self.bus_id,
+            "networkOnline": True,
+            "sensorHealth": {"tof": tof, "camera": camera},
+            "observedAt": self._iso(),
+        }
 
     def _ramp_body(self) -> dict:
         body: dict = {"state": self.ramp.state, "simulated": True, "observedAt": self._iso()}

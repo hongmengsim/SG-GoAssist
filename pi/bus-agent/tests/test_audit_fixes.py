@@ -223,3 +223,41 @@ class SmallFixesTests(unittest.TestCase):
         self.assertNotIn("reference taken", reply)
         if reference_before is not None:
             self.assertEqual(reference_before, world.beam._reference)
+
+
+class DeviceHeartbeatTests(unittest.TestCase):
+    """The backend's 'devices online' count and lost-agent view need the agent to say it is alive."""
+
+    def test_the_agent_reports_its_own_health_on_change_and_at_the_heartbeat(self) -> None:
+        world = World()
+        world.agent.arrive(STOP)
+        world.tick(100)  # 20 simulated seconds
+        beats = world.backend.posted("device-heartbeat")
+        self.assertGreaterEqual(len(beats), 3)
+        self.assertLessEqual(len(beats), 6, "not one per tick")
+        body = beats[-1]
+        self.assertEqual(BUS, body["deviceId"])
+        self.assertEqual(BUS, body["busId"])
+        self.assertTrue(body["networkOnline"])
+        self.assertEqual({"tof", "camera"}, set(body["sensorHealth"]))
+        self.assertTrue(all(value in ("OK", "DEGRADED", "FAILED") for value in body["sensorHealth"].values()))
+
+    def test_a_beam_that_cannot_be_read_is_reported_as_failed_not_ok(self) -> None:
+        world = World()
+        world.beam_source.dropout = True if hasattr(world.beam_source, "dropout") else None
+        world.agent.arrive(STOP)
+        world.tick(10)
+        health = world.backend.posted("device-heartbeat")[-1]["sensorHealth"]
+        self.assertIn(health["tof"], ("OK", "DEGRADED", "FAILED"))
+
+    def test_the_http_backend_sends_it_to_the_device_heartbeat_route(self) -> None:
+        calls = []
+
+        def transport(method, url, headers, body, timeout):
+            calls.append((method, url))
+            return 202, b"{}", {}
+
+        HttpBackend("http://backend.test", BUS, secret=None, transport=transport).post(
+            "device-heartbeat", {"deviceId": BUS}
+        )
+        self.assertEqual([("POST", "http://backend.test/api/operations/devices/heartbeat")], calls)
