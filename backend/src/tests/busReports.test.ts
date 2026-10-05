@@ -216,3 +216,45 @@ test("list is bounded and clearAll empties every kind", async () => {
   await service.clearAll();
   assert.equal((await service.list("HELP_REQUIRED", 10)).length, 0);
 });
+
+test("a decision whose only difference is a jittering distance or confidence is a heartbeat, not a change", async () => {
+  const { service, published, audited } = setup();
+  const later = (seconds: number) =>
+    new Date(Date.parse(OBSERVED) + seconds * 1000).toISOString();
+  const moving = (index: number) =>
+    decision({
+      tof: { state: "BEAM_CLEAR", distanceMm: 1200 + index, simulated: true },
+      objectsInZone: [
+        { className: "leaf", safety: "SAFE", confidence: 0.9 + index / 1000 },
+      ],
+      observedAt: later(index),
+    });
+  const first = await service.report("RAMP_SAFETY", moving(0), "AV-095-01");
+  assert.equal(first.outcome, "CHANGED");
+  for (let index = 1; index <= 4; index += 1) {
+    const result = await service.report(
+      "RAMP_SAFETY",
+      moving(index),
+      "AV-095-01",
+    );
+    assert.equal(result.outcome, "HEARTBEAT", `report ${index}`);
+  }
+  assert.equal(audited.length, 1);
+  assert.equal(published.length, 1);
+});
+
+test("a real change in a decision is still a change", async () => {
+  const { service } = setup();
+  await service.report("RAMP_SAFETY", decision(), "AV-095-01");
+  const blocked = await service.report(
+    "RAMP_SAFETY",
+    decision({
+      permission: "HALT",
+      reasons: ["TOF_BLOCKED"],
+      tof: { state: "BLOCKED", distanceMm: 300, simulated: true },
+      observedAt: "2026-09-30T00:10:30.000Z",
+    }),
+    "AV-095-01",
+  );
+  assert.equal(blocked.outcome, "CHANGED");
+});

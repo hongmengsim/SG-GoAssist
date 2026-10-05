@@ -211,10 +211,27 @@ const DESCRIPTORS: Record<ReportKind, KindDescriptor> = {
   },
 };
 
+/**
+ * Readings that move on every sensor sample. The agent sends them only with its slow heartbeat, and
+ * a change in what they mean already shows in the beam state, the safety class or the halt reasons,
+ * so they must not make a repeat look like a change (that would audit and publish every heartbeat).
+ */
+const MEASUREMENTS = new Set(["observedAt", "distanceMm", "confidence"]);
+
+function withoutMeasurements(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(withoutMeasurements);
+  if (typeof value === "object" && value !== null) {
+    return Object.fromEntries(
+      Object.entries(value)
+        .filter(([key]) => !MEASUREMENTS.has(key))
+        .map(([key, inner]) => [key, withoutMeasurements(inner)]),
+    );
+  }
+  return value;
+}
+
 function withoutTime(record: AnyReport): string {
-  const facts: Record<string, unknown> = { ...record };
-  delete facts.observedAt;
-  return JSON.stringify(facts);
+  return JSON.stringify(withoutMeasurements(record));
 }
 
 export interface BusReportsDeps {
