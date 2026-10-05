@@ -86,10 +86,14 @@ class AsyncBackend:
         self._want_requests = False
         self._want_commands = False
         self._want_halt = False
+        # Confirmed requests with an open case: None until the backend has answered, so "nothing
+        # to take back" is told apart from "not asked yet".
+        self._accepted_requests: Optional[list] = None
+        self._want_accepted = False
         self._halt: Optional[dict] = None
         # Bumped when a push tells the agent something newer than any halt read in flight.
         self._halt_epoch = 0
-        self._last_poll = {"requests": 0.0, "commands": 0.0, "halt": 0.0}
+        self._last_poll = {"requests": 0.0, "commands": 0.0, "halt": 0.0, "accepted": 0.0}
         # Failures are tracked per direction (sending, polling): a success in one must not hide a
         # failure in the other.
         self._errors: dict[str, Optional[str]] = {"post": None, "poll": None}
@@ -173,6 +177,20 @@ class AsyncBackend:
             self._cond.notify_all()
             return list(self._commands)
 
+    def pending_accepted_requests(self) -> Optional[list]:
+        with self._cond:
+            self._want_accepted = True
+            self._cond.notify_all()
+            return None if self._accepted_requests is None else list(self._accepted_requests)
+
+    def forget_accepted_requests(self) -> None:
+        """Drops the cached answer and asks again, so the next answer is a fresh one."""
+        with self._cond:
+            self._accepted_requests = None
+            self._want_accepted = True
+            self._last_poll["accepted"] = 0.0
+            self._cond.notify_all()
+
     def pending_operator_halt(self) -> Optional[dict]:
         with self._cond:
             self._want_halt = True
@@ -228,6 +246,7 @@ class AsyncBackend:
             or (self._want_requests and now - self._last_poll["requests"] >= self._poll)
             or (self._want_commands and now - self._last_poll["commands"] >= self._poll)
             or (self._want_halt and now - self._last_poll["halt"] >= self._poll)
+            or (self._want_accepted and now - self._last_poll["accepted"] >= self._poll)
         )
 
     def _succeeded(self, direction: str = "post") -> None:
@@ -346,12 +365,17 @@ class AsyncBackend:
             self._succeeded()
         return False
 
+    def _fetch_accepted(self) -> list:
+        fetch = getattr(self._inner, "pending_accepted_requests", None)
+        return [] if fetch is None else fetch() or []
+
     def _refresh_polls(self) -> bool:
         failed = False
         for name, fetch, want_attr, cache_attr in (
             ("requests", self._inner.pending_requests, "_want_requests", "_requests"),
             ("commands", self._inner.pending_actuator_commands, "_want_commands", "_commands"),
             ("halt", self._inner.pending_operator_halt, "_want_halt", "_halt"),
+            ("accepted", self._fetch_accepted, "_want_accepted", "_accepted_requests"),
         ):
             with self._cond:
                 wanted = getattr(self, want_attr)
@@ -371,6 +395,6 @@ class AsyncBackend:
             with self._cond:
                 if name == "halt" and epoch != self._halt_epoch:
                     continue  # a push overtook this read; the next one will be fresh
-                setattr(self, cache_attr, items if name == "halt" else list(items))
+                setattr(self, cache_attr, items if name in ("halt", "accepted") else list(items))
             self._succeeded("poll")
         return failed

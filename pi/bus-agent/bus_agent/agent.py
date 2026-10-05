@@ -113,6 +113,9 @@ class BusAgent:
         # Until the halt state has been read once (or pushed), it is unknown, and unknown counts as
         # halted: a Pi that restarts during an operator halt must not deploy before it has asked.
         self._halt_known = False
+        # After arriving at a stop, take back the requests this bus already confirmed there (a
+        # restarted agent forgets them, and the backend will not send them again).
+        self._readopt_pending = False
         self._accepted: dict[str, dict] = {}
         self._unacked: dict[str, dict] = {}
         self._commands: dict[str, dict] = {}
@@ -135,6 +138,10 @@ class BusAgent:
         """Reach the stop: take the bay if the backend allows it, otherwise wait for it."""
         self.stop_code = stop_code
         self.movement = POSITIONED
+        self._readopt_pending = True
+        forget = getattr(self._backend, "forget_accepted_requests", None)
+        if forget is not None:
+            forget()
         try:
             self._post_now("bus-status", self._bus_status_body())
         except BackendRefused as refusal:
@@ -220,6 +227,7 @@ class BusAgent:
         decision = self._add_time_and_link_reasons(self._decide(now), now)
         self.last_decision = decision
         self._poll_backend(now)
+        self._readopt_accepted()
         self._retry_acks()
         self.ramp = ramp_sim.step(
             self.ramp, decision.permission, decision.reasons, dt, self._config.deploy_seconds
@@ -377,6 +385,33 @@ class BusAgent:
                 handle(item)
             else:
                 log.warning("Ignoring a backend item that is not an object")
+
+    def _readopt_accepted(self) -> None:
+        """Takes back confirmed requests for this stop, once the backend has answered."""
+        if not self._readopt_pending:
+            return
+        fetch = getattr(self._backend, "pending_accepted_requests", None)
+        if fetch is None:
+            self._readopt_pending = False
+            return
+        try:
+            items = fetch()
+        except BackendError as error:
+            log.warning("Could not read the confirmed requests: %s", error)
+            return
+        if items is None:  # not answered yet; ask again on the next tick
+            return
+        self._readopt_pending = False
+        for item in items:
+            if not isinstance(item, dict) or item.get("busId") != self.bus_id:
+                continue
+            request_id = item.get("requestId")
+            if not isinstance(request_id, str) or request_id in self._accepted:
+                continue
+            if item.get("stopCode") not in (None, self.stop_code):
+                continue
+            self._accepted[request_id] = item
+            log.info("Took back the confirmed request %s", request_id)
 
     def _pull_halt(self) -> None:
         """Adopt the backend's operator-halt state. A failed read changes nothing (never releases)."""

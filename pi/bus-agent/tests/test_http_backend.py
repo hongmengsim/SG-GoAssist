@@ -163,5 +163,14 @@ class OtherCallsTests(unittest.TestCase):
         self.assertEqual(f"{BASE}/api/operations/vehicles/{BUS}/capabilities", call["url"])
 
 
+class AcceptedRequestsTests(unittest.TestCase):
+    def test_the_confirmed_requests_come_from_the_acknowledged_listing(self) -> None:
+        transport = FakeTransport(200, {"count": 1, "requests": [{"requestId": "R1"}]})
+        self.assertEqual([{"requestId": "R1"}], backend(transport).pending_accepted_requests())
+        self.assertEqual(
+            f"{BASE}/api/operations/vehicles/{BUS}/requests?status=ACKNOWLEDGED", transport.calls[0]["url"]
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

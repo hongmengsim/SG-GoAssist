@@ -73,6 +73,11 @@ class HttpBackend:
     def pending_requests(self) -> list:
         return self._list(self._call("GET", self._vehicle_path("requests")), "requests")
 
+    def pending_accepted_requests(self) -> Optional[list]:
+        """Requests this bus already confirmed whose case is still open."""
+        result = self._call("GET", self._vehicle_path("requests") + "?status=ACKNOWLEDGED")
+        return self._list(result, "requests")
+
     def pending_actuator_commands(self) -> list:
         query = urlencode({"busId": self._bus_id})
         result = self._call("GET", f"/api/operations/actuators/pending?{query}")

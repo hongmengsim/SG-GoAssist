@@ -48,6 +48,8 @@ class FakeBackend:
         self.requests: list[dict] = []
         self.commands: list[dict] = []
         self.operator_halt: Optional[dict] = {"halted": False}
+        # Requests the bus already confirmed whose case is still open (what a restarted bus takes back).
+        self.accepted_requests: list[dict] = []
         self.fail_all = False
         self.refuse_positioned = False
 
@@ -75,6 +77,10 @@ class FakeBackend:
     def pending_actuator_commands(self) -> list:
         self._check()
         return list(self.commands)
+
+    def pending_accepted_requests(self) -> Optional[list]:
+        self._check()
+        return list(self.accepted_requests)
 
     def pending_operator_halt(self) -> Optional[dict]:
         self._check()
