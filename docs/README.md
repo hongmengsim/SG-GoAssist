@@ -1,5 +1,7 @@
 # Documentation map
 
+Start with the [comprehensive project guide](PROJECT_GUIDE.md) for scope, architecture, setup and evidence boundaries.
+
 Read in this order when you are new to the project.
 
 | Folder                           | What it holds                                                                                                                                                                             | Start with                                                                                                                                                                              |
