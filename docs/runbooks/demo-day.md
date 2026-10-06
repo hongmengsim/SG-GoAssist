@@ -56,6 +56,9 @@ Do these once, a day ahead if possible. The bus in the photo of 6 Oct 2026 shows
 
 Always in this order. Each step says which machine and what a good result looks like.
 
+**Shortcut (used once on 6 Oct 2026):** from the repository folder, `powershell -ExecutionPolicy Bypass -File docs
+unbooks\hardware-bringup-tools\demo-up.ps1` does steps 1, 2, 4 and 5 below and guides step 3 (add `-SimulateBus1` to run Bus 1 as a simulated agent on this PC instead). It needs the Pi's copy of the code at commit `8aabae4` or later. `demo-down.ps1` stops everything. The long form below still works and is the reference for what each part does.
+
 **Step 1. Backend (this PC).** Use the BACKEND tab of the launcher (it sets `GOASSIST_AUTO_ACK=off` and generates the secrets). A good result: the SCRATCH tab prints MATCH for the secret check. If it does not, close every terminal window and run the launcher again. **Keep one PowerShell window open for the whole session: the secrets exist only in it. If it is closed by accident, generate new secrets, close every window that holds a port, and start again.**
 
 **Step 2. Tunnel to Pi #1 (this PC).** The TUNNEL tab. A good result: it prints `TUNNEL IS UP`. If the launcher's tunnel tab closes at once, open a plain window and run `ssh -L 8770:127.0.0.1:8770 -L 8780:127.0.0.1:8780 pi@goassist-pi1.local`; a Pi prompt means the tunnel is up. The tunnel dies whenever the Pi drops off the network or loses power.
