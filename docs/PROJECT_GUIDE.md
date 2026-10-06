@@ -1,161 +1,101 @@
 # SG GoAssist project guide
 
-**Repository:** `hongmengsim/BUSPASS`
-**Project:** SG GoAssist (also described in older files as BusTech Passenger Assistance / SmaRHt Buses)
-**Last reviewed:** 6 October 2026
+Reviewed 6 October 2026 against `main` at `822908d`. Team: SmaRHt Buses, National University of Singapore. Competition: Singapore BusTech Grand Challenge 2026, IHL Student Category.
 
-This guide is the entry point to the project. It summarizes the repository's purpose, architecture, important subsystems, setup, evidence, limitations, and where to find the detailed specifications. Status statements describe the checked-in project documentation; they are not a fresh execution or physical validation report.
+## Scope and source of truth
 
-## Project at a glance
+SG GoAssist demonstrates boarding assistance for autonomous buses using a passenger app, an automated central controller and two bus agents. The agreed project scope is in the [owner-confirmed handoff](handoff/2026-09-29-project-context.md). That document takes precedence over older prototype plans. Later implementation and hardware observations appear in the [status log](status.md), [hardware handoff](runbooks/hardware-bring-up-handoff.md) and source code.
 
-SG GoAssist is a research and competition demonstrator for accessible bus journeys. It combines a passenger-facing app, journey and stop information, a backend assistance workflow, an operator console, and optional physical stop and miniature-bus hardware. The design aims to let passengers request assistance explicitly, preserve their choices, communicate progress accessibly, and move a model ramp only after safety checks and local verification.
+**The ramp is simulated on screen. Physical ramp construction, actuation and position verification are outside the submission scope.** Boarding assistance is the agreed app workflow. Destination and alighting features still exist in the app and are a documented scope mismatch, not a new project commitment.
 
-The current boundary is a software system and low-voltage tabletop demonstrator. It is not a production transit service, certified vehicle controller, or approval for controlling a passenger-carrying bus. Fixture arrivals and demonstration data must be identified as prototype data.
+Some README headers and early status summaries say that nothing has run on hardware. The later hardware bring-up entries document specific Pi #1 trials. Read the dated entries and their stated limits rather than treating the early summary as a current blanket conclusion. No new hardware or application tests were performed to write this guide.
 
-## Goals and user-facing capabilities
+## Purpose and intended benefits
 
-- Plan and follow a bus journey with nearby-stop discovery, direct or one-transfer route options, maps, and step-by-step visual guidance.
-- Support accessible interactions, including large and responsive controls, spoken guidance, haptics where available, localization, and persistent journey context.
-- Accept voluntary assistance intent from the app and prototype physical/operator input sources; provide status updates and recovery after connection problems.
-- Give operators a live case queue, assignment and escalation tools, safety state, device health, and an auditable record of outcomes.
-- Demonstrate a safe assistance lifecycle on a mock bus, with telemetry freshness, interlocks, idempotent commands, and deployed/stowed limit-switch verification.
-- Offer a deterministic travel assistant with optional on-device language-model interpretation while keeping actions under the existing application rules and confirmation flow.
+The project connects explicit passenger intent to a particular bus, returns bus-originated confirmation, checks local obstacles and coordinates a shared boarding bay. The intended benefits are less uncertainty for passengers and clearer handling of operational exceptions. Recognition accuracy, passenger satisfaction and field reliability are future evaluation topics, not measured outcomes established by this prototype.
 
-## System architecture
+The passenger chooses a bus service, boarding stop and assistance need. Request submission means the backend received it. Confirmation means the assigned bus accepted it. Neither state means that a ramp has finished deploying. Camera detections assess the environment and do not establish passenger consent or diagnose a disability.
 
-```text
-Passenger app / tactile stop / NFC / operator / anonymous edge observations
-                              │
-                       shared contracts
-                              │
-                 Express REST + WebSocket API
-            ┌─────────────────┴─────────────────┐
-      Journey and stop services         Assistance-case state machine
-                                                  │
-                                  capability + fresh safety telemetry
-                                                  │
-                                      idempotent actuator command
-                                                  │
-                            ESP32 local interlocks + limit switches
-```
+## Current repository map
 
-The shared package defines contracts used by the frontend and backend. The backend owns assistance state, decision rules, persistence, audit events, and command orchestration. The mock-bus controller independently repeats critical movement checks; backend approval alone is not enough to energize the model servo. WebSocket events feed live passenger and operator views.
-
-### Workspace packages
-
-| Path | Responsibility | Main technologies |
-| --- | --- | --- |
-| `packages/shared` | Shared request, case, vehicle, telemetry, event and API types | TypeScript |
-| `packages/backend` | REST/WebSocket server, passenger context, routes, assistance cases, devices, metrics and simulator | Node.js, Express, TypeScript, `ws` |
-| `packages/app` | Cross-platform passenger app, journey UI, maps, assistant and accessibility controls | Expo, React Native, TypeScript |
-| `hardware` | ESP32 firmware, edge observers and tabletop demonstrations | Arduino/ESP32, Python, Raspberry Pi |
-| `cad` | Parametric bus models, assembly and printable prototype packages | Fusion 360 scripts, STEP/F3D/STL/3MF |
-| `docs` | Architecture, requirements, feature status, design and validation guides | Markdown and diagrams |
-
-## Important workflows
-
-### Passenger journey
-
-The app obtains stop and journey context from the backend. Location is requested when the passenger chooses it, and nearby stops are presented for confirmation. The journey UI preserves active journey information and presents progress, boarding/alighting guidance, and completion. See [feature readiness](feature-readiness-matrix.md), [passenger presentation validation](passenger-presentation-validation.md), and the relevant app code under `packages/app/src/passengerJourney` and `packages/app/src/`.
-
-### Assistance and mock ramp
-
-An explicit request is retained as passenger intent. Sensor classifications may signal a possible need, but cannot confirm ramp intent; a passenger or operator must confirm it. Before ramp deployment, the case must match the bus and stop, confirm vehicle capability, and receive fresh safe telemetry: stationary vehicle, brake active, door open, clear ramp path, available capacity, online healthy controller, and no fault. While moving, local firmware repeats interlocks. `READY` requires actuator completion plus deployed-switch evidence. Completion or cancellation is terminal only after stowed-switch verification.
-
-Useful entry points: `docs/grand-challenge-integrated-prototype.md`, `docs/task-requirements-traceability.md`, `hardware/INTEGRATED_PROTOTYPE.md`, `packages/backend/src/services/assistanceCaseService.ts`, and `packages/backend/src/services/operationsStore.ts`.
-
-### Journey assistant
-
-The assistant uses deterministic commands and grounded local travel-guide retrieval, with optional on-device Qwen inference on supported Android devices. AI can interpret or explain a request; it does not directly call APIs, control a door, move a ramp, or operate a vehicle. Validation and the existing journey action controller retain authority. Model or speech failure should preserve the deterministic assistant and active journey. See `docs/hybrid-on-device-assistant.md`.
-
-### Bus-stop data
-
-The backend includes a normalized Singapore stop snapshot and route patterns. Relevant routes include `/api/bus-stops/nearby`, `/api/bus-stops/bounds`, `/api/bus-stops/search`, `/api/bus-stops/:code`, `/api/bus-stops/:code/services/:serviceNo/routes`, `/api/passenger/context`, and `/api/journeys/plan`. Live LTA DataMall synchronization requires a server-side credential; never put that key in an `EXPO_PUBLIC_` variable. Data provenance and terms are described in the root README and backend data documentation.
-
-## Repository map
-
-- `README.md` — first-run commands, local URLs, demo entry points, stop-data notes and high-level feature descriptions.
-- `BusTech-project-tracker.md` — project status baseline, workstreams, acceptance targets, risks, open decisions and submission checklist. Owners/deadlines are marked TBD where unknown.
-- `docs/architecture-mvp.md` — original MVP communication model and architecture background; read alongside the newer integrated prototype documentation.
-- `docs/feature-readiness-matrix.md` — implemented, automated, physical-device and future-integration boundaries.
-- `docs/task-requirements-traceability.md` — requirement IDs, implementation mapping and target evidence.
-- `docs/grand-challenge-integrated-prototype.md` and `hardware/INTEGRATED_PROTOTYPE.md` — integrated system boundary, safety workflow, wiring and tabletop demonstration.
-- `docs/hybrid-on-device-assistant.md` — model setup, privacy, fallback, speech and diagnostics.
-- `docs/passenger-presentation-validation.md`, `docs/passenger-icon-refresh.md` — passenger interface and validation records.
-- `packages/backend/src/routes` and `packages/backend/src/services` — backend HTTP routes and domain services; tests are in `packages/backend/src/tests`.
-- `packages/app/src` and `packages/app/__tests__` — passenger application source and Jest tests.
-- `packages/shared/src` — shared TypeScript contracts.
-- `hardware/esp32-accessible-stop`, `hardware/esp32-mock-bus`, `hardware/edge-observer`, and `hardware/apas-tabletop-demo` — physical and edge-computing prototypes. Each module README is authoritative for its own wiring and limits.
-- `cad/` — Robobus model generations and printable packages. Prefer the version-specific README, assembly guide and validation report; files from different generations are not necessarily interchangeable.
-- `output/` — reports, diagrams, posters and submission/export artifacts. These are generated or presentation deliverables, not application source.
-- `artifacts/` — state diagrams/matrices, rendered evidence and verification outputs.
-- `scripts/` — local development orchestration, smoke checks, demo runners and data preparation.
-- `SG-GoAssist-main/` and `SG-GoAssist-review/` — additional nested project snapshots/review material. Check their own history and manifests before treating them as current source; the root workspace is the documented canonical project.
-
-## Local setup
-
-Requirements: a supported Node.js runtime and npm. Install dependencies at the repository root:
-
-```powershell
-npm.cmd install
-```
-
-Copy `.env.example` to an ignored `.env` only if you need local overrides. Start the combined app and backend:
-
-```powershell
-npm.cmd run dev
-```
-
-The documented local URLs are `http://localhost:8081` for the Expo web app and `http://localhost:3000` for the backend. The operator console is at `http://localhost:3000/operator`. The integrated demo can be run with `npm.cmd run demo:integrated` while the backend is active.
-
-Useful commands:
-
-| Command | Purpose |
+| Path | Role |
 | --- | --- |
-| `npm.cmd run dev:app` / `dev:backend` | Start one service |
-| `npm.cmd run dev:health` | Check local service health |
-| `npm.cmd run typecheck` | Typecheck shared, backend and app workspaces |
-| `npm.cmd test` | Run workspace test suites |
-| `npm.cmd run build` | Build workspaces where configured |
-| `npm.cmd run test:e2e` | Managed end-to-end journey checks |
-| `npm.cmd run demo:integrated` | Exercise the integrated software demonstrator |
+| [contracts](../contracts/README.md) | Shared TypeScript contracts, generated JSON schemas and cross-language fixtures |
+| [backend](../backend/README.md) | REST/WebSocket APIs, request and case orchestration, bay coordination, storage and audit |
+| [passenger-app](../passenger-app/README.md) | Expo/React Native app, stop discovery, requests, status, accessibility and assistant |
+| [operator-console](../operator-console/README.md) | Browser dashboard, case handling, bay controls, halt/release and audit views |
+| [pi/tof-link](../pi/tof-link/README.md) | ESP32 serial readings and clear/blocked/unknown beam state |
+| [pi/perception](../pi/perception/README.md) | Camera health, detections, zone overlap and obstacle policy |
+| [pi/safety-gate](../pi/safety-gate/README.md) | Local continue/halt decision and reasons |
+| [pi/bus-agent](../pi/bus-agent/README.md) | Bus identity, accepted requests, sensing, simulated ramp and backend communication |
+| [firmware](../firmware/README.md) | ESP32 firmware in use |
+| [archive](../archive/README.md) | Earlier CAD, hardware designs, reports and presentation material |
+| [docs](README.md) | Decisions, architecture, status, interface definitions and runbooks |
+| `scripts/` | Development launchers, verification, integration scenarios and load checks |
+| `deploy/` | Deployment support files |
 
-Runtime smoke checks and device-specific commands are listed in the root `package.json`. Tests and typechecks are separate from starting the local servers.
+Older local checkouts use `packages/shared`, `packages/backend`, `packages/app`, `hardware` and `cad`. Current `main` uses the paths above. Local generated reports, CAD v6 files, the older project tracker and nested review copies are not automatically present on GitHub. Check the current tree before linking to those files.
 
-## Configuration and data handling
+## Responsibilities and request flow
 
-`.env.example` documents available settings. Common configuration includes the frontend API base URL, optional map/routing provider settings, server-only LTA DataMall key, operations data directory/storage driver, device HMAC secret, operator API token, and safety telemetry freshness limit. `.env`, runtime state, model cache, and build outputs are ignored by Git. Do not commit real credentials, private datasets, camera frames, or personally identifying trial data.
+1. The passenger app sends the boarding request to the backend.
+2. The backend performs central coordination and delivers it to the assigned bus.
+3. The bus acknowledges the request. With `GOASSIST_AUTO_ACK=off`, the backend timer cannot stand in for bus confirmation.
+4. The controller coordinates bay access and issues the simulated deployment command when its conditions permit.
+5. The bus agent combines the local camera and ToF state, checks the accepted request and positioning, and permits or halts simulated progress.
+6. The controller dashboard shows movement, request, simulated ramp and sensor/fault states independently. Exceptions return to the passenger as appropriate.
 
-The integrated prototype documents SQLite-backed state and append-only audit events on supported Node runtimes, with a JSON compatibility fallback. Device requests can use a shared HMAC secret; operator routes and live subscriptions can use an operator token. Deployment needs appropriately secured transport and device-specific secrets. Confirm actual runtime settings before any demonstration.
+Pi #1 represents Bus 1 with the real camera and ESP32/ToF path. Pi #2 represents Bus 2 with explicitly simulated sensing. The demonstration assumes one usable boarding bay. Bus 2 can hold an accepted request while waiting. Bus 1 departing releases the bay but does not deploy Bus 2's ramp: a grant, positioning and local checks are still required.
 
-The edge observer is designed to process frames in memory and publish anonymous classifications only. It must not store or upload frames, faces, or identity data. Sensor output does not grant consent or authorize movement.
+The central controller handles routine decisions automatically. A human operator inspects exceptions and may request a halt, release, cancellation or other case action. Releasing an operator halt cannot override an obstacle or unavailable required sensor information. Cancellation must not imply immediate physical retraction.
 
-## Hardware and safety boundary
+## Interfaces and storage
 
-Physical subprojects include accessible stop controls, NFC, a mock bus, low-voltage ramp actuator, limit switches, obstruction sensing, ToF/laser sensing, an optional camera observer, and separate tabletop sensor demonstrations. Wiring and pin maps vary by prototype; follow each subproject's own guide rather than copying pin assignments between boards.
+Passenger routes include `/api/assistance/request`, `/api/bus-stops/*`, `/api/passenger/context` and `/api/journeys/plan`. Operator routes cover `/api/operations/cases`, `/bays`, `/bus-status`, `/ramp-simulations`, `/safety-decisions`, `/help-required` and `/audit` under the operations prefix. Read [message additions](interfaces/message-additions.md) and the module READMEs for exact methods and payloads.
 
-The tabletop controller is a research demonstrator only. Keep it disconnected from passenger vehicles. The documented acceptance work still includes physical assembly and interlock trials, sensor-zone calibration, labelled perception evaluation, connected ARM64 assistant validation, and consented representative-user testing. A real vehicle deployment would require certified controls, independent safety engineering, hazard analysis, and relevant authority approval.
+Operator-only WebSocket events carry bus, bay, ramp simulation, safety and help-required updates. The bus receives its addressed requests and acknowledges through its signed device endpoint. Shared contracts and schemas are the interface authority.
 
-## Project status and acceptance evidence
+Current storage uses asynchronous repository interfaces and keyed tables. SQLite supports the local persistent setup; Postgres, Redis and shared locks support the documented multi-process path. Without SQLite or configured persistent storage, the memory fallback does not survive restart. The older whole-state JSON-store description is historical. See [scalability](architecture/scalability.md) and [decision 0005](decisions/0005-scale-ready-storage-and-processes.md) for measured software checks and deployment limits.
 
-The tracker identifies software implementation areas separately from physical validation. Its documented evidence targets include 30/30 successful requests for each explicit input source, acknowledgement P95 under two seconds on the demo network, at least 90% controlled per-class perception precision and recall, and zero unsafe movements over at least 50 obstruction/interlock trials. These are targets, not measured results unless a dated report is linked.
+## Local development and demo entry points
 
-Before claiming competition readiness, confirm the official brief and deadline, assign owners, assemble the demonstrator, collect repeatable physical and user-trial evidence, rehearse fault and recovery scenarios, and review the submission package. Keep software tests, simulated demonstrations, physical evidence, and future production integration clearly distinguished.
+From a checkout of current `main`, install dependencies in PowerShell with `npm.cmd install`, then run `npm.cmd run dev`. Canonical local ports:
 
-## Known repository caveats
+| Surface | URL / command |
+| --- | --- |
+| Passenger app | `http://localhost:8081` |
+| Backend | `http://localhost:3000` |
+| Controller dashboard | `npm.cmd run console`, then `http://localhost:5173/` for mock mode |
+| Dashboard with backend | `http://localhost:5173/?mode=live&backend=http://localhost:3000` |
+| Pi status | Port 8770 when enabled, using the startup code and printed URL |
+| Pi camera bench view | Port 8780 when enabled, using the protected startup URL |
 
-- The repository contains multiple evolving CAD generations, generated reports, nested snapshots, and submission artifacts. Check dates, manifests and validation documents before selecting an asset.
-- Some requirements and readiness statements are aspirational or pending evidence. This guide does not certify them as passed.
-- Live transit information and production advisories require the appropriate data agreements and provider configuration; prototype fixtures must remain labelled.
-- The exact competition deadline, named owners, and judging/submission criteria are not established in the project tracker and must be confirmed with the team.
+The old backend `/operator` page has been removed. The dashboard's mock playground needs no backend. Mock mode demonstrates interaction with simulated data; live mode connects to the backend and bus agents.
 
-## Detailed references
+For the software scenario, follow [run everything on one laptop](runbooks/run-everything-on-one-laptop.md). `npm.cmd run e2e:scenario` starts a backend and two simulated buses and exercises request, bay, obstacle, halt and recovery behavior. For hardware, use the newer [hardware handoff](runbooks/hardware-bring-up-handoff.md) and [bring-up runbook](runbooks/hardware-bring-up.md).
 
-- [Root README](../README.md)
-- [Project tracker](../BusTech-project-tracker.md)
-- [Feature readiness matrix](feature-readiness-matrix.md)
-- [Requirements traceability](task-requirements-traceability.md)
-- [Integrated prototype architecture](grand-challenge-integrated-prototype.md)
-- [Integrated hardware guide](../hardware/INTEGRATED_PROTOTYPE.md)
-- [Hybrid on-device assistant](hybrid-on-device-assistant.md)
-- [CAD v6 validation](../cad/print_v6/VALIDATION_REPORT.md)
+Useful checks are `npm.cmd run dev:health`, `npm.cmd run typecheck`, `npm.cmd test`, `npm.cmd run verify`, `npm.cmd run verify:fast` and `npm.cmd run check:modules`. Consult the root `package.json` for the complete list. Existing test counts are dated evidence, not a guarantee for every checkout or device.
+
+## Configuration, data and privacy
+
+`.env.example` documents runtime settings. Keep device and operator secrets in environment variables. `DEVICE_SHARED_SECRET` is shared by the backend and agents; `OPERATOR_API_TOKEN` protects operator access. The backend address and clocks must agree with the signed-device setup. Never publish startup codes, tokens or real `.env` contents.
+
+The backend includes a static Singapore stop/route snapshot and optional LTA DataMall synchronization. Keep the LTA key server-side. Fixture arrivals and other prototype context must be labelled. The root README records snapshot provenance and licensing.
+
+The optional assistant uses deterministic commands, grounded retrieval and optional on-device inference. Application validation and confirmed actions retain authority. It does not directly control vehicle equipment. See [assistant design](architecture/hybrid-on-device-assistant.md).
+
+The revised scope permits an on-demand live camera view with no recording. Current code provides a protected bench view directly from the bus agent, with words and line styles for detections and the ramp zone. The production-style outbound relay through the backend remains a future design. The console's schematic is not a camera image. Do not describe the bench view as a completed remote fleet video service or store camera frames in presentation evidence.
+
+## Prototype evidence and limitations
+
+Dated bring-up records describe Pi #1 serial readings, beam states, camera capture and image-health checks, stub perception tests and a real-agent connection to the backend using a stock model as a stand-in. They include a blocked simulated deployment and a timeout/help-required event. These records do not establish trained-model accuracy, whole-area protection or physical ramp safety.
+
+The hardware handoff leaves Pi #2 and the complete two-bus hardware scenario pending. It also records follow-up checks for unplugged sensors, operator halt and link loss. Later commits improve startup recovery and accepted-request restoration, but those fixes are not new physical validation results.
+
+A single ToF beam only covers its viewing direction. Missing, stale or invalid safety information must not count as clear. Vehicle-stopped, brake and door inputs in the bus agent are simulated. Deployment and link-loss timeouts require explicit configuration; the example config uses 30 s and 10 s respectively. These are demonstration settings, not validated real-vehicle safety thresholds.
+
+## Open work and presentation claims
+
+Use [status](status.md), [roadmap](roadmap.md) and [review findings](reviews/2026-10-01-reviews.md) to plan remaining work. Principal topics are the full two-bus bench rehearsal, fault/recovery checks, model evaluation, app boarding-scope alignment, final sensor selection, future hosting and camera relay, and confirmation of the submission deadline.
+
+Reports and presentations should distinguish implemented software, dated bench observations, live demo observations and future benefits. Do not revive physical ramp construction or participant-study commitments from archived documents. The current scope is a coordinated boarding-assistance prototype with simulated ramp movement.
