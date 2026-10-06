@@ -56,8 +56,7 @@ Do these once, a day ahead if possible. The bus in the photo of 6 Oct 2026 shows
 
 Always in this order. Each step says which machine and what a good result looks like.
 
-**Shortcut (used once on 6 Oct 2026):** from the repository folder, `powershell -ExecutionPolicy Bypass -File docs
-unbooks\hardware-bringup-tools\demo-up.ps1` does steps 1, 2, 4 and 5 below and guides step 3 (add `-SimulateBus1` to run Bus 1 as a simulated agent on this PC instead). It needs the Pi's copy of the code at commit `8aabae4` or later. `demo-down.ps1` stops everything. The long form below still works and is the reference for what each part does.
+**Shortcut (used once on 6 Oct 2026):** from the repository folder, `powershell -ExecutionPolicy Bypass -File docs\runbooks\hardware-bringup-tools\demo-up.ps1` does steps 1, 2, 4 and 5 below and guides step 3 (add `-SimulateBus1` to run Bus 1 as a simulated agent on this PC instead). It needs the Pi's copy of the code at commit `8aabae4` or later. `demo-down.ps1` stops everything. The long form below still works and is the reference for what each part does.
 
 **Step 1. Backend (this PC).** Use the BACKEND tab of the launcher (it sets `GOASSIST_AUTO_ACK=off` and generates the secrets). A good result: the SCRATCH tab prints MATCH for the secret check. If it does not, close every terminal window and run the launcher again. **Keep one PowerShell window open for the whole session: the secrets exist only in it. If it is closed by accident, generate new secrets, close every window that holds a port, and start again.**
 
