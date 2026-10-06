@@ -16,7 +16,10 @@ import { withLock } from "../concurrency/locks";
 import { getEventHub } from "../events/eventHub";
 import { topic } from "../events/topics";
 import { logger } from "./logger";
-import { synchronizeLegacyCaseStatus } from "./assistanceCaseService";
+import {
+  setRequestCloser,
+  synchronizeLegacyCaseStatus,
+} from "./assistanceCaseService";
 import { TERMINAL_CASE_STATES } from "../cases/ports";
 import { getAuditLog, getOperationsData } from "./operationsData";
 
@@ -349,6 +352,40 @@ async function updateRequestStatusUnlocked(
   emit(requestStatusMessage(request));
   return request;
 }
+
+/**
+ * Marks the requests of a cancelled case CANCELLED, so none of them still reads as live. It does not go
+ * through updateRequestStatus: that would ask the case to cancel itself again, and the case is already over
+ * (and holds its lock while this runs).
+ */
+async function closeRequestsOfCancelledCase(
+  requestIds: string[],
+): Promise<void> {
+  for (const requestId of new Set(requestIds)) {
+    await withLock(`request:${requestId}`, async () => {
+      const request = await getRequest(requestId);
+      if (
+        !request ||
+        request.status === AssistanceRequestStatus.CANCELLED ||
+        !canTransitionAssistanceRequestStatus(
+          request.status,
+          AssistanceRequestStatus.CANCELLED,
+        )
+      ) {
+        return;
+      }
+      request.status = AssistanceRequestStatus.CANCELLED;
+      request.cancelledAt = new Date().toISOString();
+      await saveRequest(request);
+      logger.info(
+        "Assistance request closed with its cancelled case",
+        requestId,
+      );
+      emit(requestStatusMessage(request));
+    });
+  }
+}
+setRequestCloser(closeRequestsOfCancelledCase);
 
 export async function processSimulatorCommand(
   command: SimulatorCommand,

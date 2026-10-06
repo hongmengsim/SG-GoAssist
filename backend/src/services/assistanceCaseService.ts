@@ -935,6 +935,17 @@ async function progressTerminalTransition(
   return await saveAndPublish(item);
 }
 
+type RequestCloser = (requestIds: string[]) => Promise<void>;
+let closeRequestsOfCase: RequestCloser = async () => {};
+
+/**
+ * The request store lives in aviator.ts, which imports this module, so aviator registers the function that
+ * closes a cancelled case's requests here instead of this module importing it.
+ */
+export function setRequestCloser(closer: RequestCloser): void {
+  closeRequestsOfCase = closer;
+}
+
 async function finalizeTerminalTransition(
   item: AssistanceCase,
   terminalState: "COMPLETED" | "CANCELLED",
@@ -963,7 +974,22 @@ async function finalizeTerminalTransition(
     item.caseId,
     item.busId,
   );
-  return await saveAndPublish(item);
+  const published = await saveAndPublish(item);
+  if (terminalState === "CANCELLED") {
+    try {
+      await closeRequestsOfCase(item.intents.map((intent) => intent.signalId));
+    } catch (error) {
+      // The case is already cancelled; a request that could not be closed is only a stale status.
+      logger.warn(
+        "Could not close the requests of a cancelled case",
+        item.caseId,
+        {
+          error: error instanceof Error ? error.message : String(error),
+        },
+      );
+    }
+  }
+  return published;
 }
 
 function ensureRampRetractionPlan(item: AssistanceCase): void {
