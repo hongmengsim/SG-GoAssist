@@ -12,9 +12,11 @@ import argparse
 import logging
 import os
 import queue
+import re
 import secrets
 import sys
 import threading
+from collections.abc import Mapping
 
 from .agent import AgentConfig
 from .async_backend import AsyncBackend
@@ -35,6 +37,38 @@ from .status_page import StatusBoard, StatusServer
 log = logging.getLogger("bus_agent")
 
 DEFAULT_BACKEND_URL = "http://localhost:3000"
+
+# A launcher can choose the status page and live view code and pass it here, so nobody copies it from a screen.
+STATUS_CODE_ENV = "BUS_AGENT_STATUS_CODE"
+_SUPPLIED_CODE = re.compile(r"[0-9a-f]{32,64}")
+
+
+def start_up_code(environ: Mapping[str, str]) -> tuple[str, bool]:
+    """The code for the status page and the live view, and whether it was supplied from outside.
+
+    A supplied code must be 32 to 64 lowercase hex characters; anything else is refused rather than used."""
+    supplied = environ.get(STATUS_CODE_ENV, "")
+    if not supplied:
+        return secrets.token_hex(16), False
+    if not _SUPPLIED_CODE.fullmatch(supplied):
+        raise ValueError(f"{STATUS_CODE_ENV} must be 32 to 64 lowercase hex characters")
+    return supplied, True
+
+
+def start_up_lines(
+    status_port: int, live_view_port: int, code: str, supplied: bool, live_view_listen: str = "127.0.0.1"
+) -> list[str]:
+    """What to print at start-up. A code that was supplied is never printed (it is already known to whoever
+    supplied it); a random one is printed once, in the links."""
+    lines = []
+    if status_port:
+        link = f"http://localhost:{status_port}/" + ("" if supplied else f"#{code}")
+        note = f" (the code was given in {STATUS_CODE_ENV})" if supplied else ""
+        lines.append(f"Status page: {link}{note}")
+    if live_view_port:
+        note = f"the code was given in {STATUS_CODE_ENV}" if supplied else f"code {code}"
+        lines.append(f"Live view: port {live_view_port} on {live_view_listen}; {note}")
+    return lines
 
 
 def _read_commands(commands: "queue.Queue[str]", stop: threading.Event) -> None:
@@ -169,12 +203,20 @@ def main(argv: "list[str] | None" = None) -> int:
     runner = Runner(rig, events, commands, board=board, controls=args.simulate, auto_calibrate=not args.real, control_level=level)
     status_server = None
     live_view = None
-    code = secrets.token_hex(16) if (args.status_port or args.live_view_port) else None
+    code, code_supplied = None, False
+    if args.status_port or args.live_view_port:
+        try:
+            code, code_supplied = start_up_code(os.environ)
+        except ValueError as error:
+            print(f"Cannot start: {error}", file=sys.stderr)
+            backend.stop()
+            return 2
     if args.status_port:
         status_server = StatusServer(board, commands, code, args.status_listen, args.status_port, controls=level)
         status_server.start()
-        # The code is printed once and never logged elsewhere; keep the #code in the link.
-        print(f"Status page: http://localhost:{status_server.port}/#{code}", flush=True)
+        # A random code is printed once and never logged elsewhere; keep the #code in the link.
+        for line in start_up_lines(status_server.port, 0, code, code_supplied):
+            print(line, flush=True)
     if args.live_view_port:
         try:
             live_view = LiveViewServer(rig.worker, settings.ramp_polygon, code, args.live_view_listen, args.live_view_port)
@@ -184,7 +226,8 @@ def main(argv: "list[str] | None" = None) -> int:
             return 2
         live_view.start()
         # Same start-up code as the status page. Frames are shown while someone watches and never recorded.
-        print(f"Live view: port {live_view.port} on {args.live_view_listen}; code {code}", flush=True)
+        for line in start_up_lines(0, live_view.port, code, code_supplied, args.live_view_listen):
+            print(line, flush=True)
 
     listener = None
     if not args.no_events:
