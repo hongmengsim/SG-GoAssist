@@ -136,7 +136,8 @@ if (-not $SimulateBus1 -and -not $Headless) {
     Write-Host ''
     Write-Host 'REAL Bus 1: three short steps on the Pi.'
     Write-Host '  1. The TUNNEL tab asks for the Pi password. Type it there.'
-    Write-Host '  2. Open a plain PowerShell window, run:  ssh pi@goassist-pi1.local   (this is "Pi A").'
+    Write-Host '  2. Open a NEW, separate PowerShell window (not this one, and NOT the TUNNEL tab) and run:  ssh pi@goassist-pi1.local'
+    Write-Host '     Its prompt must start with PS before you run it. After the password it shows pi@goassist-pi1:~ $ - that window is "Pi A". If the window you typed ssh in already showed pi@goassist-pi1:~ $, you are on the Pi twice: type exit.'
     Set-Clipboard $piCommand
     Read-Host '  3. The Pi command is on the clipboard (no secret in it). Paste it into Pi A, then press Enter HERE'
     Set-Clipboard ($env:DEVICE_SHARED_SECRET + ':' + $code)
