@@ -11,12 +11,21 @@ const rampOf = (state, busId) => agentOf(state, busId)?.ramp?.state;
 const reasonsOf = (state, busId) =>
   (agentOf(state, busId)?.decision?.reasons ?? []).map((reason) => reason.code);
 const bayOf = (state) => state.backend.bay ?? {};
+// A bus can hold several requests that still read ACKNOWLEDGED, so the one that counts is the newest.
 const requestOf = (state, busId) =>
-  (state.backend.requests ?? []).find(
-    (request) =>
-      request.busId === busId &&
-      ["SENDING", "ACKNOWLEDGED"].includes(request.status),
-  );
+  (state.backend.requests ?? [])
+    .filter(
+      (request) =>
+        request.busId === busId &&
+        ["SENDING", "ACKNOWLEDGED"].includes(request.status),
+    )
+    .reduce(
+      (newest, request) =>
+        !newest || String(request.createdAt) > String(newest.createdAt)
+          ? request
+          : newest,
+      undefined,
+    );
 
 /** The buses in the order they were configured: the first is Bus 1, the second Bus 2. */
 const [BUS1, BUS2] = [0, 1];
@@ -154,7 +163,12 @@ export const STEPS = [
 ];
 
 /** What a step looks like to the page: its text, and whether the system shows it has happened. */
-export function describeSteps(state, config, latched = new Set()) {
+export function describeSteps(
+  state,
+  config,
+  latched = new Set(),
+  details = new Map(),
+) {
   return STEPS.map((step) => {
     const result =
       state?.order?.length >= 2
@@ -168,7 +182,12 @@ export function describeSteps(state, config, latched = new Set()) {
       hasAction: step.act !== null,
       // Done means seen done, in order: it stays done after the system moves on.
       done: latched.has(step.id),
-      detail: result.detail,
+      // A step that is done keeps the detail from the moment it was seen done; the current state would
+      // read like a contradiction once the system has moved on.
+      detail:
+        latched.has(step.id) && details.has(step.id)
+          ? details.get(step.id)
+          : result.detail,
     };
   });
 }
@@ -178,12 +197,14 @@ export function describeSteps(state, config, latched = new Set()) {
  * is already latched, so a condition that happens to be true at the start (an empty bay) cannot mark a
  * later step done early, and a step stays done after the system has moved on.
  */
-export function advanceSteps(state, latched) {
+export function advanceSteps(state, latched, details = new Map()) {
   if (!(state?.order?.length >= 2)) return;
   for (const step of STEPS) {
     if (latched.has(step.id)) continue;
-    if (!step.check(state).done) return;
+    const result = step.check(state);
+    if (!result.done) return;
     latched.add(step.id);
+    details.set(step.id, result.detail);
   }
 }
 

@@ -60,6 +60,7 @@ export function createDirector({
   let previous = null;
   let seenAudit = null;
   const latched = new Set();
+  const stepDetails = new Map();
   const timeline = [];
   let timer;
 
@@ -122,7 +123,7 @@ export function createDirector({
       },
       buses,
     };
-    advanceSteps(state, latched);
+    advanceSteps(state, latched, stepDetails);
     diff(previous, state, audit.body?.events ?? []);
     previous = state;
     return state;
@@ -360,6 +361,7 @@ export function createDirector({
     runStep,
     resetSequence() {
       latched.clear();
+      stepDetails.clear();
       record("DIRECTOR", "the sequence was started again");
     },
     start(intervalMs = config.pollMs) {
@@ -384,7 +386,7 @@ export function createDirector({
       return {
         ...state,
         timeline: [...timeline],
-        steps: describeSteps(state, config, latched),
+        steps: describeSteps(state, config, latched, stepDetails),
       };
     },
   };
