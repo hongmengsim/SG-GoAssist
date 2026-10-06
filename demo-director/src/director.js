@@ -241,12 +241,20 @@ export function createDirector({
   }
 
   function stopOf(busId) {
-    const found = (state.backend.requests ?? []).find(
+    // A bus can hold several requests that still read ACKNOWLEDGED (an old case never changes the
+    // request's status), so the one to act on is the newest, not the first in the list.
+    const open = (state.backend.requests ?? []).filter(
       (request) =>
         request.busId === busId &&
         ["SENDING", "ACKNOWLEDGED"].includes(request.status),
     );
-    return found;
+    return open.reduce(
+      (newest, request) =>
+        !newest || String(request.createdAt) > String(newest.createdAt)
+          ? request
+          : newest,
+      undefined,
+    );
   }
 
   async function createRequest(busId) {

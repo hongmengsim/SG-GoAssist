@@ -217,6 +217,39 @@ test("the operator actions use the backend operator routes, and a cancel needs a
   await close();
 });
 
+test("a cancel targets the newest open request of the bus, not an older one whose case is long over", async () => {
+  const older = {
+    requestId: "REQ-1",
+    busId: "AV-1",
+    status: "ACKNOWLEDGED",
+    caseId: "CASE-OLD",
+    createdAt: "2026-10-06T09:00:00.000Z",
+  };
+  const newer = {
+    requestId: "REQ-2",
+    busId: "AV-1",
+    status: "ACKNOWLEDGED",
+    caseId: "CASE-NEW",
+    createdAt: "2026-10-06T10:00:00.000Z",
+  };
+  for (const requests of [
+    [older, newer],
+    [newer, older],
+  ]) {
+    const { director, backend, close } = await setup();
+    backend.state.requests = requests;
+    await director.refresh();
+    await director.cancel("AV-1");
+    assert.ok(
+      backend.paths.includes("POST /api/operations/cases/CASE-NEW/operator"),
+    );
+    assert.ok(
+      !backend.paths.includes("POST /api/operations/cases/CASE-OLD/operator"),
+    );
+    await close();
+  }
+});
+
 test("nothing the director does touches an acknowledgement, the simulator or a ramp route on the backend", async () => {
   const { director, backend, close } = await setup();
   await director.control("AV-1", { command: "arrive", value: "18331" });
