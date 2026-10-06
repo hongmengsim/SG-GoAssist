@@ -133,6 +133,51 @@ class ChangeGateTests(unittest.TestCase):
         self.now = 1.0
         self.assertFalse(gate.due("bus", {"movement": "X", "observedAt": "t2"}))
 
+    # A flickering camera flips the reasons of a halted gate every second or two. The permission is what
+    # matters at once; a change that only reshuffles the reasons waits for the settle time.
+    @staticmethod
+    def permission(payload):
+        return payload["permission"]
+
+    def test_a_change_that_leaves_the_critical_value_alone_waits_for_the_settle_time(self) -> None:
+        gate = self.make()
+        first = {"permission": "HALT", "reasons": ["OBJECT_IN_ZONE"]}
+        second = {"permission": "HALT", "reasons": ["SENSORS_DISAGREE"]}
+        gate.sent("safety-decision", first, self.permission)
+        self.now = 1.0
+        self.assertFalse(gate.due("safety-decision", second, self.permission))
+        self.now = 4.9
+        self.assertFalse(gate.due("safety-decision", second, self.permission))
+        self.now = 5.0
+        self.assertTrue(gate.due("safety-decision", second, self.permission))
+
+    def test_a_change_of_the_critical_value_is_sent_at_once_in_both_directions(self) -> None:
+        gate = self.make()
+        halted = {"permission": "HALT", "reasons": ["OBJECT_IN_ZONE"]}
+        clear = {"permission": "CONTINUE", "reasons": []}
+        gate.sent("safety-decision", halted, self.permission)
+        self.now = 0.1
+        self.assertTrue(gate.due("safety-decision", clear, self.permission))
+        gate.sent("safety-decision", clear, self.permission)
+        self.now = 0.2
+        self.assertTrue(gate.due("safety-decision", halted, self.permission))
+
+    def test_the_settle_time_counts_from_the_last_report_that_went_out(self) -> None:
+        gate = self.make()
+        gate.sent("safety-decision", {"permission": "HALT", "reasons": ["A"]}, self.permission)
+        self.now = 6.0
+        gate.sent("safety-decision", {"permission": "HALT", "reasons": ["B"]}, self.permission)
+        self.now = 7.0
+        self.assertFalse(gate.due("safety-decision", {"permission": "HALT", "reasons": ["C"]}, self.permission))
+        self.now = 11.0
+        self.assertTrue(gate.due("safety-decision", {"permission": "HALT", "reasons": ["C"]}, self.permission))
+
+    def test_without_a_critical_value_every_change_is_still_sent_at_once(self) -> None:
+        gate = self.make()
+        gate.sent("bus", {"movement": "A"})
+        self.now = 0.1
+        self.assertTrue(gate.due("bus", {"movement": "B"}))
+
     def decision(self, distance_mm, confidence, beam="BEAM_CLEAR", class_name="person"):
         return {
             "zoneState": "OCCUPIED",

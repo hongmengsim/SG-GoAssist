@@ -295,3 +295,36 @@ class UnknownEntryTests(unittest.TestCase):
         movements = [body["movement"] for body in world.backend.posted("bus-status")]
         self.assertNotIn("WAITING_FOR_BAY", movements, "it must not post waiting over its own entry")
         self.assertEqual("POSITIONED_AT_STOP", world.agent.movement)
+
+
+class FlickerPostingTests(unittest.TestCase):
+    """A camera that flickers on a gate that stays halted must not post a safety decision per flip.
+
+    On the bench the halt reasons flipped every second or two and each flip became an audit row."""
+
+    def flicker(self, world: World, seconds: int) -> None:
+        for second in range(seconds):
+            if second % 2 == 0:
+                world.camera.place("person")
+            else:
+                world.camera.clear_objects()
+            world.tick(5)  # one second of simulated time
+
+    def test_flipping_reasons_on_a_halted_gate_post_about_once_per_settle_time(self) -> None:
+        world = World()
+        world.agent.arrive(STOP)
+        world.beam_source.set_blocked(True)  # the gate stays HALT whatever the camera sees
+        world.tick(10)
+        before = len(world.backend.posted("safety-decision"))
+        self.flicker(world, 20)
+        posted = world.backend.posted("safety-decision")[before:]
+        self.assertTrue(all(body["permission"] == "HALT" for body in posted))
+        self.assertLessEqual(len(posted), 6, f"{len(posted)} safety decisions in 20 s of flicker")
+
+    def test_a_change_of_permission_still_goes_out_at_once(self) -> None:
+        world = World()
+        world.agent.arrive(STOP)
+        world.tick(10)
+        world.camera.place("person")  # CONTINUE-capable scene becomes a HALT
+        world.tick(1)
+        self.assertEqual("HALT", world.backend.posted("safety-decision")[-1]["permission"])

@@ -85,6 +85,11 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
+# A change of this value in a report goes out at once; a change that leaves it alone (a flickering camera
+# reshuffling the halt reasons) waits for the settle time. Only the safety decision has one.
+_CRITICAL = {"safety-decision": lambda body: body.get("permission")}
+
+
 class BusAgent:
     def __init__(
         self,
@@ -665,7 +670,7 @@ class BusAgent:
 
     def _post(self, kind: str, body: dict) -> str:
         outcome = self._backend.post(kind, body)
-        self._gate.sent(kind, body)
+        self._gate.sent(kind, body, _CRITICAL.get(kind))
         self._note_ok("post")
         self.link = {"ok": True, "error": None}
         return str(outcome)
@@ -681,13 +686,13 @@ class BusAgent:
             return self._post(kind, body)
         wait = self._config.entry_timeout_seconds if timeout is None else timeout
         outcome = wait_for_answer(kind, body, timeout=wait)
-        self._gate.sent(kind, body)
+        self._gate.sent(kind, body, _CRITICAL.get(kind))
         self.link = {"ok": True, "error": None}
         return str(outcome)
 
     def _post_safely(self, kind: str, body: dict) -> None:
         """Post when due; a failure is logged and retried on a later tick, never raised."""
-        if not self._gate.due(kind, body):
+        if not self._gate.due(kind, body, _CRITICAL.get(kind)):
             return
         try:
             self._post(kind, body)
